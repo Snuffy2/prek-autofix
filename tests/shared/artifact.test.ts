@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   ARTIFACT_SCHEMA_VERSION,
+  DEFAULT_MAX_FILES,
   MAX_PATH_COMPONENTS,
   MAX_TOTAL_PATH_COMPONENTS,
   artifactName,
@@ -166,6 +167,22 @@ describe("artifact contract", () => {
         ],
       }),
     ).toThrow(/duplicate path/);
+  });
+
+  it("enforces the default maximum file count", () => {
+    const operations = Array.from(
+      { length: DEFAULT_MAX_FILES + 1 },
+      (_, index) => ({
+        ...validArtifact.operations[0],
+        path: `file-${index}.ts`,
+      }),
+    );
+
+    expect(() =>
+      parseChangeArtifact({ ...validArtifact, operations }),
+    ).toThrow(
+      `artifact has ${DEFAULT_MAX_FILES + 1} files; maximum is ${DEFAULT_MAX_FILES}`,
+    );
   });
 
   it("enforces decoded content limits", () => {

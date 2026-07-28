@@ -183,20 +183,52 @@ describe("collectOperations", () => {
     const inside = join(root, "inside");
     const parked = join(root, "parked");
     const outside = await mkdtemp(join(tmpdir(), "collect-outside-"));
+    const marker = join(root, "directory-opened");
     directories.push(outside);
     await import("node:fs/promises").then(({ mkdir }) => mkdir(inside));
     await writeFile(join(inside, "value.txt"), "inside\n");
     await writeFile(join(outside, "value.txt"), "outside\n");
-    let swap: Promise<void> | undefined;
+    let instrumented = false;
     const execute: Execute = async (command, args, options) => {
       if (command.endsWith("/python3")) {
-        swap = new Promise((resolveSwap, rejectSwap) => {
-          setTimeout(() => {
-            void rename(inside, parked)
-              .then(() => symlink(outside, inside))
-              .then(resolveSwap, rejectSwap);
-          }, 50);
-        });
+        const copiedArgs = [...args];
+        const scriptIndex = copiedArgs.indexOf("-c") + 1;
+        const script = copiedArgs[scriptIndex];
+        if (scriptIndex === 0 || script === undefined) {
+          throw new Error("secure reader script argument was not found");
+        }
+        const insertionPoint = "        fd = child\n        if delay_ms:";
+        const instrumentedScript = script.replace(
+          insertionPoint,
+          `        fd = child\n        open(${JSON.stringify(marker)}, "wb").close()\n        if delay_ms:`,
+        );
+        if (instrumentedScript === script) {
+          throw new Error("secure reader script instrumentation did not match");
+        }
+        instrumented = true;
+        copiedArgs[scriptIndex] = instrumentedScript;
+        const running = executeCommand(command, copiedArgs, options);
+        const deadline = Date.now() + 5_000;
+        while (true) {
+          try {
+            await stat(marker);
+            break;
+          } catch (error) {
+            if (
+              (error as NodeJS.ErrnoException).code !== "ENOENT" ||
+              Date.now() >= deadline
+            ) {
+              throw new Error(
+                "timed out waiting for secure reader to open component directory",
+                { cause: error },
+              );
+            }
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          }
+        }
+        await rename(inside, parked);
+        await symlink(outside, inside);
+        return await running;
       }
       return executeCommand(command, args, options);
     };
@@ -209,8 +241,8 @@ describe("collectOperations", () => {
       DEFAULT_MAX_BYTES,
       200,
     );
-    await swap;
 
+    expect(instrumented).toBe(true);
     expect(
       Buffer.from(operations[0]?.content ?? "", "base64").toString(),
     ).toBe("inside\n");
