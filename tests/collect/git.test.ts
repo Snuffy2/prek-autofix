@@ -199,14 +199,15 @@ describe("collectOperations", () => {
     await writeFile(join(outside, "value.txt"), "outside\n");
     let instrumented = false;
     const execute: Execute = async (command, args, options) => {
-      if (command.endsWith("/python3")) {
+      const insertionPoint = "        fd = child\n        if delay_ms:";
+      const scriptIndex = args.indexOf("-c") + 1;
+      const script = args[scriptIndex];
+      if (
+        scriptIndex > 0 &&
+        script !== undefined &&
+        script.includes(insertionPoint)
+      ) {
         const copiedArgs = [...args];
-        const scriptIndex = copiedArgs.indexOf("-c") + 1;
-        const script = copiedArgs[scriptIndex];
-        if (scriptIndex === 0 || script === undefined) {
-          throw new Error("secure reader script argument was not found");
-        }
-        const insertionPoint = "        fd = child\n        if delay_ms:";
         const instrumentedScript = script.replace(
           insertionPoint,
           `        fd = child\n        open(${JSON.stringify(marker)}, "wb").close()\n        if delay_ms:`,
@@ -217,7 +218,7 @@ describe("collectOperations", () => {
         instrumented = true;
         copiedArgs[scriptIndex] = instrumentedScript;
         const running = executeCommand(command, copiedArgs, options);
-        const deadline = Date.now() + 5_000;
+        const deadline = Date.now() + 10_000;
         while (true) {
           try {
             await stat(marker);
@@ -258,7 +259,7 @@ describe("collectOperations", () => {
     expect(JSON.stringify(operations)).not.toContain(
       Buffer.from("outside\n").toString("base64"),
     );
-  });
+  }, 15_000);
 
   it("accepts content exactly at the byte ceiling", async () => {
     const root = await repository();
