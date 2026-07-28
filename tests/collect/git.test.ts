@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   collectOperations,
+  operationForGitStatus,
   type Execute,
 } from "../../packages/collect/src/git";
 import { executeCommand } from "../../packages/collect/src/runner";
@@ -65,5 +66,46 @@ describe("collectOperations", () => {
         "base64",
       ),
     ).toEqual(Buffer.from([0, 255, 1]));
+  });
+
+  it("encodes a staged addition as add", async () => {
+    const root = await repository();
+    await writeFile(join(root, "added.txt"), "added\n");
+    await git(root, "add", "added.txt");
+
+    const operations = await collectOperations(root, executeCommand, env);
+
+    expect(operations).toEqual([
+      {
+        path: "added.txt",
+        operation: "add",
+        mode: "100644",
+        content: Buffer.from("added\n").toString("base64"),
+      },
+    ]);
+  });
+
+  it("encodes a staged rename as delete and add", async () => {
+    const root = await repository();
+    await git(root, "mv", "rename.txt", "renamed.txt");
+
+    const operations = await collectOperations(root, executeCommand, env);
+
+    expect(operations.map(({ path, operation, mode }) => ({ path, operation, mode })))
+      .toEqual([
+        { path: "rename.txt", operation: "delete", mode: "100644" },
+        { path: "renamed.txt", operation: "add", mode: "100644" },
+      ]);
+  });
+});
+
+describe("operationForGitStatus", () => {
+  it("maps supported statuses and rejects unsupported statuses", () => {
+    expect(operationForGitStatus("A")).toBe("add");
+    expect(operationForGitStatus("M")).toBe("modify");
+    expect(operationForGitStatus("D")).toBe("delete");
+    expect(() => operationForGitStatus("T")).toThrow(
+      "unsupported git diff status: T",
+    );
   });
 });

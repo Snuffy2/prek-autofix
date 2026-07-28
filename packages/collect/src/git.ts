@@ -18,6 +18,15 @@ function fields(output: Buffer): string[] {
   return output.toString("utf8").split("\0").filter(Boolean);
 }
 
+export function operationForGitStatus(
+  status: string,
+): FileOperation["operation"] {
+  if (status === "A") return "add";
+  if (status === "M") return "modify";
+  if (status === "D") return "delete";
+  throw new Error(`unsupported git diff status: ${status}`);
+}
+
 export async function assertExactCleanCheckout(
   root: string,
   expectedSha: string,
@@ -92,7 +101,7 @@ export async function collectOperations(
     const file = changes[index + 1];
     if (!status || !file) throw new Error("unexpected git diff output");
     entries.push({
-      operation: status.startsWith("D") ? "delete" : "modify",
+      operation: operationForGitStatus(status),
       path: file,
     });
   }
