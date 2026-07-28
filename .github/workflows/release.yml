@@ -1,0 +1,77 @@
+name: Release
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: github.event.release.prerelease == false
+    outputs:
+      release-sha: ${{ steps.release.outputs.sha }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out immutable release
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run check:dist
+
+      - name: Validate semantic release tag
+        id: release
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v([0-9]+)\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must have vMAJOR.MINOR.PATCH form" >&2
+            exit 1
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  update-major:
+    needs: verify
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update moving major tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          TARGET_SHA: ${{ needs.verify.outputs.release-sha }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v([0-9]+)\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must have vMAJOR.MINOR.PATCH form" >&2
+            exit 1
+          fi
+          major_tag="v${BASH_REMATCH[1]}"
+          if [[ ! "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Verified release SHA is invalid" >&2
+            exit 1
+          fi
+          if gh api --silent \
+            "repos/$GITHUB_REPOSITORY/git/ref/tags/$major_tag" 2>/dev/null
+          then
+            gh api --method PATCH \
+              "repos/$GITHUB_REPOSITORY/git/refs/tags/$major_tag" \
+              -f sha="$TARGET_SHA" -F force=true
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/tags/$major_tag" -f sha="$TARGET_SHA"
+          fi

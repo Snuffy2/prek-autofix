@@ -1,0 +1,49 @@
+name: Collect prek autofixes
+description: Run prek without write credentials and upload any resulting fixes
+inputs:
+  prek-version:
+    description: Version or supported version range to install
+    default: latest
+  extra-args:
+    description: Arguments appended to prek run
+    default: --all-files
+  working-directory:
+    description: Directory in which to run prek
+    default: .
+  cache:
+    description: Enable the prek environment cache
+    default: "true"
+  max-passes:
+    description: Maximum convergence passes
+    default: "3"
+outputs:
+  changed:
+    description: Whether prek generated applicable changes
+    value: ${{ steps.collect.outputs.changed }}
+  artifact-name:
+    description: Name of the uploaded change artifact
+    value: ${{ steps.collect.outputs.artifact-name }}
+  prek-version:
+    description: Resolved version of prek
+    value: ${{ steps.install.outputs.prek-version }}
+runs:
+  using: composite
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
+      with:
+        node-version: "24"
+    - id: install
+      uses: j178/prek-action@5337cb91e0fa35a7ff31b9ca345126d8bbbcdf16 # v2.0.6
+      with:
+        install-only: "true"
+        cache: ${{ inputs.cache }}
+        prek-version: ${{ inputs.prek-version }}
+        working-directory: ${{ inputs.working-directory }}
+    - id: collect
+      shell: bash
+      env:
+        PREK_AUTOFIX_EXTRA_ARGS: ${{ inputs.extra-args }}
+        PREK_AUTOFIX_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        PREK_AUTOFIX_MAX_PASSES: ${{ inputs.max-passes }}
+      run: node "$GITHUB_ACTION_PATH/../dist/collect/index.js"

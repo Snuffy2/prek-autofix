@@ -1,0 +1,25 @@
+name: Apply prek autofixes
+description: Safely apply a collected prek-autofix artifact to a pull request branch
+inputs:
+  autofix-token:
+    description: Dedicated bot PAT used only for Git Data mutations
+    required: true
+  commit-message:
+    description: Commit message for the generated fix commit
+    required: false
+    default: "[prek-autofix] apply automatic fixes"
+  source-workflow:
+    description: Expected collection workflow name
+    required: false
+    default: prek-autofix
+  max-files:
+    description: Maximum number of file operations
+    required: false
+    default: "100"
+  max-bytes:
+    description: Maximum decoded artifact content size
+    required: false
+    default: "10485760"
+runs:
+  using: node24
+  main: ../dist/apply/index.js
