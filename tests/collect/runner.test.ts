@@ -26,7 +26,7 @@ function setup(prekResults: ReturnType<typeof result>[]) {
   const execute: Execute = vi.fn(async (command, args, options) => {
     expect(options.env.PREK_AUTOFIX_TOKEN).toBeUndefined();
     if (command === "prek") return prekResults[prek++] ?? result();
-    if (command === "python3") return result();
+    if (command.includes("python3")) return result();
     if (args[0] === "rev-parse") return result(0, `${SHA}\n`);
     if (args[0] === "status") return result();
     if (args[0] === "ls-tree") return result();
@@ -58,6 +58,14 @@ async function invoke(
   }));
   const outputs = new Map<string, string>();
   let inspection = 0;
+  const collectChanges = vi.fn(async () =>
+    (changes[inspection++] ?? []).map((path) => ({
+      path,
+      operation: "modify" as const,
+      mode: "100644",
+      content: Buffer.from(path).toString("base64"),
+    })),
+  );
   const promise = runCollect(
     {
       eventName: "pull_request",
@@ -82,16 +90,10 @@ async function invoke(
       env: { PATH: process.env.PATH, PREK_AUTOFIX_TOKEN: "do-not-leak" },
       platform,
       setOutput: (name, value) => outputs.set(name, value),
-      collectChanges: async () =>
-        (changes[inspection++] ?? []).map((path) => ({
-          path,
-          operation: "modify" as const,
-          mode: "100644",
-          content: Buffer.from(path).toString("base64"),
-        })),
+      collectChanges,
     },
   );
-  return { promise, uploadArtifact, outputs, workspace };
+  return { promise, uploadArtifact, outputs, workspace, collectChanges };
 }
 
 afterEach(async () => {
@@ -119,7 +121,7 @@ describe("runCollect", () => {
       "prek",
       expect.anything(),
       expect.objectContaining({
-        cleanupProcessGroup: true,
+        superviseProcessTree: true,
         streamUntrustedOutput: true,
       }),
     );
@@ -163,6 +165,52 @@ describe("runCollect", () => {
     expect(call.outputs.get("artifact-name")).toBe("");
   });
 
+  it("stops before change collection when a hook changes HEAD", async () => {
+    let headChecks = 0;
+    const execute: Execute = vi.fn(async (command, args) => {
+      if (command.includes("python3")) return result();
+      if (command === "prek") return result();
+      if (args[0] === "rev-parse") {
+        headChecks += 1;
+        return result(0, `${headChecks === 1 ? SHA : "b".repeat(40)}\n`);
+      }
+      if (args[0] === "status") return result();
+      throw new Error(`unexpected command: ${command} ${args.join(" ")}`);
+    });
+    const call = await invoke(execute, 3, false, [[]]);
+    await expect(call.promise).rejects.toThrow(
+      "checkout HEAD does not match pull request head SHA",
+    );
+    expect(call.collectChanges).not.toHaveBeenCalled();
+    expect(call.uploadArtifact).not.toHaveBeenCalled();
+  });
+
+  it("stops when the workspace pathname is substituted after a hook", async () => {
+    let substituted = false;
+    const execute: Execute = vi.fn(async (command, args, options) => {
+      if (command.includes("python3")) return result();
+      if (command === "prek") {
+        const parked = `${options.cwd}-parked`;
+        directories.push(parked);
+        const { mkdir, rename } = await import("node:fs/promises");
+        await rename(options.cwd, parked);
+        await mkdir(options.cwd);
+        substituted = true;
+        return result();
+      }
+      if (args[0] === "rev-parse") return result(0, `${SHA}\n`);
+      if (args[0] === "status") return result();
+      throw new Error(`unexpected command: ${command} ${args.join(" ")}`);
+    });
+    const call = await invoke(execute);
+
+    await expect(call.promise).rejects.toThrow(
+      "workspace identity changed while hooks were running",
+    );
+    expect(substituted).toBe(true);
+    expect(call.uploadArtifact).not.toHaveBeenCalled();
+  });
+
   it("uploads converged fixes and deliberately fails the check", async () => {
     const execute = setup([result(1), result(0)]);
     const call = await invoke(execute, 3, false, [["a"], ["a"]]);
@@ -174,8 +222,13 @@ describe("runCollect", () => {
       ]),
     );
     expect(call.uploadArtifact).toHaveBeenCalledOnce();
+    const uploadCall = call.uploadArtifact.mock.calls[0] as
+      | [string, string[]]
+      | undefined;
+    const uploadedFile = uploadCall?.[1][0];
+    expect(uploadedFile).toBeDefined();
     const artifact = JSON.parse(
-      await readFile(join(call.workspace, "prek-autofix.json"), "utf8"),
+      await readFile(uploadedFile!, "utf8"),
     );
     expect(artifact.source).toMatchObject({
       runId: 42,
@@ -380,7 +433,9 @@ describe("executeCommand", () => {
       await executeCommand(process.execPath, ["-e", command], {
         cwd: process.cwd(),
         env: process.env,
-        cleanupProcessGroup: true,
+        superviseProcessTree: true,
+        trustedPythonPath: "/usr/bin/python3",
+        timeoutMs: 5000,
       });
 
       const descendantPid = Number(await readFile(pidFile, "utf8"));
@@ -409,6 +464,8 @@ describe("executeCommand", () => {
           cwd: process.cwd(),
           env: process.env,
           timeoutMs: 100,
+          superviseProcessTree: true,
+          trustedPythonPath: "/usr/bin/python3",
         }),
       ).rejects.toThrow("terminated hook process tree");
 
@@ -424,6 +481,105 @@ describe("executeCommand", () => {
         }
       }
       expect(alive).toBe(false);
+    },
+  );
+
+  it.skipIf(process.platform !== "linux")(
+    "contains and reaps a setsid double-fork before it can mutate later state",
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), "collect-double-fork-"));
+      directories.push(directory);
+      const pidFile = join(directory, "daemon.pid");
+      const workspaceMutation = join(directory, "workspace-after-cleanup");
+      const artifactMutation = join(directory, "artifact-after-cleanup");
+      const script = `
+import os, time
+pid = os.fork()
+if pid:
+    deadline = time.monotonic() + 2
+    while not os.path.exists(${JSON.stringify(pidFile)}) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    os._exit(0)
+os.setsid()
+pid = os.fork()
+if pid:
+    os._exit(0)
+with open(${JSON.stringify(pidFile)}, "w", encoding="ascii") as output:
+    output.write(str(os.getpid()))
+time.sleep(0.5)
+for target in (${JSON.stringify(workspaceMutation)}, ${JSON.stringify(artifactMutation)}):
+    with open(target, "w", encoding="ascii") as output:
+        output.write("escaped")
+`;
+
+      const response = await executeCommand("python3", ["-I", "-c", script], {
+        cwd: directory,
+        env: process.env,
+        superviseProcessTree: true,
+        trustedPythonPath: "/usr/bin/python3",
+        timeoutMs: 5000,
+      });
+
+      expect(response.exitCode).toBe(0);
+      const daemonPid = Number(await readFile(pidFile, "utf8"));
+      expect(() => process.kill(daemonPid, 0)).toThrow(
+        expect.objectContaining({ code: "ESRCH" }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      await expect(readFile(workspaceMutation)).rejects.toThrow();
+      await expect(readFile(artifactMutation)).rejects.toThrow();
+    },
+  );
+
+  it.skipIf(process.platform !== "linux")(
+    "fails closed when the trusted supervisor cannot establish",
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), "collect-fake-python-"));
+      directories.push(directory);
+      const fakePython = join(directory, "python3");
+      const { chmod, writeFile } = await import("node:fs/promises");
+      await writeFile(fakePython, "#!/bin/sh\nexit 0\n");
+      await chmod(fakePython, 0o755);
+
+      await expect(
+        executeCommand(process.execPath, ["-e", ""], {
+          cwd: directory,
+          env: { PATH: directory },
+          superviseProcessTree: true,
+          trustedPythonPath: fakePython,
+          timeoutMs: 1000,
+        }),
+      ).rejects.toThrow(
+        "hook supervisor failed to establish the Linux subreaper boundary",
+      );
+    },
+  );
+
+  it.skipIf(process.platform !== "linux")(
+    "ignores a two-pass PATH interpreter that attempts to spoof the protocol",
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), "collect-path-spoof-"));
+      directories.push(directory);
+      const fakePython = join(directory, "python3");
+      const marker = join(directory, "fake-python-ran");
+      const { chmod, writeFile } = await import("node:fs/promises");
+      await writeFile(
+        fakePython,
+        `#!/bin/sh\nprintf 'READY\\nCLEAN normal\\n' >&3\nprintf spoofed > ${JSON.stringify(marker)}\n`,
+      );
+      await chmod(fakePython, 0o755);
+
+      for (let pass = 0; pass < 2; pass += 1) {
+        const response = await executeCommand(process.execPath, ["-e", ""], {
+          cwd: directory,
+          env: { ...process.env, PATH: directory },
+          superviseProcessTree: true,
+          trustedPythonPath: "/usr/bin/python3",
+          timeoutMs: 1000,
+        });
+        expect(response.exitCode).toBe(0);
+      }
+      await expect(readFile(marker)).rejects.toThrow();
     },
   );
 });

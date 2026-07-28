@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   ARTIFACT_SCHEMA_VERSION,
+  MAX_PATH_COMPONENTS,
+  MAX_TOTAL_PATH_COMPONENTS,
   artifactName,
   isSafeRepositoryPath,
   isWorkflowPath,
@@ -74,6 +76,63 @@ describe("artifact contract", () => {
         ],
       }),
     ).not.toThrow();
+  });
+
+  it("accepts a path at the component-depth limit", () => {
+    const path = Array.from(
+      { length: MAX_PATH_COMPONENTS },
+      (_, index) => `part-${index}`,
+    ).join("/");
+    expect(() =>
+      parseChangeArtifact({
+        ...validArtifact,
+        operations: [{ ...validArtifact.operations[0], path }],
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects a path one component beyond the depth limit", () => {
+    const path = Array.from(
+      { length: MAX_PATH_COMPONENTS + 1 },
+      (_, index) => `part-${index}`,
+    ).join("/");
+    expect(() =>
+      parseChangeArtifact({
+        ...validArtifact,
+        operations: [{ ...validArtifact.operations[0], path }],
+      }),
+    ).toThrow(`maximum is ${MAX_PATH_COMPONENTS}`);
+  });
+
+  it("accepts paths at the aggregate component limit", () => {
+    const componentsPerPath = MAX_TOTAL_PATH_COMPONENTS / 100;
+    const operations = Array.from({ length: 100 }, (_, pathIndex) => ({
+      ...validArtifact.operations[0],
+      path: Array.from(
+        { length: componentsPerPath },
+        (_, componentIndex) => `p${pathIndex}-${componentIndex}`,
+      ).join("/"),
+    }));
+    expect(() =>
+      parseChangeArtifact({ ...validArtifact, operations }),
+    ).not.toThrow();
+  });
+
+  it("rejects paths one component beyond the aggregate limit", () => {
+    const componentsPerPath = MAX_TOTAL_PATH_COMPONENTS / 100;
+    const operations = Array.from({ length: 100 }, (_, pathIndex) => ({
+      ...validArtifact.operations[0],
+      path: Array.from(
+        {
+          length:
+            componentsPerPath + (pathIndex === 99 ? 1 : 0),
+        },
+        (_, componentIndex) => `p${pathIndex}-${componentIndex}`,
+      ).join("/"),
+    }));
+    expect(() =>
+      parseChangeArtifact({ ...validArtifact, operations }),
+    ).toThrow(`more than ${MAX_TOTAL_PATH_COMPONENTS} total components`);
   });
 
   it.each(["120000", "160000", "040000", "100600"])(

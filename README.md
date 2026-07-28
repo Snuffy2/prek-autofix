@@ -211,6 +211,13 @@ Stage 1 has only `contents: read`, uses the exact PR head/repository, and sets
 write-capable `GITHUB_TOKEN`. The generated artifact describes proposed file
 operations, not permission to mutate a branch.
 
+Linux process supervision in Stage 1 is a fail-closed integrity control, not a
+hostile-code sandbox. The collector pins its trusted Python interpreter and
+workspace identities, adopts and reaps hook descendants, and requires a private
+cleanup acknowledgement before it inspects Git state or creates an artifact. A
+same-UID process can still send `SIGKILL` to abort the action; without the
+cleanup acknowledgement, collection stops and no Stage 2 artifact is produced.
+
 Stage 2 independently identifies the open pull request and its current head
 from GitHub; it does not trust artifact-supplied target metadata. It rejects
 stale or unsafe input, caps file count and content size, excludes

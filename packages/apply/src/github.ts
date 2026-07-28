@@ -1,5 +1,8 @@
 import type { getOctokit } from "@actions/github";
-import { COMMENT_MARKER } from "../../shared/src/artifact";
+import {
+  COMMENT_MARKER,
+  validatePathComponentBudget,
+} from "../../shared/src/artifact";
 import {
   ownMarkerCommentIds,
   type MutationClient,
@@ -98,6 +101,7 @@ export function createReadClient(
       return data.tree.sha;
     },
     async getTreeEntries(repository, rootTreeSha, paths) {
+      validatePathComponentBudget(paths);
       const [targetOwner, targetRepo] = repositoryParts(repository);
       const cache = new Map<string, GitTreeEntry[]>();
       const loadTree = async (sha: string) => {

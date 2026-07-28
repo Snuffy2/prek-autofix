@@ -179,6 +179,9 @@ canonical files.
 - Keep the collection runner and privileged applier in separate packages or
   entry points so credential-bearing code cannot accidentally invoke the hook
   runner.
+- Treat Linux hook supervision as a fail-closed Stage 1 integrity control, not
+  a hostile-code sandbox. Missing descendant-cleanup proof, including after a
+  same-UID `SIGKILL` abort, must prevent artifact creation and Stage 2 input.
 - Pin the internal `j178/prek-action` dependency to a reviewed commit and
   automate dependency-update proposals.
 - Add concurrency keyed by source repository and branch. A stale run exits

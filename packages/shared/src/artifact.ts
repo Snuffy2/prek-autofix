@@ -4,6 +4,10 @@ export const ARTIFACT_SCHEMA_VERSION = 1 as const;
 export const DEFAULT_MAX_FILES = 100;
 export const DEFAULT_MAX_BYTES = 10_485_760;
 export const MAX_PATH_BYTES = 4_096;
+// Bound non-recursive Git tree traversal well below GitHub's hourly API limit,
+// even when an artifact contains the default maximum of 100 changed files.
+export const MAX_PATH_COMPONENTS = 32;
+export const MAX_TOTAL_PATH_COMPONENTS = 1_000;
 export const MAX_SOURCE_STRING_BYTES = 255;
 export const DEFAULT_COMMIT_MESSAGE =
   "[prek-autofix] apply automatic fixes";
@@ -71,6 +75,26 @@ export function isWorkflowPath(candidate: string): boolean {
     candidate === ".github/workflows" ||
     candidate.startsWith(".github/workflows/")
   );
+}
+
+export function validatePathComponentBudget(
+  paths: readonly string[],
+): void {
+  let totalComponents = 0;
+  for (const candidate of paths) {
+    const componentCount = candidate.split("/").length;
+    if (componentCount > MAX_PATH_COMPONENTS) {
+      throw new ArtifactValidationError(
+        `artifact path has ${componentCount} components; maximum is ${MAX_PATH_COMPONENTS}: ${candidate}`,
+      );
+    }
+    totalComponents += componentCount;
+    if (totalComponents > MAX_TOTAL_PATH_COMPONENTS) {
+      throw new ArtifactValidationError(
+        `artifact paths have more than ${MAX_TOTAL_PATH_COMPONENTS} total components`,
+      );
+    }
+  }
 }
 
 function parseSource(value: unknown): ArtifactSource {
@@ -202,6 +226,9 @@ export function parseChangeArtifact(
   }
 
   const operations = value.operations.map(parseOperation);
+  validatePathComponentBudget(
+    operations.map((operation) => operation.path),
+  );
   const seen = new Set<string>();
   let totalBytes = 0;
   for (const operation of operations) {

@@ -3,6 +3,7 @@ import {
   mkdtemp,
   readFile,
   rename,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -11,18 +12,44 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   collectOperations,
+  assertRootIdentity,
+  captureRootIdentity,
+  captureTrustedPython,
   GIT_CAPTURE_LIMIT_BYTES,
   operationForGitStatus,
+  writeArtifact,
   type Execute,
 } from "../../packages/collect/src/git";
 import { executeCommand } from "../../packages/collect/src/runner";
 import {
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_FILES,
+  ARTIFACT_SCHEMA_VERSION,
+  type ChangeArtifact,
 } from "../../packages/shared/src/artifact";
 
 const directories: string[] = [];
 const env = { PATH: process.env.PATH };
+const artifact: ChangeArtifact = {
+  schemaVersion: ARTIFACT_SCHEMA_VERSION,
+  source: {
+    runId: 1,
+    repository: "owner/repo",
+    workflow: "test",
+    event: "pull_request",
+    pullRequestNumber: 1,
+    headSha: "a".repeat(40),
+  },
+  operations: [],
+};
+
+function resultBuffer(stdout: string) {
+  return {
+    exitCode: 0,
+    stdout: Buffer.from(stdout),
+    stderr: Buffer.alloc(0),
+  };
+}
 
 async function git(root: string, ...args: string[]): Promise<void> {
   const response = await executeCommand("git", args, { cwd: root, env });
@@ -162,7 +189,7 @@ describe("collectOperations", () => {
     await writeFile(join(outside, "value.txt"), "outside\n");
     let swap: Promise<void> | undefined;
     const execute: Execute = async (command, args, options) => {
-      if (command === "python3") {
+      if (command.endsWith("/python3")) {
         swap = new Promise((resolveSwap, rejectSwap) => {
           setTimeout(() => {
             void rename(inside, parked)
@@ -207,6 +234,8 @@ describe("collectOperations", () => {
   });
 
   it("accepts exactly the maximum file count", async () => {
+    const root = await mkdtemp(join(tmpdir(), "collect-limit-"));
+    directories.push(root);
     const execute: Execute = vi.fn(async (_command, args) => {
       if (args[0] === "diff") {
         const records = Array.from(
@@ -228,9 +257,43 @@ describe("collectOperations", () => {
       throw new Error(`unexpected command: ${args.join(" ")}`);
     });
 
-    const operations = await collectOperations("/unused", execute, env);
+    const operations = await collectOperations(root, execute, env);
 
     expect(operations).toHaveLength(DEFAULT_MAX_FILES);
+  });
+
+  it("rejects a substituted workspace pathname against its pinned identity", async () => {
+    const root = await repository();
+    const identity = await captureRootIdentity(root);
+    const parked = `${root}-parked`;
+    directories.push(parked);
+    await rename(root, parked);
+    await import("node:fs/promises").then(({ mkdir }) => mkdir(root));
+
+    await expect(assertRootIdentity(root, identity)).rejects.toThrow(
+      "workspace identity changed while hooks were running",
+    );
+  });
+
+  it("enforces the shared path-component budget before secure file reads", async () => {
+    const root = await repository();
+    const deep = `${Array.from({ length: 33 }, () => "d").join("/")}/file`;
+    const execute: Execute = vi.fn(async (_command, args) => {
+      if (args[0] === "diff") {
+        return resultBuffer(`D\0${deep}\0`);
+      }
+      if (args[0] === "ls-files") return resultBuffer("");
+      throw new Error(`unexpected command: ${args.join(" ")}`);
+    });
+
+    await expect(collectOperations(root, execute, env)).rejects.toThrow(
+      "artifact path has 34 components",
+    );
+    expect(execute).not.toHaveBeenCalledWith(
+      expect.stringMatching(/\/python3(?:\.\d+)?$/),
+      expect.anything(),
+      expect.anything(),
+    );
   });
 
   it("looks up modes only for the bounded deleted paths", async () => {
@@ -267,5 +330,95 @@ describe("operationForGitStatus", () => {
     expect(() => operationForGitStatus("T")).toThrow(
       "unsupported git diff status: T",
     );
+  });
+});
+
+describe("trusted collector helpers", () => {
+  it("rejects a writable non-root trust anchor before execution", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "collect-untrusted-python-"));
+    directories.push(directory);
+    const fakePython = join(directory, "python3");
+    await writeFile(fakePython, "#!/bin/sh\nexit 0\n");
+    await chmod(fakePython, 0o777);
+
+    await expect(captureTrustedPython(fakePython)).rejects.toThrow(
+      "trusted Python interpreter must be a root-owned, non-writable executable",
+    );
+  });
+
+  it("uses the pinned secure-reader interpreter across two hostile PATH passes", async () => {
+    const root = await repository();
+    await writeFile(join(root, "text.txt"), "changed\n");
+    const fakeBin = await mkdtemp(join(tmpdir(), "collect-fake-bin-"));
+    directories.push(fakeBin);
+    const marker = join(fakeBin, "fake-python-ran");
+    const fakePython = join(fakeBin, "python3");
+    await writeFile(
+      fakePython,
+      `#!/bin/sh\nprintf spoofed > ${JSON.stringify(marker)}\n`,
+    );
+    await chmod(fakePython, 0o755);
+    const hostileEnv = {
+      PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+    };
+
+    for (let pass = 0; pass < 2; pass += 1) {
+      await expect(
+        collectOperations(root, executeCommand, hostileEnv),
+      ).resolves.toHaveLength(1);
+    }
+    await expect(readFile(marker)).rejects.toThrow();
+  });
+
+  it("writes into a fresh private directory without following a preexisting symlink", async () => {
+    const root = await mkdtemp(join(tmpdir(), "collect-artifact-"));
+    directories.push(root);
+    const outside = join(root, "..", `${root.split("/").at(-1)}-outside`);
+    directories.push(outside);
+    await writeFile(outside, "unchanged");
+    await symlink(outside, join(root, "prek-autofix.json"));
+
+    const output = await writeArtifact(root, artifact);
+
+    expect(output).not.toBe(join(root, "prek-autofix.json"));
+    expect(await readFile(outside, "utf8")).toBe("unchanged");
+    expect((await stat(output)).mode & 0o777).toBe(0o600);
+    expect((await stat(join(output, ".."))).mode & 0o777).toBe(0o700);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "does not open a preexisting FIFO at the legacy artifact path",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "collect-artifact-fifo-"));
+      directories.push(root);
+      const fifo = join(root, "prek-autofix.json");
+      const made = await executeCommand("mkfifo", [fifo], {
+        cwd: root,
+        env,
+      });
+      expect(made.exitCode).toBe(0);
+
+      const output = await writeArtifact(root, artifact);
+
+      expect(output).not.toBe(fifo);
+      expect((await stat(fifo)).isFIFO()).toBe(true);
+    },
+  );
+
+  it("rejects artifact-root ancestor substitution before persistence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "collect-artifact-root-"));
+    directories.push(root);
+    const identity = await captureRootIdentity(root);
+    const parked = `${root}-parked`;
+    directories.push(parked);
+    await rename(root, parked);
+    await import("node:fs/promises").then(({ mkdir }) => mkdir(root));
+
+    await expect(writeArtifact(root, artifact, identity)).rejects.toThrow(
+      "workspace identity changed while hooks were running",
+    );
+    await expect(
+      readFile(join(root, "prek-autofix.json")),
+    ).rejects.toThrow();
   });
 });

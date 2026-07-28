@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import type { Readable } from "node:stream";
-import { dirname, relative, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import type { ArtifactClient } from "@actions/artifact";
 import type { ChangeArtifact } from "../../shared/src/artifact";
@@ -8,13 +8,21 @@ import type { FileOperation } from "../../shared/src/artifact";
 import {
   ARTIFACT_SCHEMA_VERSION,
   artifactName,
+  validatePathComponentBudget,
 } from "../../shared/src/artifact";
+import { HOOK_SUPERVISOR_SCRIPT } from "./hook-supervisor";
 import { parseExtraArgs } from "./args";
 import {
   assertExactCleanCheckout,
+  assertExactHead,
+  assertRootIdentity,
+  assertTrustedPython,
+  captureRootIdentity,
+  captureTrustedPython,
   collectOperations,
   type CommandResult,
   type Execute,
+  type RootIdentity,
   writeArtifact,
 } from "./git";
 
@@ -46,6 +54,7 @@ export interface CollectDeps {
     root: string,
     execute: Execute,
     env: NodeJS.ProcessEnv,
+    expectedRoot: RootIdentity,
   ) => Promise<FileOperation[]>;
   persistArtifact?: typeof writeArtifact;
   platform?: NodeJS.Platform;
@@ -152,21 +161,43 @@ export function streamUntrustedOutput(
 export const executeCommand: Execute = async (command, args, options) =>
   await new Promise<CommandResult>((finish, reject) => {
     const useProcessGroup = process.platform === "linux";
-    if (options.cleanupProcessGroup && !useProcessGroup) {
+    if (options.superviseProcessTree && !useProcessGroup) {
       reject(new Error("secure hook process cleanup requires Linux"));
       return;
     }
-    const child = spawn(command, args, {
+    const supervised = options.superviseProcessTree === true;
+    if (
+      supervised &&
+      (!options.trustedPythonPath || !isAbsolute(options.trustedPythonPath))
+    ) {
+      reject(new Error("secure hook supervision requires a pinned Python path"));
+      return;
+    }
+    const spawnedCommand = supervised ? options.trustedPythonPath! : command;
+    const spawnedArgs = supervised
+      ? [
+          "-I",
+          "-c",
+          HOOK_SUPERVISOR_SCRIPT,
+          String((options.timeoutMs ?? 0) / 1000),
+          command,
+          ...args,
+        ]
+      : args;
+    const child = spawn(spawnedCommand, spawnedArgs, {
       cwd: options.cwd,
       env: options.env,
       detached: useProcessGroup,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: supervised
+        ? ["ignore", "pipe", "pipe", "pipe"]
+        : ["ignore", "pipe", "pipe"],
     });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     let capturedBytes = 0;
     let captureOverflow = false;
     let forceKill: NodeJS.Timeout | undefined;
+    const protocol: Buffer[] = [];
     const terminate = (signal: NodeJS.Signals): void => {
       if (child.pid === undefined) return;
       try {
@@ -175,27 +206,16 @@ export const executeCommand: Execute = async (command, args, options) =>
         if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
       }
     };
-    const processGroupExists = (): boolean => {
-      if (!useProcessGroup || child.pid === undefined) return false;
-      try {
-        process.kill(-child.pid, 0);
-        return true;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
-        if ((error as NodeJS.ErrnoException).code === "EPERM") return true;
-        throw error;
-      }
-    };
     const streamedStdout = options.streamUntrustedOutput
       ? streamUntrustedOutput(
-          child.stdout,
+          child.stdout!,
           process.stdout,
           options.streamLimitBytes ?? 1048576,
         )
       : undefined;
     const streamedStderr = options.streamUntrustedOutput
       ? streamUntrustedOutput(
-          child.stderr,
+          child.stderr!,
           process.stderr,
           options.streamLimitBytes ?? 1048576,
         )
@@ -209,29 +229,31 @@ export const executeCommand: Execute = async (command, args, options) =>
         if (!captureOverflow) {
           captureOverflow = true;
           terminate("SIGTERM");
-          forceKill = setTimeout(() => terminate("SIGKILL"), 2000);
-          forceKill.unref();
+          if (!supervised) {
+            forceKill = setTimeout(() => terminate("SIGKILL"), 2000);
+            forceKill.unref();
+          }
         }
         return;
       }
       capturedBytes += chunk.byteLength;
       chunks.push(chunk);
     };
-    child.stdout.on("data", (chunk: Buffer) => {
+    child.stdout!.on("data", (chunk: Buffer) => {
       if (streamedStdout) streamedStdout.write(chunk);
       else capture(stdout, chunk);
     });
-    child.stderr.on("data", (chunk: Buffer) => {
+    child.stderr!.on("data", (chunk: Buffer) => {
       if (streamedStderr) streamedStderr.write(chunk);
       else capture(stderr, chunk);
     });
     let timedOut = false;
     const timeoutError = (): Error =>
       new Error(
-        `prek pass timed out after ${Math.ceil((options.timeoutMs ?? 0) / 1000)} seconds; terminated hook process${useProcessGroup ? " tree" : ""}`,
+        `prek pass timed out after ${Math.ceil((options.timeoutMs ?? 0) / 1000)} seconds; terminated hook process${supervised || useProcessGroup ? " tree" : ""}`,
       );
     const timeout =
-      options.timeoutMs === undefined
+      options.timeoutMs === undefined || supervised
         ? undefined
         : setTimeout(() => {
             timedOut = true;
@@ -242,39 +264,48 @@ export const executeCommand: Execute = async (command, args, options) =>
             }, 2000);
           }, options.timeoutMs);
     timeout?.unref();
-    let cleanupPromise: Promise<void> | undefined;
-    child.on("exit", () => {
-      if (!options.cleanupProcessGroup || timedOut || captureOverflow) return;
-      cleanupPromise = (async () => {
-        terminate("SIGTERM");
-        for (let attempt = 0; attempt < 5; attempt += 1) {
-          if (!processGroupExists()) return;
-          await new Promise((resolve) => setTimeout(resolve, 20));
-        }
-        terminate("SIGKILL");
-        for (let attempt = 0; attempt < 100; attempt += 1) {
-          if (!processGroupExists()) return;
-          await new Promise((resolve) => setTimeout(resolve, 20));
-        }
-        throw new Error("could not reap hook process group");
-      })();
-    });
+    if (supervised) {
+      const protocolStream = child.stdio[3];
+      if (protocolStream && "on" in protocolStream) {
+        protocolStream.on("data", (chunk: Buffer) => {
+          if (Buffer.concat(protocol).byteLength + chunk.byteLength <= 4096) {
+            protocol.push(chunk);
+          }
+        });
+      }
+    }
+    const forwardedSignals = ["SIGTERM", "SIGINT", "SIGHUP"] as const;
+    const signalHandlers = new Map<NodeJS.Signals, () => void>(
+      forwardedSignals.map((signal) => [signal, () => terminate(signal)]),
+    );
+    if (supervised) {
+      for (const signal of forwardedSignals) {
+        process.on(signal, signalHandlers.get(signal)!);
+      }
+    }
+    const removeSignalHandlers = (): void => {
+      if (!supervised) return;
+      for (const signal of forwardedSignals) {
+        process.off(signal, signalHandlers.get(signal)!);
+      }
+    };
     child.on("error", (error) => {
       if (timeout) clearTimeout(timeout);
       if (forceKill) clearTimeout(forceKill);
+      removeSignalHandlers();
       reject(error);
     });
     child.on("close", (exitCode) => {
       if (timeout) clearTimeout(timeout);
       streamedStdout?.end();
       streamedStderr?.end();
+      removeSignalHandlers();
       if (timedOut) {
         if (useProcessGroup) return;
         if (forceKill) clearTimeout(forceKill);
         reject(timeoutError());
         return;
       }
-      if (forceKill) clearTimeout(forceKill);
       if (captureOverflow) {
         reject(
           new Error(
@@ -283,8 +314,33 @@ export const executeCommand: Execute = async (command, args, options) =>
         );
         return;
       }
+      if (forceKill) clearTimeout(forceKill);
       const complete = async (): Promise<void> => {
-        await cleanupPromise;
+        if (supervised) {
+          const records = Buffer.concat(protocol).toString("ascii").split("\n");
+          if (!records.includes("READY")) {
+            throw new Error(
+              "hook supervisor failed to establish the Linux subreaper boundary",
+            );
+          }
+          if (records.includes("CLEANUP_FAILED")) {
+            throw new Error(
+              "hook supervisor could not prove that all hook descendants exited",
+            );
+          }
+          if (records.includes("SPAWN_FAILED")) {
+            throw new Error("hook supervisor could not start prek");
+          }
+          if (records.includes("CLEAN timeout")) throw timeoutError();
+          if (records.includes("CLEAN signal")) {
+            throw new Error("prek pass interrupted after hook process cleanup");
+          }
+          if (!records.includes("CLEAN normal")) {
+            throw new Error(
+              "hook supervisor exited without proving descendant cleanup",
+            );
+          }
+        }
         finish({
           exitCode: exitCode ?? 1,
           stdout: Buffer.concat(stdout),
@@ -341,22 +397,38 @@ export async function runCollect(
     );
   }
   const workspace = resolve(context.workspace);
-  const root = resolve(workspace, inputs.workingDirectory);
-  const rel = relative(workspace, root);
+  const workspaceIdentity = await captureRootIdentity(workspace);
+  const artifactRoot = resolve(context.artifactDirectory);
+  const artifactRootIdentity = await captureRootIdentity(artifactRoot);
+  const trustedPython = await captureTrustedPython();
+  const canonicalWorkspace = workspaceIdentity.canonicalPath;
+  const rootPathname = resolve(canonicalWorkspace, inputs.workingDirectory);
+  const rel = relative(canonicalWorkspace, rootPathname);
   if (rel === ".." || rel.startsWith("../") || rel.startsWith("..\\")) {
     throw new Error("working-directory must be inside the workspace");
   }
+  const workingRootIdentity = await captureRootIdentity(rootPathname);
+  const canonicalRoot = workingRootIdentity.canonicalPath;
+  const canonicalRel = relative(canonicalWorkspace, canonicalRoot);
+  if (
+    canonicalRel === ".." ||
+    canonicalRel.startsWith("../") ||
+    canonicalRel.startsWith("..\\")
+  ) {
+    throw new Error("working-directory must resolve inside the workspace");
+  }
   const childEnv = sanitizedEnvironment(deps.env);
+  await assertTrustedPython(trustedPython);
   const python = await deps.execute(
-    "python3",
+    trustedPython.canonicalPath,
     ["-I", "-c", "import os, stat"],
-    { cwd: workspace, env: childEnv, captureLimitBytes: 4096 },
+    { cwd: canonicalWorkspace, env: childEnv, captureLimitBytes: 4096 },
   );
   if (python.exitCode !== 0) {
     throw new Error("secure collection requires Python 3");
   }
   await assertExactCleanCheckout(
-    workspace,
+    canonicalWorkspace,
     context.headSha,
     deps.execute,
     childEnv,
@@ -373,19 +445,41 @@ export async function runCollect(
   let hardFailure: Error | undefined;
   let converged = false;
   for (let pass = 1; pass <= inputs.maxPasses; pass += 1) {
+    await assertTrustedPython(trustedPython);
     const result = await deps.execute("prek", args, {
-      cwd: root,
+      cwd: canonicalRoot,
       env: childEnv,
       streamUntrustedOutput: true,
       streamLimitBytes: inputs.maxLogBytes,
-      cleanupProcessGroup: true,
+      superviseProcessTree: true,
+      trustedPythonPath: trustedPython.canonicalPath,
       timeoutMs: inputs.passTimeoutSeconds * 1000,
     });
-    operations = await (deps.collectChanges ?? collectOperations)(
-      workspace,
+    await assertRootIdentity(workspace, workspaceIdentity);
+    await assertRootIdentity(rootPathname, workingRootIdentity);
+    await assertExactHead(
+      canonicalWorkspace,
+      context.headSha,
       deps.execute,
       childEnv,
     );
+    operations = deps.collectChanges
+      ? await deps.collectChanges(
+          canonicalWorkspace,
+          deps.execute,
+          childEnv,
+          workspaceIdentity,
+        )
+      : await collectOperations(
+          canonicalWorkspace,
+          deps.execute,
+          childEnv,
+          undefined,
+          undefined,
+          0,
+          workspaceIdentity,
+          trustedPython,
+        );
     const snapshot = JSON.stringify(operations);
     if (result.exitCode === 0) {
       converged = true;
@@ -412,6 +506,16 @@ export async function runCollect(
     operations.length ? artifactName(context.runId) : "",
   );
   if (operations.length > 0) {
+    await assertRootIdentity(workspace, workspaceIdentity);
+    await assertRootIdentity(artifactRoot, artifactRootIdentity);
+    await assertTrustedPython(trustedPython);
+    await assertExactHead(
+      canonicalWorkspace,
+      context.headSha,
+      deps.execute,
+      childEnv,
+    );
+    validatePathComponentBudget(operations.map(({ path }) => path));
     const artifact: ChangeArtifact = {
       schemaVersion: ARTIFACT_SCHEMA_VERSION,
       source: {
@@ -427,6 +531,15 @@ export async function runCollect(
     const file = await (deps.persistArtifact ?? writeArtifact)(
       context.artifactDirectory,
       artifact,
+      artifactRootIdentity,
+    );
+    await assertRootIdentity(workspace, workspaceIdentity);
+    await assertRootIdentity(artifactRoot, artifactRootIdentity);
+    await assertExactHead(
+      canonicalWorkspace,
+      context.headSha,
+      deps.execute,
+      childEnv,
     );
     await deps.artifact.uploadArtifact(
       artifactName(context.runId),

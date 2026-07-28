@@ -3,6 +3,7 @@ import {
   createMutationClient,
   createReadClient,
 } from "../../packages/apply/src/github";
+import { MAX_TOTAL_PATH_COMPONENTS } from "../../packages/shared/src/artifact";
 
 function octokitFixture() {
   const getTree = vi.fn();
@@ -115,6 +116,26 @@ describe("GitHub apply adapters", () => {
     await expect(
       read.getTreeEntries("fork/repo", "root", ["small.txt"]),
     ).rejects.toThrow("truncated");
+  });
+
+  it("rejects over-budget paths before making a Git tree request", async () => {
+    const { octokit, getTree } = octokitFixture();
+    const read = createReadClient(octokit as never, "base", "repo");
+    const componentsPerPath = MAX_TOTAL_PATH_COMPONENTS / 100;
+    const paths = Array.from({ length: 100 }, (_, pathIndex) =>
+      Array.from(
+        {
+          length:
+            componentsPerPath + (pathIndex === 99 ? 1 : 0),
+        },
+        (_, componentIndex) => `p${pathIndex}-${componentIndex}`,
+      ).join("/"),
+    );
+
+    await expect(
+      read.getTreeEntries("base/repo", "root", paths),
+    ).rejects.toThrow(`more than ${MAX_TOTAL_PATH_COMPONENTS} total components`);
+    expect(getTree).not.toHaveBeenCalled();
   });
 
   it("routes Git Data writes to the fork and performs exact-head GraphQL CAS", async () => {
