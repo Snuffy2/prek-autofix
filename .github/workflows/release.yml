@@ -139,15 +139,11 @@ jobs:
           if (!releaseRef || releaseRef.sha !== targetSha) {
             throw new Error("Verified release SHA does not match its immutable tag");
           }
-          const highest = stableTags.reduce((left, right) =>
-            compare(left.version, right.version) >= 0 ? left : right,
-          );
-
           const current = tags.find((tag) => tag.name === majorTag);
           if (!current) {
-            return `create\t${highest.sha}`;
+            return `create\t${targetSha}`;
           }
-          if (current.commit.sha === highest.sha) {
+          if (current.commit.sha === targetSha) {
             return "noop\t";
           }
 
@@ -162,10 +158,10 @@ jobs:
           const currentVersion = currentVersions.reduce((left, right) =>
             compare(left.version, right.version) >= 0 ? left : right,
           );
-          if (compare(highest.version, currentVersion.version) < 0) {
+          if (compare(releaseVersion, currentVersion.version) < 0) {
             return "skip\t";
           }
-          return `update\t${highest.sha}\t${current.commit.sha}`;
+          return `update\t${targetSha}\t${current.commit.sha}`;
           }
 
           process.stdout.write(decide());
@@ -175,10 +171,10 @@ jobs:
           IFS=$'\t' read -r action update_sha before_oid <<< "$decision"
           case "$action" in
           skip)
-            echo "$major_tag is newer than the eligible stable releases observed; leaving it unchanged"
+            echo "$major_tag is newer than $RELEASE_TAG; leaving it unchanged"
             ;;
           noop)
-            echo "$major_tag already points to the highest eligible stable release observed"
+            echo "$major_tag already points to $RELEASE_TAG"
             ;;
           update)
             IFS=$'\t' read -r direct_before_oid direct_type < <(

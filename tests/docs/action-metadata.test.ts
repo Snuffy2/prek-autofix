@@ -269,27 +269,62 @@ describe("action metadata", () => {
         { name: "v1.10.0", commit: { sha: targetSha } },
         { name: "v1.11.0", commit: { sha: newerSha } },
       ]),
-    ).toBe("noop\t");
+    ).toBe("skip\t");
   });
 
-  it("lets a surviving older event reconcile to the highest observed release", async () => {
+  it("promotes only the triggering release verified by the read-only job", async () => {
     const workflow = await metadata(".github/workflows/release.yml");
     const script = releaseDecisionScript(workflow);
     const oldSha = "1".repeat(40);
     const triggeringSha = "2".repeat(40);
-    const replacedPendingSha = "3".repeat(40);
-    const survivingPendingSha = "4".repeat(40);
+    const unverifiedNewerSha = "3".repeat(40);
     const tags = [
       { name: "v1", commit: { sha: oldSha } },
       { name: "v1.9.9", commit: { sha: oldSha } },
       { name: "v1.10.0", commit: { sha: triggeringSha } },
+      { name: "v1.11.0", commit: { sha: unverifiedNewerSha } },
+    ];
+
+    expect(
+      decideRelease(script, "v1.10.0", triggeringSha, tags),
+    ).toBe(`update\t${triggeringSha}\t${oldSha}`);
+  });
+
+  it("allows a surviving verified pending job to advance after replacement", async () => {
+    const workflow = await metadata(".github/workflows/release.yml");
+    const script = releaseDecisionScript(workflow);
+    const oldSha = "1".repeat(40);
+    const runningSha = "2".repeat(40);
+    const replacedPendingSha = "3".repeat(40);
+    const survivingPendingSha = "4".repeat(40);
+    const tagsBeforeRunningUpdate = [
+      { name: "v1", commit: { sha: oldSha } },
+      { name: "v1.9.9", commit: { sha: oldSha } },
+      { name: "v1.10.0", commit: { sha: runningSha } },
       { name: "v1.11.0", commit: { sha: replacedPendingSha } },
       { name: "v1.12.0", commit: { sha: survivingPendingSha } },
     ];
 
     expect(
-      decideRelease(script, "v1.10.0", triggeringSha, tags),
-    ).toBe(`update\t${survivingPendingSha}\t${oldSha}`);
+      decideRelease(
+        script,
+        "v1.10.0",
+        runningSha,
+        tagsBeforeRunningUpdate,
+      ),
+    ).toBe(`update\t${runningSha}\t${oldSha}`);
+
+    const tagsAfterRunningUpdate = tagsBeforeRunningUpdate.map((tag) =>
+      tag.name === "v1" ? { ...tag, commit: { sha: runningSha } } : tag,
+    );
+    expect(
+      decideRelease(
+        script,
+        "v1.12.0",
+        survivingPendingSha,
+        tagsAfterRunningUpdate,
+      ),
+    ).toBe(`update\t${survivingPendingSha}\t${runningSha}`);
   });
 
   it("uses an annotated moving tag's direct ref OID in the exact CAS update", async () => {
