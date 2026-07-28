@@ -11,6 +11,7 @@ function octokitFixture() {
     rest: {
       actions: { getWorkflowRun: vi.fn() },
       repos: { listPullRequestsAssociatedWithCommit: vi.fn() },
+      pulls: { get: vi.fn() },
       git: {
         getCommit: vi.fn(),
         getTree,
@@ -39,8 +40,7 @@ describe("GitHub apply adapters", () => {
       head_sha: "head", head_branch: "feature",
       head_repository: { full_name: "fork/repo" },
     } });
-    octokit.rest.repos.listPullRequestsAssociatedWithCommit.mockResolvedValue({
-      data: [{
+    octokit.paginate.mockResolvedValue([{
         number: 4, state: "open", html_url: "pr",
         base: { repo: { full_name: "base/repo" } },
         head: {
@@ -50,8 +50,10 @@ describe("GitHub apply adapters", () => {
           },
           ref: "feature", sha: "head",
         },
-        maintainer_can_modify: true,
-      }],
+      },
+    ]);
+    octokit.rest.pulls.get.mockResolvedValue({
+      data: { maintainer_can_modify: true },
     });
     const read = createReadClient(octokit as never, "base", "repo");
 
@@ -59,11 +61,54 @@ describe("GitHub apply adapters", () => {
       headRepository: "fork/repo",
     });
     await expect(read.listAssociatedPullRequests("head")).resolves.toMatchObject([
-      { headRepositoryNodeId: "R_fork", headRepository: "fork/repo" },
+      {
+        headRepositoryNodeId: "R_fork",
+        headRepository: "fork/repo",
+        maintainerCanModify: true,
+      },
     ]);
     expect(octokit.rest.actions.getWorkflowRun).toHaveBeenCalledWith({
       owner: "base", repo: "repo", run_id: 7,
     });
+    expect(octokit.paginate).toHaveBeenCalledWith(
+      octokit.rest.repos.listPullRequestsAssociatedWithCommit,
+      { owner: "base", repo: "repo", commit_sha: "head", per_page: 100 },
+    );
+    expect(octokit.rest.pulls.get).toHaveBeenCalledWith({
+      owner: "base", repo: "repo", pull_number: 4,
+    });
+  });
+
+  it("maps same-repository PRs without fetching PR details", async () => {
+    const { octokit } = octokitFixture();
+    octokit.paginate.mockResolvedValue([{
+      number: 5,
+      state: "open",
+      base: { repo: { full_name: "base/repo" } },
+      head: {
+        repo: {
+          full_name: "base/repo",
+          node_id: "R_base",
+          owner: { type: "Organization" },
+        },
+        ref: "feature",
+        sha: "head",
+      },
+    }]);
+    const read = createReadClient(octokit as never, "base", "repo");
+
+    await expect(read.listAssociatedPullRequests("head")).resolves.toEqual([{
+      number: 5,
+      state: "open",
+      baseRepository: "base/repo",
+      headRepository: "base/repo",
+      headRepositoryNodeId: "R_base",
+      headRepositoryOwnerType: "Organization",
+      headRef: "feature",
+      headSha: "head",
+      maintainerCanModify: false,
+    }]);
+    expect(octokit.rest.pulls.get).not.toHaveBeenCalled();
   });
 
   it("walks only affected paths through the base repository and caches shared ancestors", async () => {
@@ -121,12 +166,18 @@ describe("GitHub apply adapters", () => {
   it("rejects over-budget paths before making a Git tree request", async () => {
     const { octokit, getTree } = octokitFixture();
     const read = createReadClient(octokit as never, "base", "repo");
-    const componentsPerPath = MAX_TOTAL_PATH_COMPONENTS / 100;
-    const paths = Array.from({ length: 100 }, (_, pathIndex) =>
+    const pathCount = 100;
+    const componentsPerPath = Math.floor(
+      MAX_TOTAL_PATH_COMPONENTS / pathCount,
+    );
+    const remainder = MAX_TOTAL_PATH_COMPONENTS % pathCount;
+    const paths = Array.from({ length: pathCount }, (_, pathIndex) =>
       Array.from(
         {
           length:
-            componentsPerPath + (pathIndex === 99 ? 1 : 0),
+            componentsPerPath +
+            (pathIndex < remainder ? 1 : 0) +
+            (pathIndex === pathCount - 1 ? 1 : 0),
         },
         (_, componentIndex) => `p${pathIndex}-${componentIndex}`,
       ).join("/"),

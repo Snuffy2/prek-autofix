@@ -16,6 +16,7 @@ import type { Execute } from "../../packages/collect/src/git";
 
 const SHA = "a".repeat(40);
 const directories: string[] = [];
+const seenEnvironments: NodeJS.ProcessEnv[] = [];
 
 function result(exitCode = 0, stdout = "") {
   return { exitCode, stdout: Buffer.from(stdout), stderr: Buffer.alloc(0) };
@@ -24,16 +25,30 @@ function result(exitCode = 0, stdout = "") {
 function setup(prekResults: ReturnType<typeof result>[]) {
   let prek = 0;
   const execute: Execute = vi.fn(async (command, args, options) => {
-    expect(options.env.PREK_AUTOFIX_TOKEN).toBeUndefined();
+    seenEnvironments.push(options.env);
     if (command === "prek") return prekResults[prek++] ?? result();
     if (command.includes("python3")) return result();
-    if (args[0] === "rev-parse") return result(0, `${SHA}\n`);
-    if (args[0] === "status") return result();
-    if (args[0] === "ls-tree") return result();
-    if (args[0] === "diff" || args[0] === "ls-files") return result();
+    if (args[2] === "rev-parse") return result(0, `${SHA}\n`);
+    if (args[2] === "status") return result();
+    if (args[2] === "ls-tree") return result();
+    if (args[2] === "diff" || args[2] === "ls-files") return result();
     throw new Error(`unexpected command: ${command} ${args.join(" ")}`);
   });
   return execute;
+}
+
+function expectSecretsExcluded(): void {
+  expect(seenEnvironments.length).toBeGreaterThan(0);
+  for (const environment of seenEnvironments) {
+    expect(environment.PREK_AUTOFIX_TOKEN).toBeUndefined();
+    expect(environment.AWS_ACCESS_KEY_ID).toBeUndefined();
+    expect(environment.API_KEY).toBeUndefined();
+    expect(environment.PRIVATE_KEY).toBeUndefined();
+    expect(environment.GOOGLE_APPLICATION_CREDENTIALS).toBeUndefined();
+    expect(environment.NPM_CONFIG_USERCONFIG).toBeUndefined();
+    expect(environment.DOCKER_CONFIG).toBeUndefined();
+    expect(environment.GIT_EXTERNAL_DIFF).toBeUndefined();
+  }
 }
 
 async function invoke(
@@ -47,7 +62,7 @@ async function invoke(
   directories.push(workspace);
   const wrapped: Execute = initialStatus
     ? async (command, args, options) =>
-        args[0] === "status"
+        args[2] === "status"
           ? result(0, " M dirty\0")
           : execute(command, args, options)
     : execute;
@@ -87,7 +102,17 @@ async function invoke(
     {
       execute: wrapped,
       artifact: { uploadArtifact },
-      env: { PATH: process.env.PATH, PREK_AUTOFIX_TOKEN: "do-not-leak" },
+      env: {
+        PATH: process.env.PATH,
+        PREK_AUTOFIX_TOKEN: "do-not-leak",
+        AWS_ACCESS_KEY_ID: "access-key",
+        API_KEY: "api-key",
+        PRIVATE_KEY: "private-key",
+        GOOGLE_APPLICATION_CREDENTIALS: "/tmp/credentials",
+        NPM_CONFIG_USERCONFIG: "/tmp/npmrc",
+        DOCKER_CONFIG: "/tmp/docker",
+        GIT_EXTERNAL_DIFF: "/tmp/diff",
+      },
       platform,
       setOutput: (name, value) => outputs.set(name, value),
       collectChanges,
@@ -98,6 +123,7 @@ async function invoke(
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  seenEnvironments.length = 0;
   const { rm } = await import("node:fs/promises");
   await Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true })));
 });
@@ -143,6 +169,7 @@ describe("runCollect", () => {
   it("distinguishes a clean hard failure", async () => {
     const call = await invoke(setup([result(2)]));
     await expect(call.promise).rejects.toBeInstanceOf(HardFailureError);
+    expectSecretsExcluded();
     expect(call.uploadArtifact).not.toHaveBeenCalled();
   });
 
@@ -154,6 +181,7 @@ describe("runCollect", () => {
       [["a"], ["a"]],
     );
     await expect(call.promise).rejects.toBeInstanceOf(HardFailureError);
+    expectSecretsExcluded();
     expect(call.uploadArtifact).toHaveBeenCalledOnce();
   });
 
@@ -161,6 +189,7 @@ describe("runCollect", () => {
     const execute = setup([result(1), result(1)]);
     const call = await invoke(execute, 2, false, [["a"], ["b"]]);
     await expect(call.promise).rejects.toBeInstanceOf(NonConvergenceError);
+    expectSecretsExcluded();
     expect(call.uploadArtifact).not.toHaveBeenCalled();
     expect(call.outputs.get("artifact-name")).toBe("");
   });
@@ -170,11 +199,11 @@ describe("runCollect", () => {
     const execute: Execute = vi.fn(async (command, args) => {
       if (command.includes("python3")) return result();
       if (command === "prek") return result();
-      if (args[0] === "rev-parse") {
+      if (args[2] === "rev-parse") {
         headChecks += 1;
         return result(0, `${headChecks === 1 ? SHA : "b".repeat(40)}\n`);
       }
-      if (args[0] === "status") return result();
+      if (args[2] === "status") return result();
       throw new Error(`unexpected command: ${command} ${args.join(" ")}`);
     });
     const call = await invoke(execute, 3, false, [[]]);
@@ -198,8 +227,8 @@ describe("runCollect", () => {
         substituted = true;
         return result();
       }
-      if (args[0] === "rev-parse") return result(0, `${SHA}\n`);
-      if (args[0] === "status") return result();
+      if (args[2] === "rev-parse") return result(0, `${SHA}\n`);
+      if (args[2] === "status") return result();
       throw new Error(`unexpected command: ${command} ${args.join(" ")}`);
     });
     const call = await invoke(execute);
@@ -238,19 +267,53 @@ describe("runCollect", () => {
     expect(JSON.stringify(artifact)).not.toContain("do-not-leak");
   });
 
-  it("scrubs credential-like child environment variables", () => {
+  it("allows only required hook runtime and cache environment variables", () => {
     expect(
       sanitizedEnvironment({
         PATH: "/bin",
+        HOME: "/home/runner",
+        TMPDIR: "/tmp",
+        LANG: "C.UTF-8",
+        CI: "true",
+        GITHUB_WORKSPACE: "/workspace",
+        GITHUB_REPOSITORY: "owner/repo",
+        RUNNER_TEMP: "/runner-temp",
+        PREK_HOME: "/cache/prek",
+        PRE_COMMIT_HOME: "/cache/pre-commit",
+        XDG_CACHE_HOME: "/cache",
         GITHUB_TOKEN: "token",
+        GH_TOKEN: "token",
+        ACTIONS_RUNTIME_TOKEN: "token",
+        NODE_AUTH_TOKEN: "token",
+        PREK_AUTOFIX_TOKEN: "token",
         CLIENT_SECRET: "secret",
         PASSWORD: "password",
+        AWS_ACCESS_KEY_ID: "access-key",
+        API_KEY: "api-key",
+        PRIVATE_KEY: "private-key",
+        GOOGLE_APPLICATION_CREDENTIALS: "/tmp/credentials",
+        NPM_CONFIG_USERCONFIG: "/tmp/npmrc",
+        DOCKER_CONFIG: "/tmp/docker",
+        GIT_CONFIG_GLOBAL: "/tmp/gitconfig",
+        GIT_EXTERNAL_DIFF: "/tmp/diff",
         GITHUB_ENV: "/tmp/env",
         GITHUB_OUTPUT: "/tmp/output",
         GITHUB_PATH: "/tmp/path",
         GITHUB_STEP_SUMMARY: "/tmp/summary",
       }),
-    ).toEqual({ PATH: "/bin" });
+    ).toEqual({
+      PATH: "/bin",
+      HOME: "/home/runner",
+      TMPDIR: "/tmp",
+      LANG: "C.UTF-8",
+      CI: "true",
+      GITHUB_WORKSPACE: "/workspace",
+      GITHUB_REPOSITORY: "owner/repo",
+      RUNNER_TEMP: "/runner-temp",
+      PREK_HOME: "/cache/prek",
+      PRE_COMMIT_HOME: "/cache/pre-commit",
+      XDG_CACHE_HOME: "/cache",
+    });
   });
 });
 

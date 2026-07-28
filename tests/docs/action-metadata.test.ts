@@ -78,12 +78,17 @@ function runReleaseUpdate(
     published_at: string | null;
   }>,
   failure: "none" | "external-move" | "create-race" = "none",
+  directRefOid?: string,
 ): string {
   const directory = mkdtempSync(join(tmpdir(), "prek-autofix-release-write-"));
   const ghPath = join(directory, "gh");
   const callsPath = join(directory, "calls");
   const tagsJson = JSON.stringify([tags]);
   const releasesJson = JSON.stringify([releases]);
+  const movingTagCommitSha =
+    tags.find((tag) => tag.name === `v${releaseTag.split(".")[0]!.slice(1)}`)
+      ?.commit.sha ?? "";
+  const observedDirectRefOid = directRefOid ?? movingTagCommitSha;
   writeFileSync(
     ghPath,
     `#!/usr/bin/env bash
@@ -93,6 +98,10 @@ if [[ "$*" == *"tags?per_page=100"* ]]; then
   printf '%s' "$TAGS_JSON"
 elif [[ "$*" == *"releases?per_page=100"* ]]; then
   printf '%s' "$RELEASES_JSON"
+elif [[ "$*" == "api repos/$GITHUB_REPOSITORY/git/ref/tags/v1 --jq .object | [.sha, .type] | @tsv" ]]; then
+  printf '%s\\t%s\\n' "$DIRECT_REF_OID" "$DIRECT_REF_TYPE"
+elif [[ "$*" == "api repos/$GITHUB_REPOSITORY/git/tags/$DIRECT_REF_OID --jq .object | [.sha, .type] | @tsv" ]]; then
+  printf '%s\\tcommit\\n' "$MOVING_TAG_COMMIT_SHA"
 elif [[ "$*" == "api repos/$GITHUB_REPOSITORY --jq .node_id" ]]; then
   printf '%s\\n' 'R_repo_node'
 elif [[ "$*" == api\\ graphql* ]]; then
@@ -118,6 +127,9 @@ fi
         CALLS_PATH: callsPath,
         TAGS_JSON: tagsJson,
         RELEASES_JSON: releasesJson,
+        DIRECT_REF_OID: observedDirectRefOid,
+        DIRECT_REF_TYPE: directRefOid === undefined ? "commit" : "tag",
+        MOVING_TAG_COMMIT_SHA: movingTagCommitSha,
         FAILURE: failure,
         GITHUB_REPOSITORY: "owner/repository",
         RELEASE_TAG: releaseTag,
@@ -202,7 +214,6 @@ describe("action metadata", () => {
       group:
         "release-major-${{ github.repository }}-${{ needs.verify.outputs.major-tag }}",
       "cancel-in-progress": false,
-      queue: "max",
     });
     expect(workflow.jobs.verify.outputs["major-tag"]).toBe(
       "${{ steps.release.outputs.major-tag }}",
@@ -258,13 +269,34 @@ describe("action metadata", () => {
         { name: "v1.10.0", commit: { sha: targetSha } },
         { name: "v1.11.0", commit: { sha: newerSha } },
       ]),
-    ).toBe("skip\t");
+    ).toBe("noop\t");
   });
 
-  it("uses the observed moving-tag OID in an exact forced CAS update", async () => {
+  it("lets a surviving older event reconcile to the highest observed release", async () => {
+    const workflow = await metadata(".github/workflows/release.yml");
+    const script = releaseDecisionScript(workflow);
+    const oldSha = "1".repeat(40);
+    const triggeringSha = "2".repeat(40);
+    const replacedPendingSha = "3".repeat(40);
+    const survivingPendingSha = "4".repeat(40);
+    const tags = [
+      { name: "v1", commit: { sha: oldSha } },
+      { name: "v1.9.9", commit: { sha: oldSha } },
+      { name: "v1.10.0", commit: { sha: triggeringSha } },
+      { name: "v1.11.0", commit: { sha: replacedPendingSha } },
+      { name: "v1.12.0", commit: { sha: survivingPendingSha } },
+    ];
+
+    expect(
+      decideRelease(script, "v1.10.0", triggeringSha, tags),
+    ).toBe(`update\t${survivingPendingSha}\t${oldSha}`);
+  });
+
+  it("uses an annotated moving tag's direct ref OID in the exact CAS update", async () => {
     const workflow = await metadata(".github/workflows/release.yml");
     const oldSha = "1".repeat(40);
     const targetSha = "2".repeat(40);
+    const annotatedTagOid = "a".repeat(40);
     const releases = ["v1.9.9", "v1.10.0"].map((tagName) => ({
       tag_name: tagName,
       draft: false,
@@ -281,13 +313,24 @@ describe("action metadata", () => {
         { name: "v1.10.0", commit: { sha: targetSha } },
       ],
       releases,
+      "none",
+      annotatedTagOid,
     );
 
+    expect(calls).toContain(
+      "api repos/owner/repository/git/ref/tags/v1 " +
+        "--jq .object | [.sha, .type] | @tsv",
+    );
+    expect(calls).toContain(
+      `api repos/owner/repository/git/tags/${annotatedTagOid} ` +
+        "--jq .object | [.sha, .type] | @tsv",
+    );
     expect(calls).toContain("api repos/owner/repository --jq .node_id");
     expect(calls).toContain("api graphql");
     expect(calls).toContain("-F repositoryId=R_repo_node");
     expect(calls).toContain("-f name=refs/tags/v1");
-    expect(calls).toContain(`-f beforeOid=${oldSha}`);
+    expect(calls).toContain(`-f beforeOid=${annotatedTagOid}`);
+    expect(calls).not.toContain(`-f beforeOid=${oldSha}`);
     expect(calls).toContain(`-f afterOid=${targetSha}`);
     expect(calls).toContain("-F force=true");
   });

@@ -4,12 +4,12 @@ import * as github from "@actions/github";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import {
-  artifactName,
   DEFAULT_COMMIT_MESSAGE,
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_FILES,
   parseChangeArtifact,
 } from "../../shared/src/artifact";
+import { getArtifactIfPresent } from "./artifact-lookup";
 import {
   applyArtifact,
   maximumRawArtifactBytes,
@@ -48,14 +48,14 @@ async function run(): Promise<void> {
     core.getInput("commit-message") || DEFAULT_COMMIT_MESSAGE;
 
   const artifactClient = new DefaultArtifactClient();
-  const lookup = await artifactClient.getArtifact(artifactName(runId), {
-    findBy: {
-      token: githubToken,
-      workflowRunId: runId,
-      repositoryOwner: owner,
-      repositoryName: repo,
-    },
-  });
+  const lookup = await getArtifactIfPresent(
+    artifactClient,
+    runId,
+    owner,
+    repo,
+    githubToken,
+  );
+  if (!lookup) return;
   const download = await artifactClient.downloadArtifact(lookup.artifact.id, {
       findBy: {
         token: githubToken,

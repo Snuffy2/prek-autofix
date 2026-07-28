@@ -64,21 +64,40 @@ export class HardFailureError extends Error {}
 export class NonConvergenceError extends Error {}
 export class FixesFoundError extends Error {}
 
+const SAFE_CHILD_ENVIRONMENT = new Set([
+  "CI",
+  "GITHUB_ACTIONS",
+  "GITHUB_BASE_REF",
+  "GITHUB_EVENT_NAME",
+  "GITHUB_HEAD_REF",
+  "GITHUB_REF",
+  "GITHUB_REPOSITORY",
+  "GITHUB_RUN_ATTEMPT",
+  "GITHUB_RUN_ID",
+  "GITHUB_SHA",
+  "GITHUB_WORKSPACE",
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "PATH",
+  "PREK_HOME",
+  "PRE_COMMIT_HOME",
+  "RUNNER_ARCH",
+  "RUNNER_OS",
+  "RUNNER_TEMP",
+  "RUNNER_TOOL_CACHE",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+  "XDG_CACHE_HOME",
+]);
+
 export function sanitizedEnvironment(
   source: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {
-  const githubFileCommands = new Set([
-    "GITHUB_ENV",
-    "GITHUB_OUTPUT",
-    "GITHUB_PATH",
-    "GITHUB_STEP_SUMMARY",
-  ]);
   return Object.fromEntries(
-    Object.entries(source).filter(
-      ([key]) =>
-        !/(?:TOKEN|SECRET|PASSWORD|AUTH)/i.test(key) &&
-        !githubFileCommands.has(key),
-    ),
+    Object.entries(source).filter(([key]) => SAFE_CHILD_ENVIRONMENT.has(key)),
   );
 }
 
@@ -250,7 +269,7 @@ export const executeCommand: Execute = async (command, args, options) =>
     let timedOut = false;
     const timeoutError = (): Error =>
       new Error(
-        `prek pass timed out after ${Math.ceil((options.timeoutMs ?? 0) / 1000)} seconds; terminated hook process${supervised || useProcessGroup ? " tree" : ""}`,
+        `${options.timeoutDescription ?? "prek pass"} timed out after ${Math.ceil((options.timeoutMs ?? 0) / 1000)} seconds; terminated ${options.timeoutDescription ? "process" : "hook process"}${supervised || useProcessGroup ? " tree" : ""}`,
       );
     const timeout =
       options.timeoutMs === undefined || supervised

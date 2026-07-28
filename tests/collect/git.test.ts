@@ -19,6 +19,7 @@ import {
   operationForGitStatus,
   writeArtifact,
   type Execute,
+  type TrustedExecutableIdentity,
 } from "../../packages/collect/src/git";
 import { executeCommand } from "../../packages/collect/src/runner";
 import {
@@ -29,7 +30,11 @@ import {
 } from "../../packages/shared/src/artifact";
 
 const directories: string[] = [];
-const env = { PATH: process.env.PATH };
+const env = {
+  PATH: process.env.PATH,
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_CONFIG_NOSYSTEM: "1",
+};
 const artifact: ChangeArtifact = {
   schemaVersion: ARTIFACT_SCHEMA_VERSION,
   source: {
@@ -49,6 +54,10 @@ function resultBuffer(stdout: string) {
     stdout: Buffer.from(stdout),
     stderr: Buffer.alloc(0),
   };
+}
+
+function gitSubcommand(args: string[]): string | undefined {
+  return args[2];
 }
 
 async function git(root: string, ...args: string[]): Promise<void> {
@@ -269,7 +278,7 @@ describe("collectOperations", () => {
     const root = await mkdtemp(join(tmpdir(), "collect-limit-"));
     directories.push(root);
     const execute: Execute = vi.fn(async (_command, args) => {
-      if (args[0] === "diff") {
+      if (gitSubcommand(args) === "diff") {
         const records = Array.from(
           { length: DEFAULT_MAX_FILES },
           (_, index) => `D\0file-${index}.txt\0`,
@@ -280,10 +289,10 @@ describe("collectOperations", () => {
           stderr: Buffer.alloc(0),
         };
       }
-      if (args[0] === "ls-files") {
+      if (gitSubcommand(args) === "ls-files") {
         return { exitCode: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
       }
-      if (args[0] === "ls-tree") {
+      if (gitSubcommand(args) === "ls-tree") {
         return { exitCode: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
       }
       throw new Error(`unexpected command: ${args.join(" ")}`);
@@ -311,10 +320,10 @@ describe("collectOperations", () => {
     const root = await repository();
     const deep = `${Array.from({ length: 33 }, () => "d").join("/")}/file`;
     const execute: Execute = vi.fn(async (_command, args) => {
-      if (args[0] === "diff") {
+      if (gitSubcommand(args) === "diff") {
         return resultBuffer(`D\0${deep}\0`);
       }
-      if (args[0] === "ls-files") return resultBuffer("");
+      if (gitSubcommand(args) === "ls-files") return resultBuffer("");
       throw new Error(`unexpected command: ${args.join(" ")}`);
     });
 
@@ -341,8 +350,10 @@ describe("collectOperations", () => {
 
     const modeCall = vi
       .mocked(execute)
-      .mock.calls.find(([, args]) => args[0] === "ls-tree");
+      .mock.calls.find(([, args]) => gitSubcommand(args) === "ls-tree");
     expect(modeCall?.[1]).toEqual([
+      "-c",
+      "core.fsmonitor=false",
       "ls-tree",
       "-z",
       "HEAD",
@@ -352,6 +363,109 @@ describe("collectOperations", () => {
     expect(modeCall?.[1]).not.toContain("-r");
     expect(modeCall?.[2].captureLimitBytes).toBe(GIT_CAPTURE_LIMIT_BYTES);
   });
+
+  it("does not execute a repository-configured fsmonitor command", async () => {
+    const root = await repository();
+    const marker = join(root, ".git", "fsmonitor-ran");
+    const monitor = join(root, ".git", "fsmonitor.sh");
+    await writeFile(
+      monitor,
+      `#!/bin/sh\nprintf ran > ${JSON.stringify(marker)}\nexit 1\n`,
+    );
+    await chmod(monitor, 0o755);
+    await git(root, "config", "core.fsmonitor", monitor);
+    await writeFile(join(root, "text.txt"), "new\n");
+
+    await expect(
+      collectOperations(root, executeCommand, env),
+    ).resolves.toHaveLength(1);
+    await expect(readFile(marker)).rejects.toThrow();
+  });
+
+  it("supervises bounded worktree Git inspection when trust is pinned", async () => {
+    const root = await mkdtemp(join(tmpdir(), "collect-supervised-git-"));
+    directories.push(root);
+    const execute: Execute = vi.fn(async () => resultBuffer(""));
+    const trustedPython: TrustedExecutableIdentity = {
+      canonicalPath: "/usr/bin/python3",
+      device: "1",
+      inode: "1",
+      mode: "33261",
+      uid: "0",
+    };
+
+    await expect(
+      collectOperations(
+        root,
+        execute,
+        env,
+        DEFAULT_MAX_FILES,
+        DEFAULT_MAX_BYTES,
+        0,
+        undefined,
+        trustedPython,
+        1234,
+      ),
+    ).resolves.toEqual([]);
+
+    for (const [, args, options] of vi.mocked(execute).mock.calls) {
+      if (args[2] !== "diff" && args[2] !== "ls-files") continue;
+      expect(options).toMatchObject({
+        superviseProcessTree: true,
+        trustedPythonPath: trustedPython.canonicalPath,
+        timeoutDescription: "git worktree inspection",
+        timeoutMs: 1234,
+      });
+    }
+  });
+
+  it.skipIf(process.platform !== "linux")(
+    "bounds and terminates an attacker-configured clean filter process tree",
+    async () => {
+      const root = await repository();
+      const pidFile = join(root, ".git", "filter-child.pid");
+      const filter = join(root, ".git", "filter.sh");
+      await writeFile(join(root, ".gitattributes"), "*.txt filter=attacker\n");
+      await git(root, "add", ".gitattributes");
+      await git(root, "commit", "-m", "add attributes");
+      await writeFile(
+        filter,
+        [
+          "#!/bin/sh",
+          "sleep 30 &",
+          "child=$!",
+          `printf '%s' "$child" > ${JSON.stringify(pidFile)}`,
+          'wait "$child"',
+        ].join("\n"),
+      );
+      await chmod(filter, 0o755);
+      await git(root, "config", "filter.attacker.clean", filter);
+      await git(root, "config", "filter.attacker.required", "true");
+      await writeFile(join(root, "text.txt"), "new\n");
+      const trustedPython = await captureTrustedPython();
+
+      await expect(
+        collectOperations(
+          root,
+          executeCommand,
+          env,
+          DEFAULT_MAX_FILES,
+          DEFAULT_MAX_BYTES,
+          0,
+          undefined,
+          trustedPython,
+          100,
+        ),
+      ).rejects.toThrow(
+        "git worktree inspection timed out after 1 seconds; terminated process tree",
+      );
+
+      const childPid = Number(await readFile(pidFile, "utf8"));
+      expect(() => process.kill(childPid, 0)).toThrow(
+        expect.objectContaining({ code: "ESRCH" }),
+      );
+    },
+  );
 });
 
 describe("operationForGitStatus", () => {

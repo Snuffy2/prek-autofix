@@ -53,7 +53,6 @@ jobs:
     concurrency:
       group: release-major-${{ github.repository }}-${{ needs.verify.outputs.major-tag }}
       cancel-in-progress: false
-      queue: max
     runs-on: ubuntu-latest
     steps:
       - name: Update moving major tag
@@ -140,22 +139,15 @@ jobs:
           if (!releaseRef || releaseRef.sha !== targetSha) {
             throw new Error("Verified release SHA does not match its immutable tag");
           }
-          if (stableTags.length === 0) {
-            throw new Error("No immutable stable tags were returned by GitHub");
-          }
-
           const highest = stableTags.reduce((left, right) =>
             compare(left.version, right.version) >= 0 ? left : right,
           );
-          if (compare(releaseVersion, highest.version) < 0) {
-            return "skip\t";
-          }
 
           const current = tags.find((tag) => tag.name === majorTag);
           if (!current) {
-            return `create\t${targetSha}`;
+            return `create\t${highest.sha}`;
           }
-          if (current.commit.sha === targetSha) {
+          if (current.commit.sha === highest.sha) {
             return "noop\t";
           }
 
@@ -170,10 +162,10 @@ jobs:
           const currentVersion = currentVersions.reduce((left, right) =>
             compare(left.version, right.version) >= 0 ? left : right,
           );
-          if (compare(releaseVersion, currentVersion.version) < 0) {
+          if (compare(highest.version, currentVersion.version) < 0) {
             return "skip\t";
           }
-          return `update\t${targetSha}\t${current.commit.sha}`;
+          return `update\t${highest.sha}\t${current.commit.sha}`;
           }
 
           process.stdout.write(decide());
@@ -183,12 +175,28 @@ jobs:
           IFS=$'\t' read -r action update_sha before_oid <<< "$decision"
           case "$action" in
           skip)
-            echo "$RELEASE_TAG is not the newest stable $major_tag release; leaving $major_tag unchanged"
+            echo "$major_tag is newer than the eligible stable releases observed; leaving it unchanged"
             ;;
           noop)
-            echo "$major_tag already points to $RELEASE_TAG"
+            echo "$major_tag already points to the highest eligible stable release observed"
             ;;
           update)
+            IFS=$'\t' read -r direct_before_oid direct_type < <(
+              gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$major_tag" \
+                --jq '.object | [.sha, .type] | @tsv'
+            )
+            peeled_oid="$direct_before_oid"
+            peeled_type="$direct_type"
+            while [[ "$peeled_type" == "tag" ]]; do
+              IFS=$'\t' read -r peeled_oid peeled_type < <(
+                gh api "repos/$GITHUB_REPOSITORY/git/tags/$peeled_oid" \
+                  --jq '.object | [.sha, .type] | @tsv'
+              )
+            done
+            if [[ "$peeled_type" != "commit" || "$peeled_oid" != "$before_oid" ]]; then
+              echo "$major_tag changed while its update was being prepared" >&2
+              exit 1
+            fi
             repository_id="$(
               gh api "repos/$GITHUB_REPOSITORY" --jq .node_id
             )"
@@ -218,7 +226,7 @@ jobs:
               " \
               -F repositoryId="$repository_id" \
               -f name="refs/tags/$major_tag" \
-              -f beforeOid="$before_oid" \
+              -f beforeOid="$direct_before_oid" \
               -f afterOid="$update_sha" \
               -F force=true
             ;;

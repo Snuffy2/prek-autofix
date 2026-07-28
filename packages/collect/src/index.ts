@@ -12,7 +12,7 @@ async function main(): Promise<void> {
       repository: `${github.context.repo.owner}/${github.context.repo.repo}`,
       workflow: github.context.workflow,
       pullRequestNumber: payload?.number,
-      headSha: payload?.head.sha,
+      headSha: payload?.head?.sha,
       workspace: process.env.GITHUB_WORKSPACE ?? process.cwd(),
       artifactDirectory: process.env.RUNNER_TEMP ?? process.cwd(),
     },

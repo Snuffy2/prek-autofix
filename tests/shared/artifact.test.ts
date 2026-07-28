@@ -212,6 +212,10 @@ describe("artifact contract", () => {
           },
           {
             ...validArtifact.operations[0],
+            path: "src-old.txt",
+          },
+          {
+            ...validArtifact.operations[0],
             path: "src/file.ts",
           },
         ],

@@ -10,6 +10,12 @@ import {
 } from "../../shared/src/artifact";
 
 export const GIT_CAPTURE_LIMIT_BYTES = DEFAULT_MAX_BYTES;
+export const GIT_INSPECTION_TIMEOUT_MS = 30_000;
+const GIT_SAFE_CONFIG = ["-c", "core.fsmonitor=false"];
+
+function gitArgs(...args: string[]): string[] {
+  return [...GIT_SAFE_CONFIG, ...args];
+}
 
 export interface RootIdentity {
   canonicalPath: string;
@@ -39,6 +45,7 @@ export type Execute = (
     captureLimitBytes?: number;
     superviseProcessTree?: boolean;
     trustedPythonPath?: string;
+    timeoutDescription?: string;
     timeoutMs?: number;
   },
 ) => Promise<CommandResult>;
@@ -138,7 +145,7 @@ export async function assertExactHead(
   execute: Execute,
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
-  const head = await execute("git", ["rev-parse", "HEAD"], {
+  const head = await execute("git", gitArgs("rev-parse", "HEAD"), {
     cwd: root,
     env,
     captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES,
@@ -155,11 +162,15 @@ export async function assertExactCleanCheckout(
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
   await assertExactHead(root, expectedSha, execute, env);
-  const status = await execute("git", ["status", "--porcelain=v1", "-z"], {
-    cwd: root,
-    env,
-    captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES,
-  });
+  const status = await execute(
+    "git",
+    gitArgs("status", "--porcelain=v1", "-z"),
+    {
+      cwd: root,
+      env,
+      captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES,
+    },
+  );
   if (status.exitCode !== 0) throw new Error("could not inspect checkout status");
   if (status.stdout.length !== 0) throw new Error("initial checkout is not clean");
 }
@@ -173,7 +184,7 @@ async function trackedModes(
   if (paths.length === 0) return new Map();
   const result = await execute(
     "git",
-    ["ls-tree", "-z", "HEAD", "--", ...paths],
+    gitArgs("ls-tree", "-z", "HEAD", "--", ...paths),
     {
       cwd: root,
       env,
@@ -313,21 +324,51 @@ export async function collectOperations(
   componentDelayMs = 0,
   expectedRoot?: RootIdentity,
   trustedPython?: TrustedExecutableIdentity,
+  gitInspectionTimeoutMs = GIT_INSPECTION_TIMEOUT_MS,
 ): Promise<FileOperation[]> {
+  const superviseGitInspection = trustedPython !== undefined;
   const rootIdentity = expectedRoot ?? (await captureRootIdentity(root));
   const pythonIdentity = trustedPython ?? (await captureTrustedPython());
   await assertRootIdentity(root, rootIdentity);
   const [diff, untracked] = await Promise.all([
     execute(
       "git",
-      ["diff", "--name-status", "-z", "--no-renames", "HEAD", "--"],
-      { cwd: root, env, captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES },
+      gitArgs(
+        "diff",
+        "--no-ext-diff",
+        "--name-status",
+        "-z",
+        "--no-renames",
+        "HEAD",
+        "--",
+      ),
+      {
+        cwd: root,
+        env,
+        captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES,
+        superviseProcessTree: superviseGitInspection,
+        trustedPythonPath: superviseGitInspection
+          ? pythonIdentity.canonicalPath
+          : undefined,
+        timeoutDescription: "git worktree inspection",
+        timeoutMs: superviseGitInspection ? gitInspectionTimeoutMs : undefined,
+      },
     ),
-    execute("git", ["ls-files", "--others", "--exclude-standard", "-z"], {
-      cwd: root,
-      env,
-      captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES,
-    }),
+    execute(
+      "git",
+      gitArgs("ls-files", "--others", "--exclude-standard", "-z"),
+      {
+        cwd: root,
+        env,
+        captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES,
+        superviseProcessTree: superviseGitInspection,
+        trustedPythonPath: superviseGitInspection
+          ? pythonIdentity.canonicalPath
+          : undefined,
+        timeoutDescription: "git worktree inspection",
+        timeoutMs: superviseGitInspection ? gitInspectionTimeoutMs : undefined,
+      },
+    ),
   ]);
   if (diff.exitCode !== 0 || untracked.exitCode !== 0) {
     throw new Error("could not inspect changes");
@@ -399,7 +440,9 @@ export async function collectOperations(
       content: file.content.toString("base64"),
     });
   }
-  return operations.sort((left, right) => left.path.localeCompare(right.path));
+  return operations.sort((left, right) =>
+    left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
+  );
 }
 
 export async function writeArtifact(

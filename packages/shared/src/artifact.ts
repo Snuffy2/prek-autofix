@@ -260,14 +260,15 @@ export function parseChangeArtifact(
       }
     }
   }
-  const sortedPaths = [...seen].sort();
-  for (let index = 1; index < sortedPaths.length; index += 1) {
-    const previous = sortedPaths[index - 1];
-    const current = sortedPaths[index];
-    if (previous !== undefined && current?.startsWith(`${previous}/`)) {
-      throw new ArtifactValidationError(
-        `artifact contains conflicting paths: ${previous} and ${current}`,
-      );
+  for (const operation of operations) {
+    const components = operation.path.split("/");
+    for (let index = 1; index < components.length; index += 1) {
+      const ancestor = components.slice(0, index).join("/");
+      if (seen.has(ancestor)) {
+        throw new ArtifactValidationError(
+          `artifact contains conflicting paths: ${ancestor} and ${operation.path}`,
+        );
+      }
     }
   }
 
