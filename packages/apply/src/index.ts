@@ -15,7 +15,6 @@ import {
   maximumRawArtifactBytes,
 } from "./apply";
 import { createMutationClient, createReadClient } from "./github";
-import { workflowArtifactUrl } from "./urls";
 
 function positiveInput(name: string, fallback: number): number {
   const raw = core.getInput(name);
@@ -80,12 +79,8 @@ async function run(): Promise<void> {
   const mutation = createMutationClient(patOctokit);
   await applyArtifact(read, mutation, {
     baseRepository, runId, artifact,
-    artifactUrl: workflowArtifactUrl(
-      github.context.serverUrl,
-      baseRepository,
-      runId,
-      lookup.artifact.id,
-    ),
+    artifactUrl:
+      `${github.context.serverUrl}/${baseRepository}/actions/runs/${runId}/artifacts/${lookup.artifact.id}`,
     sourceRunUrl: `${github.context.serverUrl}/${baseRepository}/actions/runs/${runId}`,
     sourceWorkflow, commitMessage,
   });
