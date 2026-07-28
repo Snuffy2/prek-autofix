@@ -42,8 +42,13 @@ export interface ReadClient {
   getWorkflowRun(runId: number): Promise<WorkflowRun>;
   listAssociatedPullRequests(sha: string): Promise<PullRequest[]>;
   getCommitTreeSha(repository: string, sha: string): Promise<string>;
-  getTree(repository: string, treeSha: string): Promise<TreeEntry[]>;
+  getTreeEntries(
+    repository: string,
+    treeSha: string,
+    paths: string[],
+  ): Promise<TreeEntry[]>;
   upsertComment(prNumber: number, body: string): Promise<void>;
+  resolveComment(prNumber: number): Promise<void>;
 }
 
 export interface MutationClient {
@@ -252,12 +257,17 @@ export async function applyArtifact(
   }
 
   const baseTree = await read.getCommitTreeSha(pr.headRepository, run.headSha);
-  const sourceTree = await read.getTree(pr.headRepository, baseTree);
+  const sourceTree = await read.getTreeEntries(
+    pr.headRepository,
+    baseTree,
+    request.artifact.operations.map((operation) => operation.path),
+  );
   const byPath = new Map(sourceTree.map((entry) => [entry.path, entry]));
   for (const operation of request.artifact.operations) {
     validateOperationAgainstTree(operation, byPath);
   }
 
+  let commit: string;
   try {
     const treeEntries: MutationTreeEntry[] = [];
     for (const operation of request.artifact.operations) {
@@ -280,7 +290,7 @@ export async function applyArtifact(
       baseTree,
       treeEntries,
     );
-    const commit = await mutation.createCommit(
+    commit = await mutation.createCommit(
       pr.headRepository,
       request.commitMessage,
       tree,
@@ -292,7 +302,6 @@ export async function applyArtifact(
       commit,
       run.headSha,
     );
-    return { pullRequestNumber: pr.number, commitSha: commit };
   } catch (error) {
     const status =
       typeof error === "object" && error !== null && "status" in error
@@ -308,4 +317,11 @@ export async function applyArtifact(
     );
     throw new ApplyError(reason);
   }
+  try {
+    await read.resolveComment(pr.number);
+  } catch {
+    // The branch update already succeeded. Marker cleanup is best-effort so a
+    // transient comment failure cannot invite a misleading mutation retry.
+  }
+  return { pullRequestNumber: pr.number, commitSha: commit };
 }

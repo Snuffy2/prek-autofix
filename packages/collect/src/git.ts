@@ -11,7 +11,11 @@ export interface CommandResult {
 export type Execute = (
   command: string,
   args: string[],
-  options: { cwd: string; env: NodeJS.ProcessEnv },
+  options: {
+    cwd: string;
+    env: NodeJS.ProcessEnv;
+    streamUntrustedOutput?: boolean;
+  },
 ) => Promise<CommandResult>;
 
 function fields(output: Buffer): string[] {

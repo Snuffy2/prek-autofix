@@ -39,11 +39,12 @@ function fixture() {
       headSha: "a".repeat(40), maintainerCanModify: true,
     }]),
     getCommitTreeSha: vi.fn().mockResolvedValue("base-tree"),
-    getTree: vi.fn().mockResolvedValue([
+    getTreeEntries: vi.fn().mockResolvedValue([
       { path: "old.sh", mode: "100755", type: "blob" },
       { path: "gone.txt", mode: "100644", type: "blob" },
     ]),
     upsertComment: vi.fn(),
+    resolveComment: vi.fn(),
   };
   const mutation: MutationClient = {
     createBlob: vi.fn()
@@ -113,6 +114,20 @@ describe("applyArtifact", () => {
     expect(mutation.updateRef).toHaveBeenCalledWith(
       "R_head", "refs/heads/feature", "commit", "a".repeat(40),
     );
+    expect(read.resolveComment).toHaveBeenCalledWith(4);
+  });
+
+  it("returns success when marker cleanup fails after a successful CAS", async () => {
+    const { artifact, read, mutation } = fixture();
+    vi.mocked(read.resolveComment).mockRejectedValue(
+      new Error("comment permission denied"),
+    );
+    await expect(
+      applyArtifact(read, mutation, request(artifact)),
+    ).resolves.toEqual({ pullRequestNumber: 4, commitSha: "commit" });
+    expect(mutation.updateRef).toHaveBeenCalledOnce();
+    expect(read.resolveComment).toHaveBeenCalledWith(4);
+    expect(read.upsertComment).not.toHaveBeenCalled();
   });
 
   it("rejects forged artifact claims before reading or mutating the tree", async () => {
@@ -121,7 +136,7 @@ describe("applyArtifact", () => {
     await expect(applyArtifact(read, mutation, request(artifact))).rejects.toThrow(
       "artifact source claims",
     );
-    expect(read.getTree).not.toHaveBeenCalled();
+    expect(read.getTreeEntries).not.toHaveBeenCalled();
     expect(mutation.createBlob).not.toHaveBeenCalled();
   });
 
@@ -135,7 +150,7 @@ describe("applyArtifact", () => {
     const { artifact, read, mutation } = fixture();
     Object.assign(artifact.source, { [field]: value });
     await expect(applyArtifact(read, mutation, request(artifact))).rejects.toThrow();
-    expect(read.getTree).not.toHaveBeenCalled();
+    expect(read.getTreeEntries).not.toHaveBeenCalled();
     expect(mutation.createBlob).not.toHaveBeenCalled();
   });
 
@@ -243,7 +258,7 @@ describe("applyArtifact", () => {
     ["missing delete", "gone.txt", { path: "old.sh", mode: "100755", type: "blob" }],
   ])("rejects %s", async (_name, _path, onlyEntry) => {
     const { artifact, read, mutation } = fixture();
-    vi.mocked(read.getTree).mockResolvedValue([onlyEntry]);
+    vi.mocked(read.getTreeEntries).mockResolvedValue([onlyEntry]);
     await expect(applyArtifact(read, mutation, request(artifact))).rejects.toThrow();
     expect(mutation.createBlob).not.toHaveBeenCalled();
   });
@@ -253,7 +268,7 @@ describe("applyArtifact", () => {
     artifact.operations = [
       { path: "link/child", operation: "add", mode: "100644", content: "eA==" },
     ];
-    vi.mocked(read.getTree).mockResolvedValue([
+    vi.mocked(read.getTreeEntries).mockResolvedValue([
       { path: "link", mode: "120000", type: "blob" },
     ]);
     await expect(applyArtifact(read, mutation, request(artifact))).rejects.toThrow(
@@ -267,7 +282,7 @@ describe("applyArtifact", () => {
     artifact.operations = [
       { path: "link", operation: "modify", mode: "100644", content: "eA==" },
     ];
-    vi.mocked(read.getTree).mockResolvedValue([
+    vi.mocked(read.getTreeEntries).mockResolvedValue([
       { path: "link", mode: "120000", type: "blob" },
     ]);
     await expect(applyArtifact(read, mutation, request(artifact))).rejects.toThrow(
@@ -278,7 +293,7 @@ describe("applyArtifact", () => {
     artifact.operations = [
       { path: "module", operation: "delete", mode: "100644" },
     ];
-    vi.mocked(read.getTree).mockResolvedValue([
+    vi.mocked(read.getTreeEntries).mockResolvedValue([
       { path: "module", mode: "160000", type: "commit" },
     ]);
     await expect(applyArtifact(read, mutation, request(artifact))).rejects.toThrow(

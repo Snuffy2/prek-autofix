@@ -6,6 +6,7 @@ import {
   FixesFoundError,
   HardFailureError,
   NonConvergenceError,
+  executeCommand,
   runCollect,
   sanitizedEnvironment,
 } from "../../packages/collect/src/runner";
@@ -83,14 +84,21 @@ async function invoke(
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   const { rm } = await import("node:fs/promises");
   await Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true })));
 });
 
 describe("runCollect", () => {
   it("passes a clean result without an artifact", async () => {
-    const call = await invoke(setup([result(0)]));
+    const execute = setup([result(0)]);
+    const call = await invoke(execute);
     await expect(call.promise).resolves.toBeUndefined();
+    expect(execute).toHaveBeenCalledWith(
+      "prek",
+      expect.anything(),
+      expect.objectContaining({ streamUntrustedOutput: true }),
+    );
     expect(call.outputs.get("changed")).toBe("false");
     expect(call.uploadArtifact).not.toHaveBeenCalled();
   });
@@ -166,5 +174,68 @@ describe("runCollect", () => {
         GITHUB_STEP_SUMMARY: "/tmp/summary",
       }),
     ).toEqual({ PATH: "/bin" });
+  });
+});
+
+describe("executeCommand", () => {
+  it("streams chunked untrusted output with safe line prefixes", async () => {
+    const stdout = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+    const command = [
+      'process.stdout.write(":")',
+      'setTimeout(() => process.stdout.write(":set-output name=x::bad\\nnext"), 10)',
+    ].join(";");
+
+    const response = await executeCommand(process.execPath, ["-e", command], {
+      cwd: process.cwd(),
+      env: process.env,
+      streamUntrustedOutput: true,
+    });
+
+    expect(response.stdout).toEqual(Buffer.alloc(0));
+    expect(stdout.mock.calls.map(([chunk]) => String(chunk)).join("")).toBe(
+      "[prek] ::set-output name=x::bad\n[prek] next",
+    );
+  });
+
+  it("prefixes lone CR boundaries without double-prefixing split CRLF", async () => {
+    const stdout = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+    const command = [
+      'process.stdout.write("first\\r")',
+      'setTimeout(() => process.stdout.write("\\nsecond\\r"), 10)',
+      'setTimeout(() => process.stdout.write("::warning::bad"), 20)',
+    ].join(";");
+
+    const response = await executeCommand(process.execPath, ["-e", command], {
+      cwd: process.cwd(),
+      env: process.env,
+      streamUntrustedOutput: true,
+    });
+
+    expect(response.stdout).toEqual(Buffer.alloc(0));
+    expect(stdout.mock.calls.map(([chunk]) => String(chunk)).join("")).toBe(
+      "[prek] first\r\n[prek] second\r[prek] ::warning::bad",
+    );
+  });
+
+  it("does not retain large streamed hook output", async () => {
+    const stdout = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+    const response = await executeCommand(
+      process.execPath,
+      ["-e", 'process.stdout.write("x".repeat(1024 * 1024))'],
+      {
+        cwd: process.cwd(),
+        env: process.env,
+        streamUntrustedOutput: true,
+      },
+    );
+
+    expect(response.stdout).toEqual(Buffer.alloc(0));
+    expect(stdout).toHaveBeenCalled();
   });
 });

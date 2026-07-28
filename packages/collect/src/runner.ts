@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { dirname, relative, resolve } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import type { ArtifactClient } from "@actions/artifact";
 import type { ChangeArtifact } from "../../shared/src/artifact";
 import type { FileOperation } from "../../shared/src/artifact";
@@ -68,17 +69,41 @@ export function sanitizedEnvironment(
   );
 }
 
-function writeUntrustedOutput(
-  target: NodeJS.WriteStream,
-  output: Buffer,
-): void {
-  if (output.length === 0) return;
-  const prefixed = output
-    .toString("utf8")
-    .split(/\r?\n/)
-    .map((line) => `[prek] ${line}`)
-    .join("\n");
-  target.write(prefixed.endsWith("\n") ? prefixed : `${prefixed}\n`);
+function streamUntrustedOutput(target: NodeJS.WriteStream): {
+  write(chunk: Buffer): void;
+  end(): void;
+} {
+  const decoder = new StringDecoder("utf8");
+  let atLineStart = true;
+  let previousWasCarriageReturn = false;
+  const write = (text: string): void => {
+    if (text.length === 0) return;
+    const output: string[] = [];
+    for (const character of text) {
+      if (previousWasCarriageReturn && character === "\n") {
+        output.push(character);
+        previousWasCarriageReturn = false;
+        continue;
+      }
+      previousWasCarriageReturn = false;
+      if (atLineStart) {
+        output.push("[prek] ");
+        atLineStart = false;
+      }
+      output.push(character);
+      if (character === "\r") {
+        previousWasCarriageReturn = true;
+        atLineStart = true;
+      } else if (character === "\n") {
+        atLineStart = true;
+      }
+    }
+    target.write(output.join(""));
+  };
+  return {
+    write: (chunk) => write(decoder.write(chunk)),
+    end: () => write(decoder.end()),
+  };
 }
 
 export const executeCommand: Execute = async (command, args, options) =>
@@ -90,16 +115,30 @@ export const executeCommand: Execute = async (command, args, options) =>
     });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    const streamedStdout = options.streamUntrustedOutput
+      ? streamUntrustedOutput(process.stdout)
+      : undefined;
+    const streamedStderr = options.streamUntrustedOutput
+      ? streamUntrustedOutput(process.stderr)
+      : undefined;
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (streamedStdout) streamedStdout.write(chunk);
+      else stdout.push(chunk);
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      if (streamedStderr) streamedStderr.write(chunk);
+      else stderr.push(chunk);
+    });
     child.on("error", reject);
-    child.on("close", (exitCode) =>
+    child.on("close", (exitCode) => {
+      streamedStdout?.end();
+      streamedStderr?.end();
       finish({
         exitCode: exitCode ?? 1,
         stdout: Buffer.concat(stdout),
         stderr: Buffer.concat(stderr),
-      }),
-    );
+      });
+    });
   });
 
 function validateContext(context: CollectContext): asserts context is CollectContext & {
@@ -154,9 +193,8 @@ export async function runCollect(
     const result = await deps.execute("prek", args, {
       cwd: root,
       env: childEnv,
+      streamUntrustedOutput: true,
     });
-    writeUntrustedOutput(process.stdout, result.stdout);
-    writeUntrustedOutput(process.stderr, result.stderr);
     operations = await (deps.collectChanges ?? collectOperations)(
       workspace,
       deps.execute,

@@ -13,13 +13,8 @@ import {
 import {
   applyArtifact,
   maximumRawArtifactBytes,
-  ownMarkerCommentId,
-  type MutationClient,
-  type PullRequest,
-  type ReadClient,
-  type TreeEntry,
-  type WorkflowRun,
 } from "./apply";
+import { createMutationClient, createReadClient } from "./github";
 import { workflowArtifactUrl } from "./urls";
 
 function positiveInput(name: string, fallback: number): number {
@@ -81,111 +76,8 @@ async function run(): Promise<void> {
 
   const readOctokit = github.getOctokit(githubToken);
   const patOctokit = github.getOctokit(pat);
-  const read: ReadClient = {
-    async getWorkflowRun(id): Promise<WorkflowRun> {
-      const { data } = await readOctokit.rest.actions.getWorkflowRun({
-        owner, repo, run_id: id,
-      });
-      return {
-        id: data.id, name: data.name ?? "", event: data.event,
-        headSha: data.head_sha, headBranch: data.head_branch ?? "",
-        headRepository: data.head_repository?.full_name ?? "",
-      };
-    },
-    async listAssociatedPullRequests(sha): Promise<PullRequest[]> {
-      const { data } =
-        await readOctokit.rest.repos.listPullRequestsAssociatedWithCommit({
-          owner, repo, commit_sha: sha,
-        });
-      return data.map((pr: (typeof data)[number]) => ({
-        number: pr.number, state: pr.state, htmlUrl: pr.html_url,
-        baseRepository: pr.base.repo.full_name,
-        headRepository: pr.head.repo?.full_name ?? "",
-        headRepositoryNodeId: pr.head.repo?.node_id ?? "",
-        headRepositoryOwnerType: pr.head.repo?.owner.type ?? "",
-        headRef: pr.head.ref, headSha: pr.head.sha,
-        maintainerCanModify: pr.maintainer_can_modify ?? false,
-      }));
-    },
-    async getCommitTreeSha(repository, sha) {
-      const [targetOwner, targetRepo] = repository.split("/") as [string, string];
-      const { data } = await readOctokit.rest.git.getCommit({
-        owner: targetOwner, repo: targetRepo, commit_sha: sha,
-      });
-      return data.tree.sha;
-    },
-    async getTree(repository, treeSha): Promise<TreeEntry[]> {
-      const [targetOwner, targetRepo] = repository.split("/") as [string, string];
-      const { data } = await readOctokit.rest.git.getTree({
-        owner: targetOwner, repo: targetRepo, tree_sha: treeSha, recursive: "true",
-      });
-      if (data.truncated) throw new Error("source tree response was truncated");
-      return data.tree.flatMap((entry: (typeof data.tree)[number]) =>
-        entry.path && entry.mode && entry.type
-          ? [{ path: entry.path, mode: entry.mode, type: entry.type }]
-          : [],
-      );
-    },
-    async upsertComment(prNumber, body) {
-      const comments = await readOctokit.paginate(
-        readOctokit.rest.issues.listComments,
-        { owner, repo, issue_number: prNumber, per_page: 100 },
-      );
-      const existingId = ownMarkerCommentId(comments);
-      if (existingId !== undefined) {
-        await readOctokit.rest.issues.updateComment({
-          owner, repo, comment_id: existingId, body,
-        });
-      } else {
-        await readOctokit.rest.issues.createComment({
-          owner, repo, issue_number: prNumber, body,
-        });
-      }
-    },
-  };
-  const mutation: MutationClient = {
-    async createBlob(repository, content) {
-      const [targetOwner, targetRepo] = repository.split("/") as [string, string];
-      const { data } = await patOctokit.rest.git.createBlob({
-        owner: targetOwner, repo: targetRepo, content, encoding: "base64",
-      });
-      return data.sha;
-    },
-    async createTree(repository, baseTree, tree) {
-      const [targetOwner, targetRepo] = repository.split("/") as [string, string];
-      const { data } = await patOctokit.rest.git.createTree({
-        owner: targetOwner, repo: targetRepo, base_tree: baseTree, tree,
-      });
-      return data.sha;
-    },
-    async createCommit(repository, message, tree, parent) {
-      const [targetOwner, targetRepo] = repository.split("/") as [string, string];
-      const { data } = await patOctokit.rest.git.createCommit({
-        owner: targetOwner, repo: targetRepo, message, tree, parents: [parent],
-      });
-      return data.sha;
-    },
-    async updateRef(repositoryNodeId, ref, sha, expectedSha) {
-      await patOctokit.graphql(
-        `mutation UpdatePrekAutofixRef($input: UpdateRefsInput!) {
-          updateRefs(input: $input) { clientMutationId }
-        }`,
-        {
-          input: {
-            repositoryId: repositoryNodeId,
-            refUpdates: [
-              {
-                name: ref,
-                beforeOid: expectedSha,
-                afterOid: sha,
-                force: false,
-              },
-            ],
-          },
-        },
-      );
-    },
-  };
+  const read = createReadClient(readOctokit, owner, repo);
+  const mutation = createMutationClient(patOctokit);
   await applyArtifact(read, mutation, {
     baseRepository, runId, artifact,
     artifactUrl: workflowArtifactUrl(
