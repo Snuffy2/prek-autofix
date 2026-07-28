@@ -375,7 +375,6 @@ export async function collectOperations(
       });
       continue;
     }
-    safeFile(root, path);
     let file: Awaited<ReturnType<typeof readStableFile>>;
     try {
       file = await readStableFile(

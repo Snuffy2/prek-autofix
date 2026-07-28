@@ -31,7 +31,7 @@ function fixture() {
       headSha: "a".repeat(40), headBranch: "feature", headRepository: "user/repo",
     }),
     listAssociatedPullRequests: vi.fn().mockResolvedValue([{
-      number: 4, state: "open", htmlUrl: "https://example/pr/4",
+      number: 4, state: "open",
       baseRepository: "base/repo", headRepository: "user/repo",
       headRepositoryNodeId: "R_head",
       headRepositoryOwnerType: "User", headRef: "feature",

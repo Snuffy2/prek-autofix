@@ -83,7 +83,6 @@ export function createReadClient(
       return data.map((pr: (typeof data)[number]) => ({
         number: pr.number,
         state: pr.state,
-        htmlUrl: pr.html_url,
         baseRepository: pr.base.repo.full_name,
         headRepository: pr.head.repo?.full_name ?? "",
         headRepositoryNodeId: pr.head.repo?.node_id ?? "",

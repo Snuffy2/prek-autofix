@@ -16,7 +16,6 @@ export interface WorkflowRun {
 export interface PullRequest {
   number: number;
   state: string;
-  htmlUrl: string;
   baseRepository: string;
   headRepository: string;
   headRepositoryNodeId: string;
