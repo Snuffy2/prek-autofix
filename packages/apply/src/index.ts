@@ -20,6 +20,7 @@ import {
   type TreeEntry,
   type WorkflowRun,
 } from "./apply";
+import { workflowArtifactUrl } from "./urls";
 
 function positiveInput(name: string, fallback: number): number {
   const raw = core.getInput(name);
@@ -187,7 +188,12 @@ async function run(): Promise<void> {
   };
   await applyArtifact(read, mutation, {
     baseRepository, runId, artifact,
-    artifactUrl: `${github.context.serverUrl}/${baseRepository}/actions/runs/${runId}/artifacts`,
+    artifactUrl: workflowArtifactUrl(
+      github.context.serverUrl,
+      baseRepository,
+      runId,
+      lookup.artifact.id,
+    ),
     sourceRunUrl: `${github.context.serverUrl}/${baseRepository}/actions/runs/${runId}`,
     sourceWorkflow, commitMessage,
   });
