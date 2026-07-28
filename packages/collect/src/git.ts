@@ -15,6 +15,8 @@ export type Execute = (
     cwd: string;
     env: NodeJS.ProcessEnv;
     streamUntrustedOutput?: boolean;
+    streamLimitBytes?: number;
+    timeoutMs?: number;
   },
 ) => Promise<CommandResult>;
 

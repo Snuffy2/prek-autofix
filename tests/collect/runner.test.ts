@@ -2,6 +2,7 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { EventEmitter } from "node:events";
 import {
   FixesFoundError,
   HardFailureError,
@@ -9,6 +10,7 @@ import {
   executeCommand,
   runCollect,
   sanitizedEnvironment,
+  streamUntrustedOutput,
 } from "../../packages/collect/src/runner";
 import type { Execute } from "../../packages/collect/src/git";
 
@@ -65,7 +67,13 @@ async function invoke(
       workspace,
       artifactDirectory: workspace,
     },
-    { extraArgs: "--all-files", workingDirectory: ".", maxPasses },
+    {
+      extraArgs: "--all-files",
+      workingDirectory: ".",
+      maxPasses,
+      maxLogBytes: 1048576,
+      passTimeoutSeconds: 600,
+    },
     {
       execute: wrapped,
       artifact: { uploadArtifact },
@@ -195,7 +203,7 @@ describe("executeCommand", () => {
 
     expect(response.stdout).toEqual(Buffer.alloc(0));
     expect(stdout.mock.calls.map(([chunk]) => String(chunk)).join("")).toBe(
-      "[prek] ::set-output name=x::bad\n[prek] next",
+      "[prek] ::set-output name=x::bad\n[prek] next\n",
     );
   });
 
@@ -217,7 +225,7 @@ describe("executeCommand", () => {
 
     expect(response.stdout).toEqual(Buffer.alloc(0));
     expect(stdout.mock.calls.map(([chunk]) => String(chunk)).join("")).toBe(
-      "[prek] first\r\n[prek] second\r[prek] ::warning::bad",
+      "[prek] first\r\n[prek] second\r[prek] ::warning::bad\n",
     );
   });
 
@@ -238,4 +246,98 @@ describe("executeCommand", () => {
     expect(response.stdout).toEqual(Buffer.alloc(0));
     expect(stdout).toHaveBeenCalled();
   });
+
+  it("caps each stream exactly and emits one safe truncation notice", () => {
+    const source = { pause: vi.fn(), resume: vi.fn() };
+    const chunks: string[] = [];
+    const target = new EventEmitter() as EventEmitter & {
+      write(chunk: string): boolean;
+    };
+    target.write = (chunk: string) => {
+      chunks.push(chunk);
+      return true;
+    };
+    const stream = streamUntrustedOutput(source, target, 5);
+
+    stream.write(Buffer.from("123"));
+    stream.write(Buffer.from("456"));
+    stream.write(Buffer.from("ignored"));
+    stream.end();
+
+    expect(chunks.join("")).toBe(
+      "[prek] 12345\n[prek] output truncated after 5 bytes\n",
+    );
+  });
+
+  it("pauses the child stream until a backpressured destination drains", () => {
+    const source = { pause: vi.fn(), resume: vi.fn() };
+    const target = new EventEmitter() as EventEmitter & {
+      write(chunk: string): boolean;
+    };
+    target.write = vi.fn(() => false);
+    const stream = streamUntrustedOutput(source, target, 1024);
+
+    stream.write(Buffer.from("blocked"));
+    stream.write(Buffer.from("still blocked"));
+    expect(source.pause).toHaveBeenCalledOnce();
+    expect(source.resume).not.toHaveBeenCalled();
+
+    target.emit("drain");
+    expect(source.resume).toHaveBeenCalledOnce();
+  });
+
+  it("times out a hook and reports process-tree termination", async () => {
+    await expect(
+      executeCommand(
+        process.execPath,
+        ["-e", "setInterval(() => {}, 1000)"],
+        {
+          cwd: process.cwd(),
+          env: process.env,
+          timeoutMs: 25,
+        },
+      ),
+    ).rejects.toThrow(
+      `prek pass timed out after 1 seconds; terminated hook process${
+        process.platform === "linux" ? " tree" : ""
+      }`,
+    );
+  });
+
+  it.skipIf(process.platform !== "linux")(
+    "terminates descendants in the timed-out hook process group",
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), "collect-tree-"));
+      directories.push(directory);
+      const pidFile = join(directory, "descendant.pid");
+      const command = [
+        'const {spawn}=require("node:child_process")',
+        'const {writeFileSync}=require("node:fs")',
+        `const child=spawn(process.execPath,["-e","setInterval(()=>{},1000)"])`,
+        `writeFileSync(${JSON.stringify(pidFile)},String(child.pid))`,
+        "setInterval(()=>{},1000)",
+      ].join(";");
+
+      await expect(
+        executeCommand(process.execPath, ["-e", command], {
+          cwd: process.cwd(),
+          env: process.env,
+          timeoutMs: 100,
+        }),
+      ).rejects.toThrow("terminated hook process tree");
+
+      const descendantPid = Number(await readFile(pidFile, "utf8"));
+      let alive = true;
+      for (let attempt = 0; attempt < 50 && alive; attempt += 1) {
+        try {
+          process.kill(descendantPid, 0);
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+          alive = false;
+        }
+      }
+      expect(alive).toBe(false);
+    },
+  );
 });

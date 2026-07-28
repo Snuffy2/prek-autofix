@@ -65,6 +65,7 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -158,6 +159,8 @@ protection are unaffected; this Action never submits an approving review.
 | `working-directory` | `.` | Directory in which to run `prek` |
 | `cache` | `true` | Enable the official prek environment cache |
 | `max-passes` | `3` | Maximum convergence passes |
+| `max-log-bytes` | `1048576` | Maximum bytes streamed from each of stdout and stderr per pass (1024–10485760) |
+| `pass-timeout-seconds` | `600` | Timeout for each pass (1–3600 seconds); the hook process tree is terminated on Linux |
 
 For example, replace the `collect` step in Stage 1 with:
 
@@ -169,6 +172,8 @@ For example, replace the `collect` step in Stage 1 with:
           working-directory: tools
           cache: true
           max-passes: 2
+          max-log-bytes: 1048576
+          pass-timeout-seconds: 600
 ```
 
 `apply` accepts these inputs:

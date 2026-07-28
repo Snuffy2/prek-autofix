@@ -64,7 +64,7 @@ describe("GitHub apply adapters", () => {
     });
   });
 
-  it("walks only affected paths non-recursively and caches shared ancestors", async () => {
+  it("walks only affected paths through the base repository and caches shared ancestors", async () => {
     const { octokit, getTree } = octokitFixture();
     getTree
       .mockResolvedValueOnce({ data: {
@@ -83,16 +83,25 @@ describe("GitHub apply adapters", () => {
       } });
     const read = createReadClient(octokit as never, "base", "repo");
 
+    octokit.rest.git.getCommit.mockResolvedValue({
+      data: { tree: { sha: "root" } },
+    });
     await expect(
-      read.getTreeEntries("fork/repo", "root", ["src/a.ts", "src/b.ts"]),
+      read.getCommitTreeSha("base/repo", "head"),
+    ).resolves.toBe("root");
+    await expect(
+      read.getTreeEntries("base/repo", "root", ["src/a.ts", "src/b.ts"]),
     ).resolves.toEqual([
       { path: "src", mode: "040000", type: "tree" },
       { path: "src/a.ts", mode: "100644", type: "blob" },
       { path: "src/b.ts", mode: "100644", type: "blob" },
     ]);
+    expect(octokit.rest.git.getCommit).toHaveBeenCalledWith({
+      owner: "base", repo: "repo", commit_sha: "head",
+    });
     expect(getTree).toHaveBeenCalledTimes(2);
     expect(getTree).toHaveBeenCalledWith({
-      owner: "fork", repo: "repo", tree_sha: "root",
+      owner: "base", repo: "repo", tree_sha: "root",
     });
     expect(getTree.mock.calls.flatMap((call) => Object.keys(call[0]))).not
       .toContain("recursive");

@@ -102,7 +102,21 @@ describe("applyArtifact", () => {
     await expect(applyArtifact(read, mutation, request(artifact))).resolves.toEqual({
       pullRequestNumber: 4, commitSha: "commit",
     });
+    expect(read.getCommitTreeSha).toHaveBeenCalledWith(
+      "base/repo", "a".repeat(40),
+    );
+    expect(read.getTreeEntries).toHaveBeenCalledWith(
+      "base/repo",
+      "base-tree",
+      ["new.txt", "old.sh", "gone.txt"],
+    );
     expect(mutation.createBlob).toHaveBeenCalledTimes(2);
+    expect(mutation.createBlob).toHaveBeenNthCalledWith(
+      1, "user/repo", "eA==",
+    );
+    expect(mutation.createBlob).toHaveBeenNthCalledWith(
+      2, "user/repo", "eQ==",
+    );
     expect(mutation.createTree).toHaveBeenCalledWith("user/repo", "base-tree", [
       { path: "new.txt", mode: "100644", type: "blob", sha: "blob-new" },
       { path: "old.sh", mode: "100755", type: "blob", sha: "blob-old" },

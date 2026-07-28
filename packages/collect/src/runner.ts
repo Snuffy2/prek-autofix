@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import type { Readable } from "node:stream";
 import { dirname, relative, resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import type { ArtifactClient } from "@actions/artifact";
@@ -32,6 +33,8 @@ export interface CollectInputs {
   extraArgs: string;
   workingDirectory: string;
   maxPasses: number;
+  maxLogBytes: number;
+  passTimeoutSeconds: number;
 }
 
 export interface CollectDeps {
@@ -69,13 +72,24 @@ export function sanitizedEnvironment(
   );
 }
 
-function streamUntrustedOutput(target: NodeJS.WriteStream): {
+export function streamUntrustedOutput(
+  source: Pick<Readable, "pause" | "resume">,
+  target: {
+    write(chunk: string): boolean;
+    once(event: "drain", listener: () => void): unknown;
+  },
+  limitBytes: number,
+): {
   write(chunk: Buffer): void;
   end(): void;
 } {
   const decoder = new StringDecoder("utf8");
   let atLineStart = true;
   let previousWasCarriageReturn = false;
+  let acceptedBytes = 0;
+  let truncated = false;
+  let waitingForDrain = false;
+  let decoderEnded = false;
   const write = (text: string): void => {
     if (text.length === 0) return;
     const output: string[] = [];
@@ -98,28 +112,66 @@ function streamUntrustedOutput(target: NodeJS.WriteStream): {
         atLineStart = true;
       }
     }
-    target.write(output.join(""));
+    if (!target.write(output.join("")) && !waitingForDrain) {
+      waitingForDrain = true;
+      source.pause();
+      target.once("drain", () => {
+        waitingForDrain = false;
+        source.resume();
+      });
+    }
+  };
+  const truncate = (): void => {
+    if (truncated) return;
+    truncated = true;
+    decoderEnded = true;
+    write(decoder.end());
+    if (!atLineStart) write("\n");
+    write(`output truncated after ${limitBytes} bytes\n`);
   };
   return {
-    write: (chunk) => write(decoder.write(chunk)),
-    end: () => write(decoder.end()),
+    write: (chunk) => {
+      const remaining = limitBytes - acceptedBytes;
+      if (remaining <= 0) {
+        if (chunk.length > 0) truncate();
+        return;
+      }
+      const accepted = chunk.subarray(0, remaining);
+      acceptedBytes += accepted.length;
+      write(decoder.write(accepted));
+      if (accepted.length < chunk.length) truncate();
+    },
+    end: () => {
+      if (!decoderEnded) write(decoder.end());
+      if (!atLineStart) write("\n");
+    },
   };
 }
 
 export const executeCommand: Execute = async (command, args, options) =>
   await new Promise<CommandResult>((finish, reject) => {
+    const useProcessGroup = process.platform === "linux";
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: options.env,
+      detached: useProcessGroup,
       stdio: ["ignore", "pipe", "pipe"],
     });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     const streamedStdout = options.streamUntrustedOutput
-      ? streamUntrustedOutput(process.stdout)
+      ? streamUntrustedOutput(
+          child.stdout,
+          process.stdout,
+          options.streamLimitBytes ?? 1048576,
+        )
       : undefined;
     const streamedStderr = options.streamUntrustedOutput
-      ? streamUntrustedOutput(process.stderr)
+      ? streamUntrustedOutput(
+          child.stderr,
+          process.stderr,
+          options.streamLimitBytes ?? 1048576,
+        )
       : undefined;
     child.stdout.on("data", (chunk: Buffer) => {
       if (streamedStdout) streamedStdout.write(chunk);
@@ -129,10 +181,48 @@ export const executeCommand: Execute = async (command, args, options) =>
       if (streamedStderr) streamedStderr.write(chunk);
       else stderr.push(chunk);
     });
-    child.on("error", reject);
+    let timedOut = false;
+    let forceKill: NodeJS.Timeout | undefined;
+    const timeoutError = (): Error =>
+      new Error(
+        `prek pass timed out after ${Math.ceil((options.timeoutMs ?? 0) / 1000)} seconds; terminated hook process${useProcessGroup ? " tree" : ""}`,
+      );
+    const terminate = (signal: NodeJS.Signals): void => {
+      if (child.pid === undefined) return;
+      try {
+        process.kill(useProcessGroup ? -child.pid : child.pid, signal);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      }
+    };
+    const timeout =
+      options.timeoutMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            timedOut = true;
+            terminate("SIGTERM");
+            forceKill = setTimeout(() => {
+              terminate("SIGKILL");
+              reject(timeoutError());
+            }, 2000);
+          }, options.timeoutMs);
+    timeout?.unref();
+    child.on("error", (error) => {
+      if (timeout) clearTimeout(timeout);
+      if (forceKill) clearTimeout(forceKill);
+      reject(error);
+    });
     child.on("close", (exitCode) => {
+      if (timeout) clearTimeout(timeout);
       streamedStdout?.end();
       streamedStderr?.end();
+      if (timedOut) {
+        if (useProcessGroup) return;
+        if (forceKill) clearTimeout(forceKill);
+        reject(timeoutError());
+        return;
+      }
+      if (forceKill) clearTimeout(forceKill);
       finish({
         exitCode: exitCode ?? 1,
         stdout: Buffer.concat(stdout),
@@ -165,6 +255,24 @@ export async function runCollect(
   if (!Number.isSafeInteger(inputs.maxPasses) || inputs.maxPasses <= 0) {
     throw new Error("max-passes must be a positive integer");
   }
+  if (
+    !Number.isSafeInteger(inputs.maxLogBytes) ||
+    inputs.maxLogBytes < 1024 ||
+    inputs.maxLogBytes > 10485760
+  ) {
+    throw new Error(
+      "max-log-bytes must be an integer between 1024 and 10485760",
+    );
+  }
+  if (
+    !Number.isSafeInteger(inputs.passTimeoutSeconds) ||
+    inputs.passTimeoutSeconds < 1 ||
+    inputs.passTimeoutSeconds > 3600
+  ) {
+    throw new Error(
+      "pass-timeout-seconds must be an integer between 1 and 3600",
+    );
+  }
   const workspace = resolve(context.workspace);
   const root = resolve(workspace, inputs.workingDirectory);
   const rel = relative(workspace, root);
@@ -194,6 +302,8 @@ export async function runCollect(
       cwd: root,
       env: childEnv,
       streamUntrustedOutput: true,
+      streamLimitBytes: inputs.maxLogBytes,
+      timeoutMs: inputs.passTimeoutSeconds * 1000,
     });
     operations = await (deps.collectChanges ?? collectOperations)(
       workspace,

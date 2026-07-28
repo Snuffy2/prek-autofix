@@ -256,9 +256,12 @@ export async function applyArtifact(
     throw new ApplyError(reason);
   }
 
-  const baseTree = await read.getCommitTreeSha(pr.headRepository, run.headSha);
+  const baseTree = await read.getCommitTreeSha(
+    request.baseRepository,
+    run.headSha,
+  );
   const sourceTree = await read.getTreeEntries(
-    pr.headRepository,
+    request.baseRepository,
     baseTree,
     request.artifact.operations.map((operation) => operation.path),
   );

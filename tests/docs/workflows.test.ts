@@ -57,6 +57,7 @@ describe("public workflow documentation", () => {
     expect(workflow.jobs.collect.steps[1].uses).toBe(
       "Snuffy2/prek-autofix/collect@v1",
     );
+    expect(workflow.jobs.collect["timeout-minutes"]).toBe(15);
   });
 
   it("keeps the application workflow privileged without a checkout", () => {

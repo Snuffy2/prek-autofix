@@ -25,6 +25,14 @@ async function main(): Promise<void> {
       maxPasses: Number(
         process.env.PREK_AUTOFIX_MAX_PASSES ?? core.getInput("max-passes"),
       ),
+      maxLogBytes: Number(
+        process.env.PREK_AUTOFIX_MAX_LOG_BYTES ??
+          core.getInput("max-log-bytes"),
+      ),
+      passTimeoutSeconds: Number(
+        process.env.PREK_AUTOFIX_PASS_TIMEOUT_SECONDS ??
+          core.getInput("pass-timeout-seconds"),
+      ),
     },
     {
       execute: executeCommand,
