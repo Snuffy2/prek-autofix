@@ -53,6 +53,7 @@ jobs:
     concurrency:
       group: release-major-${{ github.repository }}-${{ needs.verify.outputs.major-tag }}
       cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-latest
     steps:
       - name: Update moving major tag
@@ -172,14 +173,14 @@ jobs:
           if (compare(releaseVersion, currentVersion.version) < 0) {
             return "skip\t";
           }
-          return `update\t${targetSha}`;
+          return `update\t${targetSha}\t${current.commit.sha}`;
           }
 
           process.stdout.write(decide());
           NODE
           )"
 
-          IFS=$'\t' read -r action update_sha <<< "$decision"
+          IFS=$'\t' read -r action update_sha before_oid <<< "$decision"
           case "$action" in
           skip)
             echo "$RELEASE_TAG is not the newest stable $major_tag release; leaving $major_tag unchanged"
@@ -188,9 +189,38 @@ jobs:
             echo "$major_tag already points to $RELEASE_TAG"
             ;;
           update)
-            gh api --method PATCH \
-              "repos/$GITHUB_REPOSITORY/git/refs/tags/$major_tag" \
-              -f sha="$update_sha" -F force=true
+            repository_id="$(
+              gh api "repos/$GITHUB_REPOSITORY" --jq .node_id
+            )"
+            gh api graphql \
+              -f query="
+                mutation UpdateMajorTag(
+                  \$repositoryId: ID!
+                  \$name: GitRefname!
+                  \$beforeOid: GitObjectID!
+                  \$afterOid: GitObjectID!
+                  \$force: Boolean!
+                ) {
+                  updateRefs(
+                    input: {
+                      repositoryId: \$repositoryId
+                      refUpdates: [{
+                        name: \$name
+                        beforeOid: \$beforeOid
+                        afterOid: \$afterOid
+                        force: \$force
+                      }]
+                    }
+                  ) {
+                    clientMutationId
+                  }
+                }
+              " \
+              -F repositoryId="$repository_id" \
+              -f name="refs/tags/$major_tag" \
+              -f beforeOid="$before_oid" \
+              -f afterOid="$update_sha" \
+              -F force=true
             ;;
           create)
             gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \

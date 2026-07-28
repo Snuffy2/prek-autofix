@@ -1,7 +1,7 @@
 import type { getOctokit } from "@actions/github";
 import { COMMENT_MARKER } from "../../shared/src/artifact";
 import {
-  ownMarkerCommentId,
+  ownMarkerCommentIds,
   type MutationClient,
   type PullRequest,
   type ReadClient,
@@ -30,6 +30,34 @@ export function createReadClient(
   owner: string,
   repo: string,
 ): ReadClient {
+  const reconcileMarkerComments = async (
+    prNumber: number,
+    body: string,
+    createWhenAbsent: boolean,
+  ): Promise<void> => {
+    const comments = await octokit.paginate(
+      octokit.rest.issues.listComments,
+      { owner, repo, issue_number: prNumber, per_page: 100 },
+    );
+    const [canonicalId, ...duplicateIds] = ownMarkerCommentIds(comments);
+    if (canonicalId === undefined) {
+      if (createWhenAbsent) {
+        await octokit.rest.issues.createComment({
+          owner, repo, issue_number: prNumber, body,
+        });
+      }
+      return;
+    }
+    for (const duplicateId of duplicateIds) {
+      await octokit.rest.issues.deleteComment({
+        owner, repo, comment_id: duplicateId,
+      });
+    }
+    await octokit.rest.issues.updateComment({
+      owner, repo, comment_id: canonicalId, body,
+    });
+  };
+
   return {
     async getWorkflowRun(id): Promise<WorkflowRun> {
       const { data } = await octokit.rest.actions.getWorkflowRun({
@@ -110,51 +138,22 @@ export function createReadClient(
       return [...found.values()];
     },
     async upsertComment(prNumber, body) {
-      const comments = await octokit.paginate(
-        octokit.rest.issues.listComments,
-        { owner, repo, issue_number: prNumber, per_page: 100 },
-      );
-      const existingId = ownMarkerCommentId(comments);
-      if (existingId !== undefined) {
-        await octokit.rest.issues.updateComment({
-          owner, repo, comment_id: existingId, body,
-        });
-      } else {
-        await octokit.rest.issues.createComment({
-          owner, repo, issue_number: prNumber, body,
-        });
-      }
+      await reconcileMarkerComments(prNumber, body, true);
     },
     async markCommentObsolete(prNumber) {
-      const comments = await octokit.paginate(
-        octokit.rest.issues.listComments,
-        { owner, repo, issue_number: prNumber, per_page: 100 },
-      );
-      const existingId = ownMarkerCommentId(comments);
-      if (existingId !== undefined) {
-        await octokit.rest.issues.updateComment({
-          owner,
-          repo,
-          comment_id: existingId,
-          body: `${COMMENT_MARKER}
+      await reconcileMarkerComments(
+        prNumber,
+        `${COMMENT_MARKER}
 This prek-autofix apply run is obsolete because the pull request branch has advanced. No action is required for this generated artifact.`,
-        });
-      }
+        false,
+      );
     },
     async resolveComment(prNumber) {
-      const comments = await octokit.paginate(
-        octokit.rest.issues.listComments,
-        { owner, repo, issue_number: prNumber, per_page: 100 },
+      await reconcileMarkerComments(
+        prNumber,
+        `${COMMENT_MARKER}\nprek-autofix applied the generated changes successfully.`,
+        false,
       );
-      const existingId = ownMarkerCommentId(comments);
-      if (existingId !== undefined) {
-        await octokit.rest.issues.updateComment({
-          owner,
-          repo,
-          comment_id: existingId,
-          body: `${COMMENT_MARKER}\nprek-autofix applied the generated changes successfully.`,
-        });
-      }
     },
   };
 }

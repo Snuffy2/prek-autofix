@@ -1,13 +1,24 @@
-import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  readFile,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   collectOperations,
+  GIT_CAPTURE_LIMIT_BYTES,
   operationForGitStatus,
   type Execute,
 } from "../../packages/collect/src/git";
 import { executeCommand } from "../../packages/collect/src/runner";
+import {
+  DEFAULT_MAX_BYTES,
+  DEFAULT_MAX_FILES,
+} from "../../packages/shared/src/artifact";
 
 const directories: string[] = [];
 const env = { PATH: process.env.PATH };
@@ -96,6 +107,113 @@ describe("collectOperations", () => {
         { path: "rename.txt", operation: "delete", mode: "100644" },
         { path: "renamed.txt", operation: "add", mode: "100644" },
       ]);
+  });
+
+  it("rejects 101 changed files before inspecting tracked modes or files", async () => {
+    const root = await repository();
+    await Promise.all(
+      Array.from({ length: DEFAULT_MAX_FILES + 1 }, (_, index) =>
+        writeFile(join(root, `file-${index}.txt`), "changed\n"),
+      ),
+    );
+    const execute: Execute = vi.fn(async (command, args, options) =>
+      executeCommand(command, args, options),
+    );
+
+    await expect(collectOperations(root, execute, env)).rejects.toThrow(
+      `collected ${DEFAULT_MAX_FILES + 1} files; maximum is ${DEFAULT_MAX_FILES}`,
+    );
+    expect(execute).not.toHaveBeenCalledWith(
+      "git",
+      expect.arrayContaining(["ls-tree"]),
+      expect.anything(),
+    );
+  });
+
+  it("rejects a file larger than the content ceiling", async () => {
+    const root = await repository();
+    await writeFile(join(root, "large.bin"), Buffer.alloc(DEFAULT_MAX_BYTES + 1));
+
+    await expect(collectOperations(root, executeCommand, env)).rejects.toThrow(
+      `collected content exceeds maximum of ${DEFAULT_MAX_BYTES} bytes`,
+    );
+  });
+
+  it("rejects symlinks without following them outside the checkout", async () => {
+    if (process.platform === "win32") return;
+    const root = await repository();
+    const outside = join(root, "..", `${root.split("/").at(-1)}-outside.txt`);
+    directories.push(outside);
+    await writeFile(outside, "outside\n");
+    await symlink(outside, join(root, "linked.txt"));
+
+    await expect(collectOperations(root, executeCommand, env)).rejects.toThrow();
+  });
+
+  it("accepts content exactly at the byte ceiling", async () => {
+    const root = await repository();
+    const content = Buffer.alloc(DEFAULT_MAX_BYTES, 0x5a);
+    await writeFile(join(root, "exact.bin"), content);
+
+    const operations = await collectOperations(root, executeCommand, env);
+
+    expect(operations).toHaveLength(1);
+    const decoded = Buffer.from(operations[0]?.content ?? "", "base64");
+    expect(decoded).toHaveLength(DEFAULT_MAX_BYTES);
+    expect(decoded[0]).toBe(0x5a);
+    expect(decoded.at(-1)).toBe(0x5a);
+  });
+
+  it("accepts exactly the maximum file count", async () => {
+    const execute: Execute = vi.fn(async (_command, args) => {
+      if (args[0] === "diff") {
+        const records = Array.from(
+          { length: DEFAULT_MAX_FILES },
+          (_, index) => `D\0file-${index}.txt\0`,
+        ).join("");
+        return {
+          exitCode: 0,
+          stdout: Buffer.from(records),
+          stderr: Buffer.alloc(0),
+        };
+      }
+      if (args[0] === "ls-files") {
+        return { exitCode: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+      }
+      if (args[0] === "ls-tree") {
+        return { exitCode: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+      }
+      throw new Error(`unexpected command: ${args.join(" ")}`);
+    });
+
+    const operations = await collectOperations("/unused", execute, env);
+
+    expect(operations).toHaveLength(DEFAULT_MAX_FILES);
+  });
+
+  it("looks up modes only for the bounded deleted paths", async () => {
+    const root = await repository();
+    const execute: Execute = vi.fn(async (command, args, options) => {
+      return executeCommand(command, args, options);
+    });
+    await import("node:fs/promises").then(({ unlink }) =>
+      unlink(join(root, "delete.txt")),
+    );
+
+    await collectOperations(root, execute, env);
+
+    const modeCall = vi
+      .mocked(execute)
+      .mock.calls.find(([, args]) => args[0] === "ls-tree");
+    expect(modeCall?.[1]).toEqual([
+      "ls-tree",
+      "-z",
+      "HEAD",
+      "--",
+      "delete.txt",
+    ]);
+    expect(modeCall?.[1]).not.toContain("-r");
+    expect(modeCall?.[2].captureLimitBytes).toBe(GIT_CAPTURE_LIMIT_BYTES);
   });
 });
 

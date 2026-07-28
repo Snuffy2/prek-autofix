@@ -186,6 +186,49 @@ describe("runCollect", () => {
 });
 
 describe("executeCommand", () => {
+  it("rejects captured command output above its ceiling", async () => {
+    await expect(
+      executeCommand(
+        process.execPath,
+        ["-e", 'process.stdout.write(Buffer.alloc(1025, "x"))'],
+        {
+          cwd: process.cwd(),
+          env: process.env,
+          captureLimitBytes: 1024,
+        },
+      ),
+    ).rejects.toThrow("command output exceeded capture limit of 1024 bytes");
+  });
+
+  it("force-kills a capture-overflow command that ignores SIGTERM", async () => {
+    const command = [
+      'process.on("SIGTERM",()=>{})',
+      'setInterval(()=>process.stdout.write(Buffer.alloc(2048,"x")),1)',
+    ].join(";");
+
+    await expect(
+      executeCommand(process.execPath, ["-e", command], {
+        cwd: process.cwd(),
+        env: process.env,
+        captureLimitBytes: 1024,
+      }),
+    ).rejects.toThrow("command output exceeded capture limit of 1024 bytes");
+  });
+
+  it("accepts captured command output exactly at its ceiling", async () => {
+    const response = await executeCommand(
+      process.execPath,
+      ["-e", 'process.stdout.write(Buffer.alloc(1024, "x"))'],
+      {
+        cwd: process.cwd(),
+        env: process.env,
+        captureLimitBytes: 1024,
+      },
+    );
+
+    expect(response.stdout).toHaveLength(1024);
+  });
+
   it("streams chunked untrusted output with safe line prefixes", async () => {
     const stdout = vi
       .spyOn(process.stdout, "write")

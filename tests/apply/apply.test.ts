@@ -78,8 +78,13 @@ describe("applyArtifact", () => {
           user: { login: "contributor" },
         },
         {
-          id: 2,
+          id: 9,
           body: "<!-- prek-autofix-result --> prior result",
+          user: { login: "github-actions[bot]" },
+        },
+        {
+          id: 2,
+          body: "<!-- prek-autofix-result --> older result",
           user: { login: "github-actions[bot]" },
         },
       ]),

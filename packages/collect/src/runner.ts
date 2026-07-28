@@ -159,6 +159,17 @@ export const executeCommand: Execute = async (command, args, options) =>
     });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
+    let capturedBytes = 0;
+    let captureOverflow = false;
+    let forceKill: NodeJS.Timeout | undefined;
+    const terminate = (signal: NodeJS.Signals): void => {
+      if (child.pid === undefined) return;
+      try {
+        process.kill(useProcessGroup ? -child.pid : child.pid, signal);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      }
+    };
     const streamedStdout = options.streamUntrustedOutput
       ? streamUntrustedOutput(
           child.stdout,
@@ -173,28 +184,36 @@ export const executeCommand: Execute = async (command, args, options) =>
           options.streamLimitBytes ?? 1048576,
         )
       : undefined;
+    const capture = (chunks: Buffer[], chunk: Buffer): void => {
+      const limit = options.captureLimitBytes;
+      if (
+        limit !== undefined &&
+        (captureOverflow || chunk.byteLength > limit - capturedBytes)
+      ) {
+        if (!captureOverflow) {
+          captureOverflow = true;
+          terminate("SIGTERM");
+          forceKill = setTimeout(() => terminate("SIGKILL"), 2000);
+          forceKill.unref();
+        }
+        return;
+      }
+      capturedBytes += chunk.byteLength;
+      chunks.push(chunk);
+    };
     child.stdout.on("data", (chunk: Buffer) => {
       if (streamedStdout) streamedStdout.write(chunk);
-      else stdout.push(chunk);
+      else capture(stdout, chunk);
     });
     child.stderr.on("data", (chunk: Buffer) => {
       if (streamedStderr) streamedStderr.write(chunk);
-      else stderr.push(chunk);
+      else capture(stderr, chunk);
     });
     let timedOut = false;
-    let forceKill: NodeJS.Timeout | undefined;
     const timeoutError = (): Error =>
       new Error(
         `prek pass timed out after ${Math.ceil((options.timeoutMs ?? 0) / 1000)} seconds; terminated hook process${useProcessGroup ? " tree" : ""}`,
       );
-    const terminate = (signal: NodeJS.Signals): void => {
-      if (child.pid === undefined) return;
-      try {
-        process.kill(useProcessGroup ? -child.pid : child.pid, signal);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-      }
-    };
     const timeout =
       options.timeoutMs === undefined
         ? undefined
@@ -223,6 +242,14 @@ export const executeCommand: Execute = async (command, args, options) =>
         return;
       }
       if (forceKill) clearTimeout(forceKill);
+      if (captureOverflow) {
+        reject(
+          new Error(
+            `command output exceeded capture limit of ${options.captureLimitBytes} bytes`,
+          ),
+        );
+        return;
+      }
       finish({
         exitCode: exitCode ?? 1,
         stdout: Buffer.concat(stdout),

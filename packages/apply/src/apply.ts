@@ -93,11 +93,18 @@ export class ApplyError extends Error {
 export function ownMarkerCommentId(
   comments: ExistingComment[],
 ): number | undefined {
-  return comments.find(
-    (comment) =>
-      comment.user?.login === "github-actions[bot]" &&
-      comment.body?.includes(COMMENT_MARKER),
-  )?.id;
+  return ownMarkerCommentIds(comments)[0];
+}
+
+export function ownMarkerCommentIds(comments: ExistingComment[]): number[] {
+  return comments
+    .filter(
+      (comment) =>
+        comment.user?.login === "github-actions[bot]" &&
+        comment.body?.includes(COMMENT_MARKER),
+    )
+    .map((comment) => comment.id)
+    .sort((left, right) => left - right);
 }
 
 export function maximumRawArtifactBytes(

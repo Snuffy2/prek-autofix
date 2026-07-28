@@ -1,6 +1,15 @@
-import { lstat, readFile, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { open, writeFile } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
-import type { ChangeArtifact, FileOperation } from "../../shared/src/artifact";
+import {
+  DEFAULT_MAX_BYTES,
+  DEFAULT_MAX_FILES,
+  isSafeRepositoryPath,
+  type ChangeArtifact,
+  type FileOperation,
+} from "../../shared/src/artifact";
+
+export const GIT_CAPTURE_LIMIT_BYTES = DEFAULT_MAX_BYTES;
 
 export interface CommandResult {
   exitCode: number;
@@ -16,6 +25,7 @@ export type Execute = (
     env: NodeJS.ProcessEnv;
     streamUntrustedOutput?: boolean;
     streamLimitBytes?: number;
+    captureLimitBytes?: number;
     timeoutMs?: number;
   },
 ) => Promise<CommandResult>;
@@ -39,13 +49,18 @@ export async function assertExactCleanCheckout(
   execute: Execute,
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
-  const head = await execute("git", ["rev-parse", "HEAD"], { cwd: root, env });
+  const head = await execute("git", ["rev-parse", "HEAD"], {
+    cwd: root,
+    env,
+    captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES,
+  });
   if (head.exitCode !== 0 || head.stdout.toString("utf8").trim() !== expectedSha) {
     throw new Error("checkout HEAD does not match pull request head SHA");
   }
   const status = await execute("git", ["status", "--porcelain=v1", "-z"], {
     cwd: root,
     env,
+    captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES,
   });
   if (status.exitCode !== 0) throw new Error("could not inspect checkout status");
   if (status.stdout.length !== 0) throw new Error("initial checkout is not clean");
@@ -53,13 +68,20 @@ export async function assertExactCleanCheckout(
 
 async function trackedModes(
   root: string,
+  paths: string[],
   execute: Execute,
   env: NodeJS.ProcessEnv,
 ): Promise<Map<string, string>> {
-  const result = await execute("git", ["ls-tree", "-r", "-z", "HEAD"], {
-    cwd: root,
-    env,
-  });
+  if (paths.length === 0) return new Map();
+  const result = await execute(
+    "git",
+    ["ls-tree", "-z", "HEAD", "--", ...paths],
+    {
+      cwd: root,
+      env,
+      captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES,
+    },
+  );
   if (result.exitCode !== 0) throw new Error("could not inspect tracked files");
   const modes = new Map<string, string>();
   for (const record of fields(result.stdout)) {
@@ -70,6 +92,9 @@ async function trackedModes(
 }
 
 function safeFile(root: string, file: string): string {
+  if (!isSafeRepositoryPath(file)) {
+    throw new Error(`unsafe changed path: ${file}`);
+  }
   const absolute = resolve(root, file);
   const rel = relative(root, absolute);
   if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`)) {
@@ -78,22 +103,60 @@ function safeFile(root: string, file: string): string {
   return absolute;
 }
 
+async function readStableFile(
+  absolute: string,
+  path: string,
+  remainingBytes: number,
+): Promise<{ content: Buffer; mode: "100644" | "100755" }> {
+  const handle = await open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const before = await handle.stat({ bigint: true });
+    if (!before.isFile()) {
+      throw new Error(`unsupported changed file type: ${path}`);
+    }
+    if (before.size > BigInt(remainingBytes)) {
+      throw new Error("content limit exceeded");
+    }
+    const content = await handle.readFile();
+    const after = await handle.stat({ bigint: true });
+    if (
+      content.byteLength > remainingBytes ||
+      BigInt(content.byteLength) !== before.size ||
+      after.size !== before.size ||
+      after.mtimeNs !== before.mtimeNs ||
+      after.ctimeNs !== before.ctimeNs ||
+      after.dev !== before.dev ||
+      after.ino !== before.ino
+    ) {
+      throw new Error("changed file was modified while being collected");
+    }
+    return {
+      content,
+      mode: before.mode & 0o111n ? "100755" : "100644",
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
 export async function collectOperations(
   root: string,
   execute: Execute,
   env: NodeJS.ProcessEnv,
+  maxFiles = DEFAULT_MAX_FILES,
+  maxBytes = DEFAULT_MAX_BYTES,
 ): Promise<FileOperation[]> {
-  const [diff, untracked, originalModes] = await Promise.all([
+  const [diff, untracked] = await Promise.all([
     execute(
       "git",
       ["diff", "--name-status", "-z", "--no-renames", "HEAD", "--"],
-      { cwd: root, env },
+      { cwd: root, env, captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES },
     ),
     execute("git", ["ls-files", "--others", "--exclude-standard", "-z"], {
       cwd: root,
       env,
+      captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES,
     }),
-    trackedModes(root, execute, env),
   ]);
   if (diff.exitCode !== 0 || untracked.exitCode !== 0) {
     throw new Error("could not inspect changes");
@@ -114,28 +177,48 @@ export async function collectOperations(
   for (const file of fields(untracked.stdout)) {
     entries.push({ operation: "add", path: file });
   }
+  if (entries.length > maxFiles) {
+    throw new Error(
+      `collected ${entries.length} files; maximum is ${maxFiles}`,
+    );
+  }
+  for (const { path } of entries) safeFile(root, path);
 
-  const operations = await Promise.all(
-    entries.map(async ({ operation, path }) => {
-      if (operation === "delete") {
-        return {
-          path,
-          operation,
-          mode: originalModes.get(path) ?? "100644",
-        } satisfies FileOperation;
-      }
-      const absolute = safeFile(root, path);
-      const info = await lstat(absolute);
-      if (!info.isFile()) throw new Error(`unsupported changed file type: ${path}`);
-      const content = await readFile(absolute);
-      return {
+  const originalModes = await trackedModes(
+    root,
+    entries
+      .filter(({ operation }) => operation === "delete")
+      .map(({ path }) => path),
+    execute,
+    env,
+  );
+  const operations: FileOperation[] = [];
+  let totalBytes = 0;
+  for (const { operation, path } of entries) {
+    if (operation === "delete") {
+      operations.push({
         path,
         operation,
-        mode: info.mode & 0o111 ? "100755" : "100644",
-        content: content.toString("base64"),
-      } satisfies FileOperation;
-    }),
-  );
+        mode: originalModes.get(path) ?? "100644",
+      });
+      continue;
+    }
+    const absolute = safeFile(root, path);
+    let file: Awaited<ReturnType<typeof readStableFile>>;
+    try {
+      file = await readStableFile(absolute, path, maxBytes - totalBytes);
+    } catch (error) {
+      if ((error as Error).message !== "content limit exceeded") throw error;
+      throw new Error(`collected content exceeds maximum of ${maxBytes} bytes`);
+    }
+    totalBytes += file.content.byteLength;
+    operations.push({
+      path,
+      operation,
+      mode: file.mode,
+      content: file.content.toString("base64"),
+    });
+  }
   return operations.sort((left, right) => left.path.localeCompare(right.path));
 }
 

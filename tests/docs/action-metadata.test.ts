@@ -1,5 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -55,6 +61,71 @@ function decideRelease(
         RELEASES_FILE: releasesFile,
       },
     });
+  } finally {
+    rmSync(directory, { recursive: true });
+  }
+}
+
+function runReleaseUpdate(
+  workflow: Record<string, any>,
+  releaseTag: string,
+  targetSha: string,
+  tags: Array<{ name: string; commit: { sha: string } }>,
+  releases: Array<{
+    tag_name: string;
+    draft: boolean;
+    prerelease: boolean;
+    published_at: string | null;
+  }>,
+  failure: "none" | "external-move" | "create-race" = "none",
+): string {
+  const directory = mkdtempSync(join(tmpdir(), "prek-autofix-release-write-"));
+  const ghPath = join(directory, "gh");
+  const callsPath = join(directory, "calls");
+  const tagsJson = JSON.stringify([tags]);
+  const releasesJson = JSON.stringify([releases]);
+  writeFileSync(
+    ghPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$CALLS_PATH"
+if [[ "$*" == *"tags?per_page=100"* ]]; then
+  printf '%s' "$TAGS_JSON"
+elif [[ "$*" == *"releases?per_page=100"* ]]; then
+  printf '%s' "$RELEASES_JSON"
+elif [[ "$*" == "api repos/$GITHUB_REPOSITORY --jq .node_id" ]]; then
+  printf '%s\\n' 'R_repo_node'
+elif [[ "$*" == api\\ graphql* ]]; then
+  [[ "$FAILURE" != "external-move" ]] || exit 1
+  printf '%s\\n' '{"data":{"updateRefs":{"clientMutationId":null}}}'
+elif [[ "$*" == api\\ --method\\ POST* ]]; then
+  [[ "$FAILURE" != "create-race" ]] || exit 1
+  printf '%s\\n' '{"ref":"refs/tags/v1"}'
+else
+  printf 'unexpected gh call: %s\\n' "$*" >&2
+  exit 2
+fi
+`,
+  );
+  chmodSync(ghPath, 0o755);
+  const run = workflow.jobs["update-major"].steps[0].run as string;
+  try {
+    execFileSync("bash", ["-eo", "pipefail", "-c", run], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${directory}:${process.env.PATH}`,
+        CALLS_PATH: callsPath,
+        TAGS_JSON: tagsJson,
+        RELEASES_JSON: releasesJson,
+        FAILURE: failure,
+        GITHUB_REPOSITORY: "owner/repository",
+        RELEASE_TAG: releaseTag,
+        TARGET_SHA: targetSha,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return readFileSync(callsPath, "utf8");
   } finally {
     rmSync(directory, { recursive: true });
   }
@@ -131,6 +202,7 @@ describe("action metadata", () => {
       group:
         "release-major-${{ github.repository }}-${{ needs.verify.outputs.major-tag }}",
       "cancel-in-progress": false,
+      queue: "max",
     });
     expect(workflow.jobs.verify.outputs["major-tag"]).toBe(
       "${{ steps.release.outputs.major-tag }}",
@@ -141,6 +213,10 @@ describe("action metadata", () => {
       "repos/$GITHUB_REPOSITORY/releases?per_page=100",
     );
     expect(updateScript).not.toContain("2>/dev/null");
+    expect(updateScript).not.toContain("--method PATCH");
+    expect(updateScript).toContain("updateRefs");
+    expect(updateScript).toContain("beforeOid: \\$beforeOid");
+    expect(updateScript).toContain("afterOid: \\$afterOid");
   });
 
   it("keeps moving major tags monotonic across releases and reruns", async () => {
@@ -162,14 +238,14 @@ describe("action metadata", () => {
         { name: "v1.9.9", commit: { sha: oldSha } },
         { name: "v1.10.0", commit: { sha: targetSha } },
       ]),
-    ).toBe(`update\t${targetSha}`);
+    ).toBe(`update\t${targetSha}\t${oldSha}`);
     expect(
       decideRelease(script, "v1.10.12", targetSha, [
         { name: "v1", commit: { sha: oldSha } },
         { name: "v1.10.9", commit: { sha: oldSha } },
         { name: "v1.10.12", commit: { sha: targetSha } },
       ]),
-    ).toBe(`update\t${targetSha}`);
+    ).toBe(`update\t${targetSha}\t${oldSha}`);
     expect(
       decideRelease(script, "v1.10.0", targetSha, [
         { name: "v1", commit: { sha: targetSha } },
@@ -183,6 +259,88 @@ describe("action metadata", () => {
         { name: "v1.11.0", commit: { sha: newerSha } },
       ]),
     ).toBe("skip\t");
+  });
+
+  it("uses the observed moving-tag OID in an exact forced CAS update", async () => {
+    const workflow = await metadata(".github/workflows/release.yml");
+    const oldSha = "1".repeat(40);
+    const targetSha = "2".repeat(40);
+    const releases = ["v1.9.9", "v1.10.0"].map((tagName) => ({
+      tag_name: tagName,
+      draft: false,
+      prerelease: false,
+      published_at: "2026-01-01T00:00:00Z",
+    }));
+    const calls = runReleaseUpdate(
+      workflow,
+      "v1.10.0",
+      targetSha,
+      [
+        { name: "v1", commit: { sha: oldSha } },
+        { name: "v1.9.9", commit: { sha: oldSha } },
+        { name: "v1.10.0", commit: { sha: targetSha } },
+      ],
+      releases,
+    );
+
+    expect(calls).toContain("api repos/owner/repository --jq .node_id");
+    expect(calls).toContain("api graphql");
+    expect(calls).toContain("-F repositoryId=R_repo_node");
+    expect(calls).toContain("-f name=refs/tags/v1");
+    expect(calls).toContain(`-f beforeOid=${oldSha}`);
+    expect(calls).toContain(`-f afterOid=${targetSha}`);
+    expect(calls).toContain("-F force=true");
+  });
+
+  it("fails closed when the moving tag changes after observation", async () => {
+    const workflow = await metadata(".github/workflows/release.yml");
+    const oldSha = "1".repeat(40);
+    const targetSha = "2".repeat(40);
+    const releases = ["v1.9.9", "v1.10.0"].map((tagName) => ({
+      tag_name: tagName,
+      draft: false,
+      prerelease: false,
+      published_at: "2026-01-01T00:00:00Z",
+    }));
+
+    expect(() =>
+      runReleaseUpdate(
+        workflow,
+        "v1.10.0",
+        targetSha,
+        [
+          { name: "v1", commit: { sha: oldSha } },
+          { name: "v1.9.9", commit: { sha: oldSha } },
+          { name: "v1.10.0", commit: { sha: targetSha } },
+        ],
+        releases,
+        "external-move",
+      ),
+    ).toThrow();
+  });
+
+  it("fails closed when another run wins an absent-tag creation race", async () => {
+    const workflow = await metadata(".github/workflows/release.yml");
+    const targetSha = "2".repeat(40);
+    const releases = [
+      {
+        tag_name: "v1.10.0",
+        draft: false,
+        prerelease: false,
+        published_at: "2026-01-01T00:00:00Z",
+      },
+    ];
+
+    expect(() =>
+      runReleaseUpdate(
+        workflow,
+        "v1.10.0",
+        targetSha,
+        [{ name: "v1.10.0", commit: { sha: targetSha } }],
+        releases,
+        "create-race",
+      ),
+    ).toThrow();
   });
 
   it("fails closed when moving-tag monotonicity cannot be proven", async () => {

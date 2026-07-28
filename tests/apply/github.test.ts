@@ -21,6 +21,7 @@ function octokitFixture() {
         listComments: vi.fn(),
         updateComment: vi.fn(),
         createComment: vi.fn(),
+        deleteComment: vi.fn(),
       },
     },
     paginate: vi.fn(),
@@ -202,6 +203,102 @@ describe("GitHub apply adapters", () => {
     await read.markCommentObsolete(4);
     expect(octokit.rest.issues.updateComment).not.toHaveBeenCalled();
     expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["recovery", "upsertComment", "recovery instructions"],
+    ["success", "resolveComment", undefined],
+    ["obsolete", "markCommentObsolete", undefined],
+  ] as const)(
+    "canonicalizes duplicate owned markers for %s",
+    async (_disposition, method, suppliedBody) => {
+      const { octokit } = octokitFixture();
+      octokit.paginate.mockResolvedValue([
+        {
+          id: 9, user: { login: "github-actions[bot]" },
+          body: "<!-- prek-autofix-result --> old recovery",
+        },
+        {
+          id: 1, user: { login: "contributor" },
+          body: "<!-- prek-autofix-result --> spoof",
+        },
+        {
+          id: 3, user: { login: "github-actions[bot]" },
+          body: "<!-- prek-autofix-result --> canonical",
+        },
+        {
+          id: 7, user: { login: "github-actions[bot]" },
+          body: "<!-- prek-autofix-result --> contradictory recovery",
+        },
+      ]);
+      const read = createReadClient(octokit as never, "base", "repo");
+
+      if (method === "upsertComment") {
+        await read.upsertComment(4, suppliedBody!);
+      } else {
+        await read[method](4);
+      }
+
+      expect(octokit.rest.issues.deleteComment).toHaveBeenNthCalledWith(1, {
+        owner: "base", repo: "repo", comment_id: 7,
+      });
+      expect(octokit.rest.issues.deleteComment).toHaveBeenNthCalledWith(2, {
+        owner: "base", repo: "repo", comment_id: 9,
+      });
+      expect(octokit.rest.issues.updateComment).toHaveBeenCalledWith(
+        expect.objectContaining({ comment_id: 3 }),
+      );
+      expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
+      expect(
+        octokit.rest.issues.deleteComment.mock.invocationCallOrder[1],
+      ).toBeLessThan(
+        octokit.rest.issues.updateComment.mock.invocationCallOrder[0]!,
+      );
+    },
+  );
+
+  it("fails before updating the canonical marker when duplicate deletion fails", async () => {
+    const { octokit } = octokitFixture();
+    octokit.paginate.mockResolvedValue([
+      {
+        id: 2, user: { login: "github-actions[bot]" },
+        body: "<!-- prek-autofix-result --> canonical",
+      },
+      {
+        id: 4, user: { login: "github-actions[bot]" },
+        body: "<!-- prek-autofix-result --> duplicate",
+      },
+    ]);
+    octokit.rest.issues.deleteComment.mockRejectedValue(
+      new Error("comment deletion denied"),
+    );
+    const read = createReadClient(octokit as never, "base", "repo");
+
+    await expect(read.resolveComment(4)).rejects.toThrow("deletion denied");
+    expect(octokit.rest.issues.updateComment).not.toHaveBeenCalled();
+    expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
+  });
+
+  it("creates only recovery when no owned marker exists", async () => {
+    const { octokit } = octokitFixture();
+    octokit.paginate.mockResolvedValue([
+      {
+        id: 1, user: { login: "contributor" },
+        body: "<!-- prek-autofix-result --> spoof",
+      },
+    ]);
+    const read = createReadClient(octokit as never, "base", "repo");
+
+    await read.resolveComment(4);
+    await read.markCommentObsolete(4);
+    expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
+    expect(octokit.rest.issues.updateComment).not.toHaveBeenCalled();
+    expect(octokit.rest.issues.deleteComment).not.toHaveBeenCalled();
+
+    await read.upsertComment(4, "recovery");
+    expect(octokit.rest.issues.createComment).toHaveBeenCalledWith({
+      owner: "base", repo: "repo", issue_number: 4, body: "recovery",
+    });
   });
 
   it("propagates GraphQL branch-protection errors without leaking into reads", async () => {
