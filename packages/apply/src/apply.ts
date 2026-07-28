@@ -90,12 +90,6 @@ export class ApplyError extends Error {
   }
 }
 
-export function ownMarkerCommentId(
-  comments: ExistingComment[],
-): number | undefined {
-  return ownMarkerCommentIds(comments)[0];
-}
-
 export function ownMarkerCommentIds(comments: ExistingComment[]): number[] {
   return comments
     .filter(

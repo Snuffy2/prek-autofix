@@ -4,7 +4,6 @@ import {
   ApplyError,
   applyArtifact,
   maximumRawArtifactBytes,
-  ownMarkerCommentId,
   type MutationClient,
   type ReadClient,
 } from "../../packages/apply/src/apply";
@@ -69,28 +68,6 @@ const request = (artifact: ChangeArtifact) => ({
 });
 
 describe("applyArtifact", () => {
-  it("updates only the GitHub Actions bot marker comment", () => {
-    expect(
-      ownMarkerCommentId([
-        {
-          id: 1,
-          body: "<!-- prek-autofix-result --> spoof",
-          user: { login: "contributor" },
-        },
-        {
-          id: 9,
-          body: "<!-- prek-autofix-result --> prior result",
-          user: { login: "github-actions[bot]" },
-        },
-        {
-          id: 2,
-          body: "<!-- prek-autofix-result --> older result",
-          user: { login: "github-actions[bot]" },
-        },
-      ]),
-    ).toBe(2);
-  });
-
   it("rejects empty artifacts and unsafe raw-size arithmetic", async () => {
     const { artifact, read, mutation } = fixture();
     artifact.operations = [];
