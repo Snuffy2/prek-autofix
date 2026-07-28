@@ -125,6 +125,22 @@ export function createReadClient(
         });
       }
     },
+    async markCommentObsolete(prNumber) {
+      const comments = await octokit.paginate(
+        octokit.rest.issues.listComments,
+        { owner, repo, issue_number: prNumber, per_page: 100 },
+      );
+      const existingId = ownMarkerCommentId(comments);
+      if (existingId !== undefined) {
+        await octokit.rest.issues.updateComment({
+          owner,
+          repo,
+          comment_id: existingId,
+          body: `${COMMENT_MARKER}
+This prek-autofix apply run is obsolete because the pull request branch has advanced. No action is required for this generated artifact.`,
+        });
+      }
+    },
     async resolveComment(prNumber) {
       const comments = await octokit.paginate(
         octokit.rest.issues.listComments,

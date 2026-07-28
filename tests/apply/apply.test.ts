@@ -44,6 +44,7 @@ function fixture() {
       { path: "gone.txt", mode: "100644", type: "blob" },
     ]),
     upsertComment: vi.fn(),
+    markCommentObsolete: vi.fn(),
     resolveComment: vi.fn(),
   };
   const mutation: MutationClient = {
@@ -212,7 +213,7 @@ describe("applyArtifact", () => {
     expect(mutation.createBlob).not.toHaveBeenCalled();
   });
 
-  it("comments when the associated PR head became stale", async () => {
+  it("treats a duplicate run after a successful update as obsolete", async () => {
     const { artifact, read, mutation } = fixture();
     const baseline = (await read.listAssociatedPullRequests("x"))[0]!;
     vi.mocked(read.listAssociatedPullRequests).mockResolvedValue([
@@ -221,10 +222,8 @@ describe("applyArtifact", () => {
     await expect(applyArtifact(read, mutation, request(artifact))).rejects.toThrow(
       "head changed",
     );
-    expect(read.upsertComment).toHaveBeenCalledWith(
-      4,
-      expect.stringContaining("head changed"),
-    );
+    expect(read.markCommentObsolete).toHaveBeenCalledWith(4);
+    expect(read.upsertComment).not.toHaveBeenCalled();
     expect(mutation.createBlob).not.toHaveBeenCalled();
   });
 

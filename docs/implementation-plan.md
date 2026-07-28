@@ -92,6 +92,8 @@ Inputs:
 | `working-directory` | `.` | Directory in which to run `prek` |
 | `cache` | `true` | Enable the official prek environment cache |
 | `max-passes` | `3` | Maximum convergence passes |
+| `max-log-bytes` | `1048576` | Maximum bytes streamed from each of stdout and stderr per pass (1024–10485760) |
+| `pass-timeout-seconds` | `600` | Timeout for each pass (1–3600 seconds) |
 
 Outputs:
 
@@ -216,4 +218,3 @@ canonical files.
   a replacement for it.
 - The initial release supports GitHub.com. GitHub Enterprise Server support
   requires separate compatibility validation.
-

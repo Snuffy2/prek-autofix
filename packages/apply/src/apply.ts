@@ -48,6 +48,7 @@ export interface ReadClient {
     paths: string[],
   ): Promise<TreeEntry[]>;
   upsertComment(prNumber: number, body: string): Promise<void>;
+  markCommentObsolete(prNumber: number): Promise<void>;
   resolveComment(prNumber: number): Promise<void>;
 }
 
@@ -249,10 +250,7 @@ export async function applyArtifact(
   }
   if (pr.headSha !== run.headSha) {
     const reason = "the pull request head changed after collection";
-    await read.upsertComment(
-      pr.number,
-      recoveryComment(reason, request.artifactUrl, request.sourceRunUrl),
-    );
+    await read.markCommentObsolete(pr.number);
     throw new ApplyError(reason);
   }
 

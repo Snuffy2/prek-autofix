@@ -170,6 +170,40 @@ describe("GitHub apply adapters", () => {
     expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
   });
 
+  it("marks only an owned existing marker obsolete without creating a comment", async () => {
+    const { octokit } = octokitFixture();
+    octokit.paginate.mockResolvedValue([
+      {
+        id: 1, user: { login: "contributor" },
+        body: "<!-- prek-autofix-result --> spoof",
+      },
+      {
+        id: 2, user: { login: "github-actions[bot]" },
+        body: "<!-- prek-autofix-result --> applied successfully",
+      },
+    ]);
+    const read = createReadClient(octokit as never, "base", "repo");
+    await read.markCommentObsolete(4);
+    expect(octokit.rest.issues.updateComment).toHaveBeenCalledWith({
+      owner: "base",
+      repo: "repo",
+      comment_id: 2,
+      body: expect.stringMatching(/obsolete.*No action is required/s),
+    });
+    expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
+
+    octokit.rest.issues.updateComment.mockClear();
+    octokit.paginate.mockResolvedValue([
+      {
+        id: 1, user: { login: "contributor" },
+        body: "<!-- prek-autofix-result --> spoof",
+      },
+    ]);
+    await read.markCommentObsolete(4);
+    expect(octokit.rest.issues.updateComment).not.toHaveBeenCalled();
+    expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
+  });
+
   it("propagates GraphQL branch-protection errors without leaking into reads", async () => {
     const { octokit } = octokitFixture();
     octokit.graphql.mockRejectedValue(new Error("branch protection"));

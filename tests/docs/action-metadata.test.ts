@@ -1,10 +1,63 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { parse } from "yaml";
 import { describe, expect, it } from "vitest";
 
 async function metadata(path: string): Promise<Record<string, any>> {
   return parse(await readFile(resolve(path), "utf8"));
+}
+
+function releaseDecisionScript(workflow: Record<string, any>): string {
+  const run = workflow.jobs["update-major"].steps[0].run as string;
+  const match = run.match(/node <<'NODE'\n([\s\S]*?)\nNODE/);
+  expect(
+    match,
+    "release workflow is missing its decision script",
+  ).not.toBeNull();
+  return match?.[1] ?? "";
+}
+
+function decideRelease(
+  script: string,
+  releaseTag: string,
+  targetSha: string,
+  tags: Array<{ name: string; commit: { sha: string } }>,
+  releases: Array<{
+    tag_name: string;
+    draft: boolean;
+    prerelease: boolean;
+    published_at: string | null;
+  }> = tags
+    .filter((tag) => /^v[0-9]+\.[0-9]+\.[0-9]+$/.test(tag.name))
+    .map((tag) => ({
+      tag_name: tag.name,
+      draft: false,
+      prerelease: false,
+      published_at: "2026-01-01T00:00:00Z",
+    })),
+): string {
+  const directory = mkdtempSync(join(tmpdir(), "prek-autofix-release-"));
+  const tagsFile = join(directory, "tags.json");
+  const releasesFile = join(directory, "releases.json");
+  writeFileSync(tagsFile, JSON.stringify([tags]));
+  writeFileSync(releasesFile, JSON.stringify([releases]));
+  try {
+    return execFileSync(process.execPath, ["-e", script], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        RELEASE_TAG: releaseTag,
+        TARGET_SHA: targetSha,
+        TAGS_FILE: tagsFile,
+        RELEASES_FILE: releasesFile,
+      },
+    });
+  } finally {
+    rmSync(directory, { recursive: true });
+  }
 }
 
 describe("action metadata", () => {
@@ -74,5 +127,152 @@ describe("action metadata", () => {
     expect(JSON.stringify(workflow.jobs["update-major"])).not.toMatch(
       /npm ci|npm test|checkout|packages\//,
     );
+    expect(workflow.jobs["update-major"].concurrency).toEqual({
+      group:
+        "release-major-${{ github.repository }}-${{ needs.verify.outputs.major-tag }}",
+      "cancel-in-progress": false,
+    });
+    expect(workflow.jobs.verify.outputs["major-tag"]).toBe(
+      "${{ steps.release.outputs.major-tag }}",
+    );
+    const updateScript = workflow.jobs["update-major"].steps[0].run as string;
+    expect(updateScript).toContain("gh api --paginate --slurp");
+    expect(updateScript).toContain(
+      "repos/$GITHUB_REPOSITORY/releases?per_page=100",
+    );
+    expect(updateScript).not.toContain("2>/dev/null");
+  });
+
+  it("keeps moving major tags monotonic across releases and reruns", async () => {
+    const workflow = await metadata(".github/workflows/release.yml");
+    const script = releaseDecisionScript(workflow);
+    const oldSha = "1".repeat(40);
+    const targetSha = "2".repeat(40);
+    const newerSha = "3".repeat(40);
+
+    expect(
+      decideRelease(script, "v1.10.0", targetSha, [
+        { name: "v1.9.9", commit: { sha: oldSha } },
+        { name: "v1.10.0", commit: { sha: targetSha } },
+      ]),
+    ).toBe(`create\t${targetSha}`);
+    expect(
+      decideRelease(script, "v1.10.0", targetSha, [
+        { name: "v1", commit: { sha: oldSha } },
+        { name: "v1.9.9", commit: { sha: oldSha } },
+        { name: "v1.10.0", commit: { sha: targetSha } },
+      ]),
+    ).toBe(`update\t${targetSha}`);
+    expect(
+      decideRelease(script, "v1.10.12", targetSha, [
+        { name: "v1", commit: { sha: oldSha } },
+        { name: "v1.10.9", commit: { sha: oldSha } },
+        { name: "v1.10.12", commit: { sha: targetSha } },
+      ]),
+    ).toBe(`update\t${targetSha}`);
+    expect(
+      decideRelease(script, "v1.10.0", targetSha, [
+        { name: "v1", commit: { sha: targetSha } },
+        { name: "v1.10.0", commit: { sha: targetSha } },
+      ]),
+    ).toBe("noop\t");
+    expect(
+      decideRelease(script, "v1.10.0", targetSha, [
+        { name: "v1", commit: { sha: newerSha } },
+        { name: "v1.10.0", commit: { sha: targetSha } },
+        { name: "v1.11.0", commit: { sha: newerSha } },
+      ]),
+    ).toBe("skip\t");
+  });
+
+  it("fails closed when moving-tag monotonicity cannot be proven", async () => {
+    const workflow = await metadata(".github/workflows/release.yml");
+    const script = releaseDecisionScript(workflow);
+    const targetSha = "2".repeat(40);
+
+    expect(() =>
+      decideRelease(script, "v2.10.12", targetSha, [
+        { name: "v2", commit: { sha: "f".repeat(40) } },
+        { name: "v2.10.12", commit: { sha: targetSha } },
+      ]),
+    ).toThrow(/known immutable stable release/);
+    expect(() =>
+      decideRelease(script, "v2.10.12", targetSha, [
+        { name: "v2.10.12", commit: { sha: "e".repeat(40) } },
+      ]),
+    ).toThrow(/does not match its immutable tag/);
+  });
+
+  it("ignores tags without a successfully published stable release", async () => {
+    const workflow = await metadata(".github/workflows/release.yml");
+    const script = releaseDecisionScript(workflow);
+    const targetSha = "2".repeat(40);
+    const futureSha = "3".repeat(40);
+    const tags = [
+      { name: "v1.10.0", commit: { sha: targetSha } },
+      { name: "v1.11.0", commit: { sha: futureSha } },
+      { name: "v1.12.0", commit: { sha: futureSha } },
+      { name: "v1.13.0", commit: { sha: futureSha } },
+    ];
+    const releases = [
+      {
+        tag_name: "v1.10.0",
+        draft: false,
+        prerelease: false,
+        published_at: "2026-01-01T00:00:00Z",
+      },
+      {
+        tag_name: "v1.12.0",
+        draft: true,
+        prerelease: false,
+        published_at: null,
+      },
+      {
+        tag_name: "v1.13.0",
+        draft: false,
+        prerelease: true,
+        published_at: "2026-01-02T00:00:00Z",
+      },
+    ];
+
+    expect(
+      decideRelease(script, "v1.10.0", targetSha, tags, releases),
+    ).toBe(`create\t${targetSha}`);
+  });
+
+  it("requires the triggering release and every eligible release to match a tag", async () => {
+    const workflow = await metadata(".github/workflows/release.yml");
+    const script = releaseDecisionScript(workflow);
+    const targetSha = "2".repeat(40);
+    const published = (tagName: string) => ({
+      tag_name: tagName,
+      draft: false,
+      prerelease: false,
+      published_at: "2026-01-01T00:00:00Z",
+    });
+
+    expect(() =>
+      decideRelease(
+        script,
+        "v1.10.0",
+        targetSha,
+        [{ name: "v1.10.0", commit: { sha: targetSha } }],
+        [
+          {
+            ...published("v1.10.0"),
+            prerelease: true,
+          },
+        ],
+      ),
+    ).toThrow(/not a published stable release/);
+    expect(() =>
+      decideRelease(
+        script,
+        "v1.10.0",
+        targetSha,
+        [{ name: "v1.10.0", commit: { sha: targetSha } }],
+        [published("v1.10.0"), published("v1.11.0")],
+      ),
+    ).toThrow(/has no matching tag/);
   });
 });
