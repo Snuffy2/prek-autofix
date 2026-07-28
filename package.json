@@ -9,6 +9,7 @@
     "build:collect": "esbuild packages/collect/src/index.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/collect/index.js --minify",
     "build:apply": "esbuild packages/apply/src/index.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/apply/index.js --minify",
     "check:dist": "npm run build && git diff --exit-code -- dist",
+    "lint": "eslint \"**/*.ts\" --max-warnings 0",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
@@ -18,9 +19,12 @@
     "@actions/github": "^9.1.1"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^24.0.0",
     "esbuild": "^0.25.0",
+    "eslint": "^10.8.0",
     "typescript": "^5.9.0",
+    "typescript-eslint": "^8.65.0",
     "vitest": "^3.2.4",
     "yaml": "^2.8.1"
   },
