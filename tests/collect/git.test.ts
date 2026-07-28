@@ -2,6 +2,7 @@ import {
   chmod,
   mkdtemp,
   readFile,
+  rename,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -148,6 +149,47 @@ describe("collectOperations", () => {
     await symlink(outside, join(root, "linked.txt"));
 
     await expect(collectOperations(root, executeCommand, env)).rejects.toThrow();
+  });
+
+  it("never follows an ancestor replaced with an outside symlink", async () => {
+    const root = await repository();
+    const inside = join(root, "inside");
+    const parked = join(root, "parked");
+    const outside = await mkdtemp(join(tmpdir(), "collect-outside-"));
+    directories.push(outside);
+    await import("node:fs/promises").then(({ mkdir }) => mkdir(inside));
+    await writeFile(join(inside, "value.txt"), "inside\n");
+    await writeFile(join(outside, "value.txt"), "outside\n");
+    let swap: Promise<void> | undefined;
+    const execute: Execute = async (command, args, options) => {
+      if (command === "python3") {
+        swap = new Promise((resolveSwap, rejectSwap) => {
+          setTimeout(() => {
+            void rename(inside, parked)
+              .then(() => symlink(outside, inside))
+              .then(resolveSwap, rejectSwap);
+          }, 50);
+        });
+      }
+      return executeCommand(command, args, options);
+    };
+
+    const operations = await collectOperations(
+      root,
+      execute,
+      env,
+      DEFAULT_MAX_FILES,
+      DEFAULT_MAX_BYTES,
+      200,
+    );
+    await swap;
+
+    expect(
+      Buffer.from(operations[0]?.content ?? "", "base64").toString(),
+    ).toBe("inside\n");
+    expect(JSON.stringify(operations)).not.toContain(
+      Buffer.from("outside\n").toString("base64"),
+    );
   });
 
   it("accepts content exactly at the byte ceiling", async () => {

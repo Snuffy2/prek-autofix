@@ -26,6 +26,7 @@ function setup(prekResults: ReturnType<typeof result>[]) {
   const execute: Execute = vi.fn(async (command, args, options) => {
     expect(options.env.PREK_AUTOFIX_TOKEN).toBeUndefined();
     if (command === "prek") return prekResults[prek++] ?? result();
+    if (command === "python3") return result();
     if (args[0] === "rev-parse") return result(0, `${SHA}\n`);
     if (args[0] === "status") return result();
     if (args[0] === "ls-tree") return result();
@@ -40,6 +41,7 @@ async function invoke(
   maxPasses = 3,
   initialStatus = false,
   changes: string[][] = [[]],
+  platform: NodeJS.Platform = "linux",
 ) {
   const workspace = await mkdtemp(join(tmpdir(), "collect-runner-"));
   directories.push(workspace);
@@ -78,6 +80,7 @@ async function invoke(
       execute: wrapped,
       artifact: { uploadArtifact },
       env: { PATH: process.env.PATH, PREK_AUTOFIX_TOKEN: "do-not-leak" },
+      platform,
       setOutput: (name, value) => outputs.set(name, value),
       collectChanges: async () =>
         (changes[inspection++] ?? []).map((path) => ({
@@ -98,6 +101,16 @@ afterEach(async () => {
 });
 
 describe("runCollect", () => {
+  it("fails closed on unsupported runner platforms", async () => {
+    const execute = setup([result(0)]);
+    const call = await invoke(execute, 3, false, [[]], "darwin");
+
+    await expect(call.promise).rejects.toThrow(
+      "secure collection requires a Linux runner",
+    );
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it("passes a clean result without an artifact", async () => {
     const execute = setup([result(0)]);
     const call = await invoke(execute);
@@ -105,7 +118,10 @@ describe("runCollect", () => {
     expect(execute).toHaveBeenCalledWith(
       "prek",
       expect.anything(),
-      expect.objectContaining({ streamUntrustedOutput: true }),
+      expect.objectContaining({
+        cleanupProcessGroup: true,
+        streamUntrustedOutput: true,
+      }),
     );
     expect(call.outputs.get("changed")).toBe("false");
     expect(call.uploadArtifact).not.toHaveBeenCalled();
@@ -346,6 +362,33 @@ describe("executeCommand", () => {
       }`,
     );
   });
+
+  it.skipIf(process.platform !== "linux")(
+    "terminates descendants after a successful hook process",
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), "collect-tree-success-"));
+      directories.push(directory);
+      const pidFile = join(directory, "descendant.pid");
+      const command = [
+        'const {spawn}=require("node:child_process")',
+        'const {writeFileSync}=require("node:fs")',
+        `const child=spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore"})`,
+        `writeFileSync(${JSON.stringify(pidFile)},String(child.pid))`,
+        "child.unref()",
+      ].join(";");
+
+      await executeCommand(process.execPath, ["-e", command], {
+        cwd: process.cwd(),
+        env: process.env,
+        cleanupProcessGroup: true,
+      });
+
+      const descendantPid = Number(await readFile(pidFile, "utf8"));
+      expect(() => process.kill(descendantPid, 0)).toThrow(
+        expect.objectContaining({ code: "ESRCH" }),
+      );
+    },
+  );
 
   it.skipIf(process.platform !== "linux")(
     "terminates descendants in the timed-out hook process group",

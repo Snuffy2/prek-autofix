@@ -1,5 +1,4 @@
-import { constants } from "node:fs";
-import { open, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import {
   DEFAULT_MAX_BYTES,
@@ -26,6 +25,7 @@ export type Execute = (
     streamUntrustedOutput?: boolean;
     streamLimitBytes?: number;
     captureLimitBytes?: number;
+    cleanupProcessGroup?: boolean;
     timeoutMs?: number;
   },
 ) => Promise<CommandResult>;
@@ -103,40 +103,96 @@ function safeFile(root: string, file: string): string {
   return absolute;
 }
 
+const SECURE_READ_SCRIPT = String.raw`
+import os, stat, sys, time
+root, path, maximum, delay_ms = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
+flags = os.O_RDONLY | os.O_NOFOLLOW
+directory_flags = flags | os.O_DIRECTORY
+fd = os.open(root, directory_flags)
+try:
+    parts = path.split("/")
+    for component in parts[:-1]:
+        child = os.open(component, directory_flags, dir_fd=fd)
+        os.close(fd)
+        fd = child
+        if delay_ms:
+            time.sleep(delay_ms / 1000)
+    file_fd = os.open(parts[-1], flags, dir_fd=fd)
+    try:
+        before = os.fstat(file_fd)
+        if not stat.S_ISREG(before.st_mode):
+            raise RuntimeError("unsupported changed file type")
+        if before.st_size > maximum:
+            raise RuntimeError("content limit exceeded")
+        chunks, total = [], 0
+        while True:
+            chunk = os.read(file_fd, min(65536, maximum + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > maximum:
+                raise RuntimeError("content limit exceeded")
+        after = os.fstat(file_fd)
+        stable = ("st_size", "st_mtime_ns", "st_ctime_ns", "st_dev", "st_ino")
+        if total != before.st_size or any(getattr(before, key) != getattr(after, key) for key in stable):
+            raise RuntimeError("changed file was modified while being collected")
+        mode = b"100755\0" if before.st_mode & 0o111 else b"100644\0"
+        os.write(1, mode + b"".join(chunks))
+    finally:
+        os.close(file_fd)
+finally:
+    os.close(fd)
+`;
+
 async function readStableFile(
-  absolute: string,
+  root: string,
   path: string,
   remainingBytes: number,
+  execute: Execute,
+  env: NodeJS.ProcessEnv,
+  componentDelayMs: number,
 ): Promise<{ content: Buffer; mode: "100644" | "100755" }> {
-  const handle = await open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW);
-  try {
-    const before = await handle.stat({ bigint: true });
-    if (!before.isFile()) {
-      throw new Error(`unsupported changed file type: ${path}`);
-    }
-    if (before.size > BigInt(remainingBytes)) {
+  const result = await execute(
+    "python3",
+    [
+      "-I",
+      "-c",
+      SECURE_READ_SCRIPT,
+      root,
+      path,
+      String(remainingBytes),
+      String(componentDelayMs),
+    ],
+    {
+      cwd: root,
+      env,
+      captureLimitBytes: remainingBytes + 4096,
+    },
+  );
+  if (result.exitCode !== 0) {
+    const detail = result.stderr.toString("utf8");
+    if (detail.includes("content limit exceeded")) {
       throw new Error("content limit exceeded");
     }
-    const content = await handle.readFile();
-    const after = await handle.stat({ bigint: true });
-    if (
-      content.byteLength > remainingBytes ||
-      BigInt(content.byteLength) !== before.size ||
-      after.size !== before.size ||
-      after.mtimeNs !== before.mtimeNs ||
-      after.ctimeNs !== before.ctimeNs ||
-      after.dev !== before.dev ||
-      after.ino !== before.ino
-    ) {
-      throw new Error("changed file was modified while being collected");
+    if (detail.includes("unsupported changed file type")) {
+      throw new Error(`unsupported changed file type: ${path}`);
     }
-    return {
-      content,
-      mode: before.mode & 0o111n ? "100755" : "100644",
-    };
-  } finally {
-    await handle.close();
+    throw new Error(`could not securely read changed file: ${path}`);
   }
+  const separator = result.stdout.indexOf(0);
+  const mode = result.stdout.subarray(0, separator).toString("ascii");
+  if (
+    separator < 0 ||
+    (mode !== "100644" && mode !== "100755") ||
+    result.stdout.byteLength - separator - 1 > remainingBytes
+  ) {
+    throw new Error(`invalid secure file reader output: ${path}`);
+  }
+  return {
+    content: result.stdout.subarray(separator + 1),
+    mode,
+  };
 }
 
 export async function collectOperations(
@@ -145,6 +201,7 @@ export async function collectOperations(
   env: NodeJS.ProcessEnv,
   maxFiles = DEFAULT_MAX_FILES,
   maxBytes = DEFAULT_MAX_BYTES,
+  componentDelayMs = 0,
 ): Promise<FileOperation[]> {
   const [diff, untracked] = await Promise.all([
     execute(
@@ -203,10 +260,17 @@ export async function collectOperations(
       });
       continue;
     }
-    const absolute = safeFile(root, path);
+    safeFile(root, path);
     let file: Awaited<ReturnType<typeof readStableFile>>;
     try {
-      file = await readStableFile(absolute, path, maxBytes - totalBytes);
+      file = await readStableFile(
+        root,
+        path,
+        maxBytes - totalBytes,
+        execute,
+        env,
+        componentDelayMs,
+      );
     } catch (error) {
       if ((error as Error).message !== "content limit exceeded") throw error;
       throw new Error(`collected content exceeds maximum of ${maxBytes} bytes`);

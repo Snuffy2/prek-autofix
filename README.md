@@ -3,7 +3,10 @@
 `prek-autofix` runs [`prek`](https://github.com/j178/prek) on pull requests and
 applies only the resulting mechanical fixes in a separate, privileged workflow.
 It is intended for GitHub.com repositories. The first release uses
-GitHub-hosted Linux runners; GitHub Enterprise Server needs separate validation.
+GitHub-hosted Linux runners with Python 3; GitHub Enterprise Server needs
+separate validation. Collection fails closed on other runner platforms or when
+Python 3 is unavailable because secure changed-file reads use descriptor-relative
+path traversal.
 
 ## What it does
 

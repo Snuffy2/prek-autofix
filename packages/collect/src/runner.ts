@@ -48,6 +48,7 @@ export interface CollectDeps {
     env: NodeJS.ProcessEnv,
   ) => Promise<FileOperation[]>;
   persistArtifact?: typeof writeArtifact;
+  platform?: NodeJS.Platform;
 }
 
 export class HardFailureError extends Error {}
@@ -151,6 +152,10 @@ export function streamUntrustedOutput(
 export const executeCommand: Execute = async (command, args, options) =>
   await new Promise<CommandResult>((finish, reject) => {
     const useProcessGroup = process.platform === "linux";
+    if (options.cleanupProcessGroup && !useProcessGroup) {
+      reject(new Error("secure hook process cleanup requires Linux"));
+      return;
+    }
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: options.env,
@@ -168,6 +173,17 @@ export const executeCommand: Execute = async (command, args, options) =>
         process.kill(useProcessGroup ? -child.pid : child.pid, signal);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      }
+    };
+    const processGroupExists = (): boolean => {
+      if (!useProcessGroup || child.pid === undefined) return false;
+      try {
+        process.kill(-child.pid, 0);
+        return true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+        if ((error as NodeJS.ErrnoException).code === "EPERM") return true;
+        throw error;
       }
     };
     const streamedStdout = options.streamUntrustedOutput
@@ -226,6 +242,23 @@ export const executeCommand: Execute = async (command, args, options) =>
             }, 2000);
           }, options.timeoutMs);
     timeout?.unref();
+    let cleanupPromise: Promise<void> | undefined;
+    child.on("exit", () => {
+      if (!options.cleanupProcessGroup || timedOut || captureOverflow) return;
+      cleanupPromise = (async () => {
+        terminate("SIGTERM");
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          if (!processGroupExists()) return;
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        terminate("SIGKILL");
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          if (!processGroupExists()) return;
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        throw new Error("could not reap hook process group");
+      })();
+    });
     child.on("error", (error) => {
       if (timeout) clearTimeout(timeout);
       if (forceKill) clearTimeout(forceKill);
@@ -250,11 +283,15 @@ export const executeCommand: Execute = async (command, args, options) =>
         );
         return;
       }
-      finish({
-        exitCode: exitCode ?? 1,
-        stdout: Buffer.concat(stdout),
-        stderr: Buffer.concat(stderr),
-      });
+      const complete = async (): Promise<void> => {
+        await cleanupPromise;
+        finish({
+          exitCode: exitCode ?? 1,
+          stdout: Buffer.concat(stdout),
+          stderr: Buffer.concat(stderr),
+        });
+      };
+      void complete().catch(reject);
     });
   });
 
@@ -279,6 +316,9 @@ export async function runCollect(
   deps: CollectDeps,
 ): Promise<void> {
   validateContext(context);
+  if ((deps.platform ?? process.platform) !== "linux") {
+    throw new Error("secure collection requires a Linux runner");
+  }
   if (!Number.isSafeInteger(inputs.maxPasses) || inputs.maxPasses <= 0) {
     throw new Error("max-passes must be a positive integer");
   }
@@ -307,6 +347,14 @@ export async function runCollect(
     throw new Error("working-directory must be inside the workspace");
   }
   const childEnv = sanitizedEnvironment(deps.env);
+  const python = await deps.execute(
+    "python3",
+    ["-I", "-c", "import os, stat"],
+    { cwd: workspace, env: childEnv, captureLimitBytes: 4096 },
+  );
+  if (python.exitCode !== 0) {
+    throw new Error("secure collection requires Python 3");
+  }
   await assertExactCleanCheckout(
     workspace,
     context.headSha,
@@ -330,6 +378,7 @@ export async function runCollect(
       env: childEnv,
       streamUntrustedOutput: true,
       streamLimitBytes: inputs.maxLogBytes,
+      cleanupProcessGroup: true,
       timeoutMs: inputs.passTimeoutSeconds * 1000,
     });
     operations = await (deps.collectChanges ?? collectOperations)(
