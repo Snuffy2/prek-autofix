@@ -165,6 +165,24 @@ protection are unaffected; this Action never submits an approving review.
 | `max-log-bytes` | `1048576` | Maximum bytes streamed from each of stdout and stderr per pass (1024–10485760) |
 | `pass-timeout-seconds` | `600` | Timeout for each pass (1–3600 seconds); the hook process tree is terminated on Linux |
 
+Collection runs each untrusted hook pass in private Linux user, PID, and mount
+namespaces with a private `/proc`. It masks inherited alternate procfs mounts
+and known Docker, containerd, Podman, and CRI-O Unix sockets before dropping
+capabilities. The supported profile is a GitHub-hosted Ubuntu VM, or a dedicated
+self-hosted Linux VM that permits unprivileged user/PID/mount namespaces and
+procfs mounts and exposes no other same-UID or supplementary-group privileged
+service, container API, or host-control socket to the runner account. Container
+jobs, shared multi-tenant runners, and hosts with TCP container APIs or custom
+privileged services are outside this security profile.
+
+Linux requires collection to deny future `setgroups` calls before an
+unprivileged process can install the namespace GID map, so inherited
+supplementary groups cannot be cleared inside the new user namespace. Collection
+therefore excludes runners with privileged services reachable through those
+groups from its supported profile. It also verifies namespace creation, procfs
+replacement, endpoint masks, capability removal, and a non-dumpable supervisor,
+and fails closed before running hooks when any check fails.
+
 For example, replace the `collect` step in Stage 1 with:
 
 ```yaml

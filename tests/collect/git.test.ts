@@ -424,7 +424,7 @@ describe("collectOperations", () => {
     "bounds and terminates an attacker-configured clean filter process tree",
     async () => {
       const root = await repository();
-      const pidFile = join(root, ".git", "filter-child.pid");
+      const mutation = join(root, ".git", "filter-child-mutation");
       const filter = join(root, ".git", "filter.sh");
       await writeFile(join(root, ".gitattributes"), "*.txt filter=attacker\n");
       await git(root, "add", ".gitattributes");
@@ -433,10 +433,8 @@ describe("collectOperations", () => {
         filter,
         [
           "#!/bin/sh",
-          "sleep 30 &",
-          "child=$!",
-          `printf '%s' "$child" > ${JSON.stringify(pidFile)}`,
-          'wait "$child"',
+          `(sleep 1; printf escaped > ${JSON.stringify(mutation)}) &`,
+          "wait",
         ].join("\n"),
       );
       await chmod(filter, 0o755);
@@ -461,10 +459,8 @@ describe("collectOperations", () => {
         "git worktree inspection timed out after 1 seconds; terminated process tree",
       );
 
-      const childPid = Number(await readFile(pidFile, "utf8"));
-      expect(() => process.kill(childPid, 0)).toThrow(
-        expect.objectContaining({ code: "ESRCH" }),
-      );
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      await expect(readFile(mutation)).rejects.toThrow();
     },
   );
 });

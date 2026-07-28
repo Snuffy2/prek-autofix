@@ -342,6 +342,16 @@ export const executeCommand: Execute = async (command, args, options) =>
               "hook supervisor failed to establish the Linux subreaper boundary",
             );
           }
+          if (!records.includes("ISOLATED")) {
+            throw new Error(
+              "hook supervisor failed to isolate hooks from action credentials",
+            );
+          }
+          if (!records.includes("NON_DUMPABLE")) {
+            throw new Error(
+              "hook supervisor failed to protect its protocol channel",
+            );
+          }
           if (records.includes("CLEANUP_FAILED")) {
             throw new Error(
               "hook supervisor could not prove that all hook descendants exited",
@@ -500,14 +510,14 @@ export async function runCollect(
           trustedPython,
         );
     const snapshot = JSON.stringify(operations);
-    if (result.exitCode === 0) {
-      converged = true;
-      break;
-    }
     if (operations.length === 0 || snapshot === previous) {
-      hardFailure = new HardFailureError(
-        `prek failed without making new fixes (exit ${result.exitCode})`,
-      );
+      if (result.exitCode === 0) {
+        converged = true;
+      } else {
+        hardFailure = new HardFailureError(
+          `prek failed without making new fixes (exit ${result.exitCode})`,
+        );
+      }
       break;
     }
     previous = snapshot;

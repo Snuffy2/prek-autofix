@@ -194,6 +194,33 @@ describe("runCollect", () => {
     expect(call.outputs.get("artifact-name")).toBe("");
   });
 
+  it("requires a successful fix snapshot to stabilize", async () => {
+    const call = await invoke(
+      setup([result(0), result(0)]),
+      3,
+      false,
+      [["a"], ["a"]],
+    );
+
+    await expect(call.promise).rejects.toBeInstanceOf(FixesFoundError);
+    expect(call.collectChanges).toHaveBeenCalledTimes(2);
+    expect(call.uploadArtifact).toHaveBeenCalledOnce();
+  });
+
+  it("rejects ever-changing successful fix snapshots", async () => {
+    const call = await invoke(
+      setup([result(0), result(0)]),
+      2,
+      false,
+      [["a"], ["b"]],
+    );
+
+    await expect(call.promise).rejects.toBeInstanceOf(NonConvergenceError);
+    expect(call.collectChanges).toHaveBeenCalledTimes(2);
+    expect(call.uploadArtifact).not.toHaveBeenCalled();
+    expect(call.outputs.get("artifact-name")).toBe("");
+  });
+
   it("stops before change collection when a hook changes HEAD", async () => {
     let headChecks = 0;
     const execute: Execute = vi.fn(async (command, args) => {
@@ -484,12 +511,10 @@ describe("executeCommand", () => {
     async () => {
       const directory = await mkdtemp(join(tmpdir(), "collect-tree-success-"));
       directories.push(directory);
-      const pidFile = join(directory, "descendant.pid");
+      const descendantMutation = join(directory, "descendant-mutation");
       const command = [
         'const {spawn}=require("node:child_process")',
-        'const {writeFileSync}=require("node:fs")',
-        `const child=spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore"})`,
-        `writeFileSync(${JSON.stringify(pidFile)},String(child.pid))`,
+        `const child=spawn(process.execPath,["-e",${JSON.stringify(`setTimeout(()=>require("node:fs").writeFileSync(${JSON.stringify(descendantMutation)},"escaped"),500);setInterval(()=>{},1000)`)}],{stdio:"ignore"})`,
         "child.unref()",
       ].join(";");
 
@@ -501,10 +526,156 @@ describe("executeCommand", () => {
         timeoutMs: 5000,
       });
 
-      const descendantPid = Number(await readFile(pidFile, "utf8"));
-      expect(() => process.kill(descendantPid, 0)).toThrow(
-        expect.objectContaining({ code: "ESRCH" }),
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      await expect(readFile(descendantMutation)).rejects.toThrow();
+    },
+  );
+
+  it.skipIf(
+    process.platform !== "linux" || process.env.VITEST_WORKER_ID === undefined,
+  )(
+    "hides parent-only credentials from every visible procfs mount",
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), "collect-proc-isolation-"));
+      directories.push(directory);
+      const observation = join(directory, "credential-observation");
+      const script = `
+import glob, os
+markers = (
+    b"ACTIONS_RUNTIME_TOKEN=",
+    ${JSON.stringify(`VITEST_WORKER_ID=${process.env.VITEST_WORKER_ID}\0`)}.encode(),
+)
+found = False
+proc_mounts = []
+with open("/proc/self/mountinfo", "r", encoding="utf8") as mounts:
+    for record in mounts:
+        left, separator, right = record.partition(" - ")
+        if separator and right.split()[0] == "proc":
+            proc_mounts.append(left.split()[4])
+for mountpoint in proc_mounts:
+    for path in glob.glob(mountpoint + "/[0-9]*/environ"):
+        try:
+            with open(path, "rb") as environment:
+                values = environment.read()
+                if any(marker in values for marker in markers):
+                    found = True
+                    break
+        except (FileNotFoundError, PermissionError, ProcessLookupError):
+            pass
+with open(${JSON.stringify(observation)}, "w", encoding="ascii") as output:
+    output.write("exposed" if found else "hidden:%d" % len(proc_mounts))
+`;
+
+      const response = await executeCommand(
+        "/usr/bin/python3",
+        ["-I", "-c", script],
+        {
+          cwd: directory,
+          env: { PATH: process.env.PATH },
+          superviseProcessTree: true,
+          trustedPythonPath: "/usr/bin/python3",
+          timeoutMs: 5000,
+        },
       );
+
+      expect(response.exitCode).toBe(0);
+      expect(await readFile(observation, "utf8")).toMatch(/^hidden:[1-9]\d*$/);
+    },
+  );
+
+  it.skipIf(process.platform !== "linux")(
+    "masks known host container service endpoints from hooks",
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), "collect-socket-isolation-"));
+      directories.push(directory);
+      const observation = join(directory, "socket-observation");
+      const script = `
+import glob, os, socket, stat
+paths = {
+    "/run/docker.sock",
+    "/var/run/docker.sock",
+    "/run/docker-host.sock",
+    "/var/run/docker-host.sock",
+    "/run/host-services/docker.proxy.sock",
+    "/run/containerd/containerd.sock",
+    "/var/run/containerd/containerd.sock",
+    "/run/k3s/containerd/containerd.sock",
+    "/run/podman/podman.sock",
+    "/var/run/podman/podman.sock",
+    "/run/crio/crio.sock",
+    "/var/run/crio/crio.sock",
+}
+paths.update(glob.glob("/run/user/*/podman/podman.sock"))
+paths.update(glob.glob("/run/user/*/docker.sock"))
+paths.update(glob.glob("/run/user/*/containerd/containerd.sock"))
+accessible = []
+for path in paths:
+    try:
+        if not stat.S_ISSOCK(os.stat(path).st_mode):
+            continue
+        client = socket.socket(socket.AF_UNIX)
+        try:
+            client.connect(path)
+            accessible.append(path)
+        finally:
+            client.close()
+    except (FileNotFoundError, PermissionError, ConnectionError, OSError):
+        pass
+with open(${JSON.stringify(observation)}, "w", encoding="ascii") as output:
+    output.write("blocked" if not accessible else "accessible:" + ",".join(accessible))
+`;
+
+      const response = await executeCommand(
+        "/usr/bin/python3",
+        ["-I", "-c", script],
+        {
+          cwd: directory,
+          env: { PATH: process.env.PATH },
+          superviseProcessTree: true,
+          trustedPythonPath: "/usr/bin/python3",
+          timeoutMs: 5000,
+        },
+      );
+
+      expect(response.exitCode).toBe(0);
+      expect(await readFile(observation, "utf8")).toBe("blocked");
+    },
+  );
+
+  it.skipIf(process.platform !== "linux")(
+    "prevents hooks from writing to the supervisor protocol descriptor",
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), "collect-protocol-isolation-"));
+      directories.push(directory);
+      const observation = join(directory, "protocol-observation");
+      const script = `
+import os
+try:
+    protocol = os.open("/proc/1/fd/3", os.O_WRONLY)
+except OSError:
+    result = "blocked"
+else:
+    os.write(protocol, b"READY\\nISOLATED\\nNON_DUMPABLE\\nCLEAN normal\\n")
+    os.close(protocol)
+    result = "exposed"
+with open(${JSON.stringify(observation)}, "w", encoding="ascii") as output:
+    output.write(result)
+`;
+
+      const response = await executeCommand(
+        "/usr/bin/python3",
+        ["-I", "-c", script],
+        {
+          cwd: directory,
+          env: { PATH: process.env.PATH },
+          superviseProcessTree: true,
+          trustedPythonPath: "/usr/bin/python3",
+          timeoutMs: 5000,
+        },
+      );
+
+      expect(response.exitCode).toBe(0);
+      expect(await readFile(observation, "utf8")).toBe("blocked");
     },
   );
 
@@ -513,12 +684,10 @@ describe("executeCommand", () => {
     async () => {
       const directory = await mkdtemp(join(tmpdir(), "collect-tree-"));
       directories.push(directory);
-      const pidFile = join(directory, "descendant.pid");
+      const descendantMutation = join(directory, "descendant-mutation");
       const command = [
         'const {spawn}=require("node:child_process")',
-        'const {writeFileSync}=require("node:fs")',
-        `const child=spawn(process.execPath,["-e","setInterval(()=>{},1000)"])`,
-        `writeFileSync(${JSON.stringify(pidFile)},String(child.pid))`,
+        `const child=spawn(process.execPath,["-e",${JSON.stringify(`setTimeout(()=>require("node:fs").writeFileSync(${JSON.stringify(descendantMutation)},"escaped"),500);setInterval(()=>{},1000)`)}])`,
         "setInterval(()=>{},1000)",
       ].join(";");
 
@@ -532,18 +701,8 @@ describe("executeCommand", () => {
         }),
       ).rejects.toThrow("terminated hook process tree");
 
-      const descendantPid = Number(await readFile(pidFile, "utf8"));
-      let alive = true;
-      for (let attempt = 0; attempt < 50 && alive; attempt += 1) {
-        try {
-          process.kill(descendantPid, 0);
-          await new Promise((resolve) => setTimeout(resolve, 20));
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-          alive = false;
-        }
-      }
-      expect(alive).toBe(false);
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      await expect(readFile(descendantMutation)).rejects.toThrow();
     },
   );
 
@@ -584,10 +743,7 @@ for target in (${JSON.stringify(workspaceMutation)}, ${JSON.stringify(artifactMu
       });
 
       expect(response.exitCode).toBe(0);
-      const daemonPid = Number(await readFile(pidFile, "utf8"));
-      expect(() => process.kill(daemonPid, 0)).toThrow(
-        expect.objectContaining({ code: "ESRCH" }),
-      );
+      await expect(readFile(pidFile, "utf8")).resolves.toMatch(/^\d+$/);
       await new Promise((resolve) => setTimeout(resolve, 600));
       await expect(readFile(workspaceMutation)).rejects.toThrow();
       await expect(readFile(artifactMutation)).rejects.toThrow();
