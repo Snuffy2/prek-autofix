@@ -80,10 +80,7 @@ export interface MutationTreeEntry {
 }
 
 export class ApplyError extends Error {
-  public constructor(
-    message: string,
-    public readonly recoverable = true,
-  ) {
+  public constructor(message: string) {
     super(message);
     this.name = "ApplyError";
   }
@@ -111,10 +108,7 @@ export function maximumRawArtifactBytes(
     !Number.isSafeInteger(operationOverhead) ||
     encodedContent > Number.MAX_SAFE_INTEGER - operationOverhead
   ) {
-    throw new ApplyError(
-      "configured limits are too large to safely bound artifact JSON",
-      false,
-    );
+    throw new ApplyError("configured limits are too large to safely bound artifact JSON");
   }
   return Math.max(65_536, encodedContent + operationOverhead);
 }
@@ -122,7 +116,7 @@ export function maximumRawArtifactBytes(
 function repositoryParts(repository: string): [string, string] {
   const parts = repository.split("/");
   if (parts.length !== 2 || !parts[0] || !parts[1]) {
-    throw new ApplyError(`invalid repository: ${repository}`, false);
+    throw new ApplyError(`invalid repository: ${repository}`);
   }
   return [parts[0], parts[1]];
 }
@@ -194,7 +188,7 @@ export async function applyArtifact(
 ): Promise<ApplyResult> {
   repositoryParts(request.baseRepository);
   if (request.artifact.operations.length === 0) {
-    throw new ApplyError("artifact contains no file operations", false);
+    throw new ApplyError("artifact contains no file operations");
   }
   const run = await read.getWorkflowRun(request.runId);
   if (
