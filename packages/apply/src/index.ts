@@ -15,6 +15,10 @@ import {
   maximumRawArtifactBytes,
 } from "./apply";
 import { createMutationClient, createReadClient } from "./github";
+import {
+  IneligibleSourceJobsError,
+  verifySourceJobs,
+} from "./source-jobs";
 
 function positiveInput(name: string, fallback: number): number {
   const raw = core.getInput(name);
@@ -39,8 +43,6 @@ async function run(): Promise<void> {
   const baseRepository = `${owner}/${repo}`;
   const githubToken = process.env.GITHUB_TOKEN;
   if (!githubToken) throw new Error("GITHUB_TOKEN is required");
-  const pat = core.getInput("autofix-token", { required: true });
-  core.setSecret(pat);
   const maxFiles = positiveInput("max-files", DEFAULT_MAX_FILES);
   const maxBytes = positiveInput("max-bytes", DEFAULT_MAX_BYTES);
   const sourceWorkflow = core.getInput("source-workflow") || "prek-autofix";
@@ -48,6 +50,7 @@ async function run(): Promise<void> {
     core.getInput("commit-message") || DEFAULT_COMMIT_MESSAGE;
 
   const artifactClient = new DefaultArtifactClient();
+  const readOctokit = github.getOctokit(githubToken);
   const lookup = await getArtifactIfPresent(
     artifactClient,
     runId,
@@ -56,6 +59,13 @@ async function run(): Promise<void> {
     githubToken,
   );
   if (!lookup) return;
+  try {
+    await verifySourceJobs(readOctokit, owner, repo, runId);
+  } catch (error) {
+    if (!(error instanceof IneligibleSourceJobsError)) throw error;
+    core.info(`${error.message}; nothing to apply.`);
+    return;
+  }
   const download = await artifactClient.downloadArtifact(lookup.artifact.id, {
       findBy: {
         token: githubToken,
@@ -73,7 +83,8 @@ async function run(): Promise<void> {
   if (Buffer.byteLength(raw) > rawLimit) throw new Error("artifact JSON is too large");
   const artifact = parseChangeArtifact(JSON.parse(raw), maxFiles, maxBytes);
 
-  const readOctokit = github.getOctokit(githubToken);
+  const pat = core.getInput("autofix-token", { required: true });
+  core.setSecret(pat);
   const patOctokit = github.getOctokit(pat);
   const read = createReadClient(readOctokit, owner, repo);
   const mutation = createMutationClient(patOctokit);

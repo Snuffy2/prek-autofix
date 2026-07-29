@@ -15,6 +15,8 @@ jobs:
   collect:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      changed: ${{ steps.collect.outputs.changed }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -23,4 +25,13 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - uses: Snuffy2/prek-autofix/collect@v1
+      - id: collect
+        uses: Snuffy2/prek-autofix/collect@v1
+
+  signal:
+    needs: collect
+    if: needs.collect.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report pending prek fixes
+        run: exit 1

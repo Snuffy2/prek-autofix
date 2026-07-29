@@ -69,6 +69,8 @@ jobs:
   collect:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      changed: ${{ steps.collect.outputs.changed }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -77,11 +79,23 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - uses: Snuffy2/prek-autofix/collect@v1
+      - id: collect
+        uses: Snuffy2/prek-autofix/collect@v1
+
+  signal:
+    needs: collect
+    if: needs.collect.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report pending prek fixes
+        run: exit 1
 ```
 <!-- END prek-autofix-stage-1 -->
 
-`collect` uploads its versioned change artifact itself. It installs and caches
+`collect` uploads its versioned change artifact itself and succeeds after the
+upload. The dependent `signal` job produces the expected failing check when
+fixes are pending. Collector, hook, infrastructure, and non-convergence
+failures cannot masquerade as that signal. The action installs and caches
 `prek`; callers should not add an artifact action or a write token to this job.
 
 ### 3. Add the application workflow
@@ -137,12 +151,12 @@ README snippets are tested against those canonical files.
 
 | Situation | Result |
 | --- | --- |
-| Same-repository pull request with changes | Failing collection check uploads changes; bot adds one fix commit; the resulting commit starts a fresh, normally passing check. |
+| Same-repository pull request with changes | Successful collection uploads changes; the signal job fails; the bot adds one fix commit; the resulting commit starts a fresh, normally passing check. |
 | User-owned fork, **Allow edits from maintainers** enabled | The bot attempts the same non-force update. |
 | Fork without maintainer edits | Collection still runs. Application leaves one persistent PR comment with the reason, artifact link, and recovery steps. |
 | Protected branch or denied update | No force push or bypass. The persistent PR comment explains the denial and recovery. |
 | Hook fails but changes no files | No commit is created; fix the hook failure normally. |
-| Hook leaves stable fixes but still fails | The stable fixes are applied once; the fresh check remains failing so the underlying hook error is still visible. |
+| Hook leaves stable fixes but still fails | The artifact may be retained for diagnosis, but no automatic commit is created; fix the hook failure normally. |
 | Hooks do not converge within `max-passes` | No commit is created; resolve the interacting hooks or increase the limit deliberately. |
 | Stale source SHA, closed PR, wrong event, unsafe path, symlink/submodule, or workflow-file change | The application is rejected without changing the branch. |
 
@@ -165,23 +179,10 @@ protection are unaffected; this Action never submits an approving review.
 | `max-log-bytes` | `1048576` | Maximum bytes streamed from each of stdout and stderr per pass (1024–10485760) |
 | `pass-timeout-seconds` | `600` | Timeout for each pass (1–3600 seconds); the hook process tree is terminated on Linux |
 
-Collection runs each untrusted hook pass in private Linux user, PID, and mount
-namespaces with a private `/proc`. It masks inherited alternate procfs mounts
-and known Docker, containerd, Podman, and CRI-O Unix sockets before dropping
-capabilities. The supported profile is a GitHub-hosted Ubuntu VM, or a dedicated
-self-hosted Linux VM that permits unprivileged user/PID/mount namespaces and
-procfs mounts and exposes no other same-UID or supplementary-group privileged
-service, container API, or host-control socket to the runner account. Container
-jobs, shared multi-tenant runners, and hosts with TCP container APIs or custom
-privileged services are outside this security profile.
-
-Linux requires collection to deny future `setgroups` calls before an
-unprivileged process can install the namespace GID map, so inherited
-supplementary groups cannot be cleared inside the new user namespace. Collection
-therefore excludes runners with privileged services reachable through those
-groups from its supported profile. It also verifies namespace creation, procfs
-replacement, endpoint masks, capability removal, and a non-dumpable supervisor,
-and fails closed before running hooks when any check fails.
+On Linux, collection adopts and reaps hook descendants before inspecting Git
+state or uploading an artifact. This is a process-lifecycle and correctness
+control, not a hostile-code sandbox. Hook output is always treated as an
+untrusted patch and receives no authority over the mutation target.
 
 For example, replace the `collect` step in Stage 1 with:
 
@@ -229,16 +230,18 @@ Stage 1 has only `contents: read`, uses the exact PR head/repository, and sets
 write-capable `GITHUB_TOKEN`. The generated artifact describes proposed file
 operations, not permission to mutate a branch.
 
-Linux process supervision in Stage 1 is a fail-closed integrity control, not a
+Linux process supervision in Stage 1 is a fail-closed lifecycle control, not a
 hostile-code sandbox. The collector pins its trusted Python interpreter and
-workspace identities, adopts and reaps hook descendants, and requires a private
-cleanup acknowledgement before it inspects Git state or creates an artifact. A
-same-UID process can still send `SIGKILL` to abort the action; without the
-cleanup acknowledgement, collection stops and no Stage 2 artifact is produced.
+workspace identities, adopts and reaps hook descendants, and requires a
+cleanup acknowledgement before it inspects Git state or creates an artifact.
+Without that acknowledgement, collection stops and no Stage 2 artifact is
+produced.
 
-Stage 2 independently identifies the open pull request and its current head
-from GitHub; it does not trust artifact-supplied target metadata. It rejects
-stale or unsafe input, caps file count and content size, excludes
+Stage 2 first requires a successful collector job and the exact expected
+failure from the dedicated signal job. It then independently identifies the
+open pull request and its current head from GitHub; it does not trust
+artifact-supplied target metadata or file content. It rejects stale or unsafe
+input, caps file count and content size, excludes
 `.github/workflows/**`, and uses the PAT only for the validated Git Data API
 mutation. The final ref update is an atomic compare-and-swap against the
 validated source SHA, so a branch move aborts rather than resurrecting or
@@ -246,6 +249,7 @@ overwriting contributor commits. Its read/comment `GITHUB_TOKEN` is passed
 separately with only the workflow permissions shown above. Because Stage 2
 does not check out PR code, invoke `git`, or run hooks,
 repository-controlled Git configuration and executables cannot access the PAT.
+The bot account must not be granted a branch-protection bypass.
 
 ## Troubleshooting and recovery
 
@@ -256,7 +260,7 @@ repository-controlled Git configuration and executables cannot access the PAT.
 | Fork update denied | Ask the contributor to enable **Allow edits from maintainers**. They can also download the linked artifact and apply the changes themselves. |
 | Branch protection blocks the bot | Permit the bot's ordinary branch update if appropriate, or apply the artifact manually. Do not weaken protection or force-push for autofixes. |
 | First-time contributor workflow waits for approval | A maintainer must approve the initial `pull_request` workflow run in GitHub's Actions UI. No artifact exists until that read-only run is approved and completes. |
-| Check keeps failing after the bot commit | Read the new Stage 1 log. A hard hook failure without applicable changes or non-converging hooks produces no automatic commit; stable fixes may be applied once, but the underlying hook failure still needs a normal fix. |
+| Check keeps failing after the bot commit | Read the new Stage 1 log. A hard hook failure or non-converging hooks produce no automatic commit and need a normal fix. |
 
 ## Pinning and upgrades
 

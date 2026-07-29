@@ -62,7 +62,6 @@ export interface CollectDeps {
 
 export class HardFailureError extends Error {}
 export class NonConvergenceError extends Error {}
-export class FixesFoundError extends Error {}
 
 const SAFE_CHILD_ENVIRONMENT = new Set([
   "CI",
@@ -342,11 +341,6 @@ export const executeCommand: Execute = async (command, args, options) =>
               "hook supervisor failed to establish the Linux subreaper boundary",
             );
           }
-          if (!records.includes("ISOLATED")) {
-            throw new Error(
-              "hook supervisor failed to isolate hooks from action credentials",
-            );
-          }
           if (!records.includes("NON_DUMPABLE")) {
             throw new Error(
               "hook supervisor failed to protect its protocol channel",
@@ -577,7 +571,4 @@ export async function runCollect(
     );
   }
   if (hardFailure) throw hardFailure;
-  if (operations.length > 0) {
-    throw new FixesFoundError("prek generated fixes; artifact uploaded");
-  }
 }

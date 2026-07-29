@@ -54,6 +54,24 @@ describe("public workflow documentation", () => {
       ref: "${{ github.event.pull_request.head.sha }}",
       "persist-credentials": false,
     });
+    expect(workflow.jobs.collect.outputs).toEqual({
+      changed: "${{ steps.collect.outputs.changed }}",
+    });
+    expect(workflow.jobs.collect.steps[1]).toMatchObject({
+      id: "collect",
+      uses: "Snuffy2/prek-autofix/collect@v1",
+    });
+    expect(workflow.jobs.signal).toEqual({
+      needs: "collect",
+      if: "needs.collect.outputs.changed == 'true'",
+      "runs-on": "ubuntu-latest",
+      steps: [
+        {
+          name: "Report pending prek fixes",
+          run: "exit 1",
+        },
+      ],
+    });
     expect(workflow.jobs.collect.steps[1].uses).toBe(
       "Snuffy2/prek-autofix/collect@v1",
     );
