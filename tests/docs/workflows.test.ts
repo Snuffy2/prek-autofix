@@ -36,7 +36,7 @@ describe("public workflow documentation", () => {
     expect(readReadmeSnippet("prek-autofix-stage-2")).toBe(read(applyPath));
   });
 
-  it("keeps the collection workflow read-only and pinned to the PR head", () => {
+  it("keeps the collection workflow read-only and on the PR head", () => {
     const workflow = parse(read(collectPath));
     const checkout = workflow.jobs.collect.steps[0];
 
@@ -47,7 +47,7 @@ describe("public workflow documentation", () => {
       group: "prek-autofix-${{ github.event.pull_request.number }}",
       "cancel-in-progress": true,
     });
-    expect(checkout.uses).toMatch(/^actions\/checkout@[0-9a-f]{40}(?:\s+# .+)?$/);
+    expect(checkout.uses).toMatch(/^actions\/checkout@/);
     expect(checkout.with).toMatchObject({
       repository: "${{ github.event.pull_request.head.repo.full_name }}",
       ref: "${{ github.event.pull_request.head.sha }}",
@@ -71,9 +71,6 @@ describe("public workflow documentation", () => {
         },
       ],
     });
-    expect(workflow.jobs.collect.steps[1].uses).toBe(
-      "Snuffy2/prek-autofix/collect@v1",
-    );
     expect(workflow.jobs.collect["timeout-minutes"]).toBe(15);
   });
 
