@@ -3,11 +3,11 @@ import type { Readable } from "node:stream";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import type { ArtifactClient } from "@actions/artifact";
-import type { ChangeArtifact } from "../../shared/src/artifact";
 import type { FileOperation } from "../../shared/src/artifact";
 import {
   ARTIFACT_SCHEMA_VERSION,
   artifactName,
+  parseChangeArtifact,
   validatePathComponentBudget,
 } from "../../shared/src/artifact";
 import { HOOK_SUPERVISOR_SCRIPT } from "./hook-supervisor";
@@ -539,7 +539,7 @@ export async function runCollect(
       childEnv,
     );
     validatePathComponentBudget(operations.map(({ path }) => path));
-    const artifact: ChangeArtifact = {
+    const artifact = parseChangeArtifact({
       schemaVersion: ARTIFACT_SCHEMA_VERSION,
       source: {
         runId: context.runId,
@@ -550,7 +550,7 @@ export async function runCollect(
         headSha: context.headSha,
       },
       operations,
-    };
+    });
     const file = await (deps.persistArtifact ?? writeArtifact)(
       context.artifactDirectory,
       artifact,

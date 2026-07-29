@@ -44,8 +44,7 @@ describe("public workflow documentation", () => {
     expect(workflow.on.pull_request.types).toContain("synchronize");
     expect(workflow.permissions).toEqual({ contents: "read" });
     expect(workflow.concurrency).toEqual({
-      group:
-        "prek-autofix-${{ github.event.pull_request.head.repo.full_name }}-${{ github.event.pull_request.head.ref }}",
+      group: "prek-autofix-${{ github.event.pull_request.number }}",
       "cancel-in-progress": true,
     });
     expect(checkout.uses).toMatch(/^actions\/checkout@[0-9a-f]{40}(?:\s+# .+)?$/);

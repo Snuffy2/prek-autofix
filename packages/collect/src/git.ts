@@ -11,6 +11,7 @@ import {
 
 export const GIT_CAPTURE_LIMIT_BYTES = DEFAULT_MAX_BYTES;
 export const GIT_INSPECTION_TIMEOUT_MS = 30_000;
+export const TRUSTED_GIT_PATH = "/usr/bin/git";
 const GIT_SAFE_CONFIG = ["-c", "core.fsmonitor=false"];
 
 function gitArgs(...args: string[]): string[] {
@@ -145,7 +146,7 @@ export async function assertExactHead(
   execute: Execute,
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
-  const head = await execute("git", gitArgs("rev-parse", "HEAD"), {
+  const head = await execute(TRUSTED_GIT_PATH, gitArgs("rev-parse", "HEAD"), {
     cwd: root,
     env,
     captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES,
@@ -163,7 +164,7 @@ export async function assertExactCleanCheckout(
 ): Promise<void> {
   await assertExactHead(root, expectedSha, execute, env);
   const status = await execute(
-    "git",
+    TRUSTED_GIT_PATH,
     gitArgs("status", "--porcelain=v1", "-z"),
     {
       cwd: root,
@@ -183,7 +184,7 @@ async function trackedModes(
 ): Promise<Map<string, string>> {
   if (paths.length === 0) return new Map();
   const result = await execute(
-    "git",
+    TRUSTED_GIT_PATH,
     gitArgs("ls-tree", "-z", "HEAD", "--", ...paths),
     {
       cwd: root,
@@ -332,7 +333,7 @@ export async function collectOperations(
   await assertRootIdentity(root, rootIdentity);
   const [diff, untracked] = await Promise.all([
     execute(
-      "git",
+      TRUSTED_GIT_PATH,
       gitArgs(
         "diff",
         "--no-ext-diff",
@@ -355,7 +356,7 @@ export async function collectOperations(
       },
     ),
     execute(
-      "git",
+      TRUSTED_GIT_PATH,
       gitArgs("ls-files", "--others", "--exclude-standard", "-z"),
       {
         cwd: root,

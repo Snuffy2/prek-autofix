@@ -293,6 +293,23 @@ describe("runCollect", () => {
     expect(JSON.stringify(artifact)).not.toContain("do-not-leak");
   });
 
+  it("rejects workflow changes before uploading an artifact", async () => {
+    const call = await invoke(
+      setup([result(0), result(0)]),
+      3,
+      false,
+      [
+        [".github/workflows/unsafe.yml"],
+        [".github/workflows/unsafe.yml"],
+      ],
+    );
+
+    await expect(call.promise).rejects.toThrow(
+      "workflow files cannot be applied automatically: .github/workflows/unsafe.yml",
+    );
+    expect(call.uploadArtifact).not.toHaveBeenCalled();
+  });
+
   it("allows only required hook runtime and cache environment variables", () => {
     expect(
       sanitizedEnvironment({

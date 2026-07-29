@@ -84,37 +84,24 @@ export function createReadClient(
         octokit.rest.repos.listPullRequestsAssociatedWithCommit,
         { owner, repo, commit_sha: sha, per_page: 100 },
       );
-      return Promise.all(
-        associated.map(async (pr: AssociatedPullRequest) => {
-          const headRepository = pr.head.repo?.full_name ?? "";
-          const isPotentiallyEligibleFork =
-            pr.state === "open" &&
-            pr.base.repo.full_name === `${owner}/${repo}` &&
-            headRepository !== "" &&
-            headRepository !== `${owner}/${repo}` &&
-            pr.head.repo?.owner.type === "User";
-          const maintainerCanModify = isPotentiallyEligibleFork
-            ? (
-                await octokit.rest.pulls.get({
-                  owner,
-                  repo,
-                  pull_number: pr.number,
-                })
-              ).data.maintainer_can_modify ?? false
-            : pr.maintainer_can_modify ?? false;
-          return {
-            number: pr.number,
-            state: pr.state,
-            baseRepository: pr.base.repo.full_name,
-            headRepository,
-            headRepositoryNodeId: pr.head.repo?.node_id ?? "",
-            headRepositoryOwnerType: pr.head.repo?.owner.type ?? "",
-            headRef: pr.head.ref,
-            headSha: pr.head.sha,
-            maintainerCanModify,
-          };
-        }),
-      );
+      return associated.map((pr: AssociatedPullRequest) => ({
+        number: pr.number,
+        state: pr.state,
+        baseRepository: pr.base.repo.full_name,
+        headRepository: pr.head.repo?.full_name ?? "",
+        headRepositoryNodeId: pr.head.repo?.node_id ?? "",
+        headRepositoryOwnerType: pr.head.repo?.owner.type ?? "",
+        headRef: pr.head.ref,
+        headSha: pr.head.sha,
+      }));
+    },
+    async getMaintainerCanModify(prNumber) {
+      const { data } = await octokit.rest.pulls.get({
+        owner,
+        repo,
+        pull_number: prNumber,
+      });
+      return data.maintainer_can_modify ?? false;
     },
     async getCommitTreeSha(repository, sha) {
       const [targetOwner, targetRepo] = repositoryParts(repository);

@@ -35,8 +35,9 @@ function fixture() {
       baseRepository: "base/repo", headRepository: "user/repo",
       headRepositoryNodeId: "R_head",
       headRepositoryOwnerType: "User", headRef: "feature",
-      headSha: "a".repeat(40), maintainerCanModify: true,
+      headSha: "a".repeat(40),
     }]),
+    getMaintainerCanModify: vi.fn().mockResolvedValue(true),
     getCommitTreeSha: vi.fn().mockResolvedValue("base-tree"),
     getTreeEntries: vi.fn().mockResolvedValue([
       { path: "old.sh", mode: "100755", type: "blob" },
@@ -85,6 +86,7 @@ describe("applyArtifact", () => {
     await expect(applyArtifact(read, mutation, request(artifact))).resolves.toEqual({
       pullRequestNumber: 4, commitSha: "commit",
     });
+    expect(read.getMaintainerCanModify).toHaveBeenCalledExactlyOnceWith(4);
     expect(read.getCommitTreeSha).toHaveBeenCalledWith(
       "base/repo", "a".repeat(40),
     );
@@ -177,6 +179,7 @@ describe("applyArtifact", () => {
     await expect(applyArtifact(read, mutation, request(artifact))).rejects.toThrow(
       "exactly one",
     );
+    expect(read.getMaintainerCanModify).not.toHaveBeenCalled();
     expect(mutation.createBlob).not.toHaveBeenCalled();
   });
 
@@ -229,9 +232,10 @@ describe("applyArtifact", () => {
     });
     const pr = (await read.listAssociatedPullRequests("x"))[0]!;
     vi.mocked(read.listAssociatedPullRequests).mockResolvedValue([{
-      ...pr, headRepository: "base/repo", maintainerCanModify: false,
+      ...pr, headRepository: "base/repo",
     }]);
     await expect(applyArtifact(read, mutation, request(artifact))).resolves.toBeDefined();
+    expect(read.getMaintainerCanModify).not.toHaveBeenCalled();
   });
 
   it("rejects organization-owned forks with a persistent comment", async () => {
@@ -244,6 +248,7 @@ describe("applyArtifact", () => {
       "user-owned",
     );
     expect(read.upsertComment).toHaveBeenCalledOnce();
+    expect(read.getMaintainerCanModify).not.toHaveBeenCalled();
     expect(mutation.createBlob).not.toHaveBeenCalled();
   });
 
@@ -298,12 +303,11 @@ describe("applyArtifact", () => {
 
   it("comments once through the read client when an eligible fork cannot be updated", async () => {
     const { artifact, read, mutation } = fixture();
-    const prs = await read.listAssociatedPullRequests("ignored");
-    prs[0]!.maintainerCanModify = false;
-    vi.mocked(read.listAssociatedPullRequests).mockResolvedValue(prs);
+    vi.mocked(read.getMaintainerCanModify).mockResolvedValue(false);
     await expect(applyArtifact(read, mutation, request(artifact))).rejects.toThrow(
       ApplyError,
     );
+    expect(read.getMaintainerCanModify).toHaveBeenCalledExactlyOnceWith(4);
     expect(read.upsertComment).toHaveBeenCalledWith(
       4, expect.stringContaining("does not allow maintainer edits"),
     );

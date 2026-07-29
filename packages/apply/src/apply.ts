@@ -22,7 +22,6 @@ export interface PullRequest {
   headRepositoryOwnerType: string;
   headRef: string;
   headSha: string;
-  maintainerCanModify: boolean;
 }
 
 export interface TreeEntry {
@@ -40,6 +39,7 @@ export interface ExistingComment {
 export interface ReadClient {
   getWorkflowRun(runId: number): Promise<WorkflowRun>;
   listAssociatedPullRequests(sha: string): Promise<PullRequest[]>;
+  getMaintainerCanModify(prNumber: number): Promise<boolean>;
   getCommitTreeSha(repository: string, sha: string): Promise<string>;
   getTreeEntries(
     repository: string,
@@ -228,14 +228,16 @@ export async function applyArtifact(
     throw new ApplyError("artifact source claims do not match the workflow run");
   }
   const sameRepository = pr.headRepository === request.baseRepository;
-  if (
-    !sameRepository &&
-    (pr.headRepositoryOwnerType !== "User" || !pr.maintainerCanModify)
-  ) {
-    const reason =
-      pr.headRepositoryOwnerType !== "User"
-        ? "only user-owned forks are eligible"
-        : "the fork does not allow maintainer edits";
+  if (!sameRepository && pr.headRepositoryOwnerType !== "User") {
+    const reason = "only user-owned forks are eligible";
+    await read.upsertComment(
+      pr.number,
+      recoveryComment(reason, request.artifactUrl, request.sourceRunUrl),
+    );
+    throw new ApplyError(reason);
+  }
+  if (!sameRepository && !(await read.getMaintainerCanModify(pr.number))) {
+    const reason = "the fork does not allow maintainer edits";
     await read.upsertComment(
       pr.number,
       recoveryComment(reason, request.artifactUrl, request.sourceRunUrl),

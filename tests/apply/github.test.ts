@@ -33,7 +33,7 @@ function octokitFixture() {
 }
 
 describe("GitHub apply adapters", () => {
-  it("maps workflow and fork PR reads through the base repository", async () => {
+  it("maps lightweight workflow and fork PR reads through the base repository", async () => {
     const { octokit } = octokitFixture();
     octokit.rest.actions.getWorkflowRun.mockResolvedValue({ data: {
       id: 7, name: "prek-autofix", event: "pull_request",
@@ -52,9 +52,6 @@ describe("GitHub apply adapters", () => {
         },
       },
     ]);
-    octokit.rest.pulls.get.mockResolvedValue({
-      data: { maintainer_can_modify: true },
-    });
     const read = createReadClient(octokit as never, "base", "repo");
 
     await expect(read.getWorkflowRun(7)).resolves.toMatchObject({
@@ -64,7 +61,6 @@ describe("GitHub apply adapters", () => {
       {
         headRepositoryNodeId: "R_fork",
         headRepository: "fork/repo",
-        maintainerCanModify: true,
       },
     ]);
     expect(octokit.rest.actions.getWorkflowRun).toHaveBeenCalledWith({
@@ -74,6 +70,17 @@ describe("GitHub apply adapters", () => {
       octokit.rest.repos.listPullRequestsAssociatedWithCommit,
       { owner: "base", repo: "repo", commit_sha: "head", per_page: 100 },
     );
+    expect(octokit.rest.pulls.get).not.toHaveBeenCalled();
+  });
+
+  it("fetches maintainer permission only when explicitly requested", async () => {
+    const { octokit } = octokitFixture();
+    octokit.rest.pulls.get.mockResolvedValue({
+      data: { maintainer_can_modify: true },
+    });
+    const read = createReadClient(octokit as never, "base", "repo");
+
+    await expect(read.getMaintainerCanModify(4)).resolves.toBe(true);
     expect(octokit.rest.pulls.get).toHaveBeenCalledWith({
       owner: "base", repo: "repo", pull_number: 4,
     });
@@ -106,7 +113,6 @@ describe("GitHub apply adapters", () => {
       headRepositoryOwnerType: "Organization",
       headRef: "feature",
       headSha: "head",
-      maintainerCanModify: false,
     }]);
     expect(octokit.rest.pulls.get).not.toHaveBeenCalled();
   });

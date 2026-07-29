@@ -17,6 +17,7 @@ import {
   captureTrustedPython,
   GIT_CAPTURE_LIMIT_BYTES,
   operationForGitStatus,
+  TRUSTED_GIT_PATH,
   writeArtifact,
   type Execute,
   type TrustedExecutableIdentity,
@@ -508,6 +509,35 @@ describe("trusted collector helpers", () => {
         collectOperations(root, executeCommand, hostileEnv),
       ).resolves.toHaveLength(1);
     }
+    await expect(readFile(marker)).rejects.toThrow();
+  });
+
+  it("does not resolve collector Git commands through a hostile PATH", async () => {
+    const root = await repository();
+    await writeFile(join(root, "text.txt"), "changed\n");
+    const fakeBin = await mkdtemp(join(tmpdir(), "collect-fake-git-"));
+    directories.push(fakeBin);
+    const marker = join(fakeBin, "fake-git-ran");
+    const fakeGit = join(fakeBin, "git");
+    await writeFile(
+      fakeGit,
+      `#!/bin/sh\nprintf spoofed > ${JSON.stringify(marker)}\nexit 1\n`,
+    );
+    await chmod(fakeGit, 0o755);
+    const hostileEnv = {
+      ...env,
+      PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+    };
+    const execute: Execute = vi.fn(executeCommand);
+
+    await expect(collectOperations(root, execute, hostileEnv)).resolves.toHaveLength(
+      1,
+    );
+    expect(execute).toHaveBeenCalledWith(
+      TRUSTED_GIT_PATH,
+      expect.anything(),
+      expect.anything(),
+    );
     await expect(readFile(marker)).rejects.toThrow();
   });
 
