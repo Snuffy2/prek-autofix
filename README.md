@@ -260,7 +260,7 @@ used only for reads and PR comments with the permissions shown above.
 
 | Symptom | Check and recovery |
 | --- | --- |
-| No application run or no artifact | Confirm both YAML files are on the default branch, the Stage 1 name is exactly `prek-autofix`, the runner meets the requirements above, and the collection log shows an artifact. Correct the configuration, then re-run Stage 1. |
+| No application run or no artifact | Confirm both YAML files are on the default branch, the Stage 1 name is exactly `prek-autofix`, and the collection log shows an artifact. Correct the configuration, then re-run Stage 1. |
 | `Resource not accessible` or token failure | Confirm the secret name is exactly `PREK_AUTOFIX_TOKEN`, the account that created the PAT has repository write access, and the token's classic scope is `public_repo` (public) or `repo` (private). Never add the PAT to Stage 1 to work around this. |
 | Fork update denied | Ask the contributor to enable **Allow edits from maintainers**. They can also download the linked artifact and apply the changes themselves. |
 | Branch protection blocks the update | Apply the artifact manually. Do not weaken protection or force-push for autofixes. |
