@@ -340,9 +340,7 @@ describe("collectOperations", () => {
 
   it("looks up modes only for the bounded deleted paths", async () => {
     const root = await repository();
-    const execute: Execute = vi.fn(async (command, args, options) => {
-      return executeCommand(command, args, options);
-    });
+    const execute: Execute = vi.fn(executeCommand);
     await import("node:fs/promises").then(({ unlink }) =>
       unlink(join(root, "delete.txt")),
     );
