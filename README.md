@@ -21,16 +21,10 @@ code.
    token (PAT) only for the GitHub update.
 
 Hooks are code supplied by the pull request, so they must never receive a token
-that can update the branch. The artifact is a proposed set of file changes; it
-does not grant permission to apply them.
+that can update the branch.
 
 ## Requirements and limits
 
-- This first release is for GitHub.com repositories using GitHub-hosted Linux
-  runners. Keep `runs-on: ubuntu-latest` in the collection workflow. Collection
-  also requires the runner's trusted `/usr/bin/python3`; if this is unavailable
-  or the runner is not Linux, collection stops without creating an artifact.
-- GitHub Enterprise Server has not yet been validated.
 - Both workflow files must live on the base repository's default branch.
 - You need a dedicated machine-user account with ordinary write access to the
   base repository. It must not have a branch-protection bypass.
