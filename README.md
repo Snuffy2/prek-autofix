@@ -61,10 +61,7 @@ start the fresh checks that confirm the resulting branch is clean.
 
 ### 2. Add the collection workflow
 
-Create `.github/workflows/prek-autofix.yml` with this exact content. The
-checkout is intentionally pinned to the current reviewed immutable
-`actions/checkout` v6.1.0 commit; refresh that pin through your dependency
-review process.
+Create `.github/workflows/prek-autofix.yml` following the example below.
 
 <!-- BEGIN prek-autofix-stage-1 -->
 ```yaml
@@ -88,7 +85,7 @@ jobs:
     outputs:
       changed: ${{ steps.collect.outputs.changed }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@v7
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.sha }}
@@ -289,8 +286,3 @@ enabled before rolling it out more broadly.
 identifies the versioned change artifact; and `prek-version` is the installed
 version. The standard two-workflow setup does not need to consume these
 directly because `apply` resolves the originating workflow run itself.
-
-## License
-
-MIT. See [the implementation plan](docs/implementation-plan.md) for the full
-interface and validation design.

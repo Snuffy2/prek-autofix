@@ -91,11 +91,8 @@ the conflict rather than implementing it.
 - Preserve the exact workflow names used by `workflow_run` and
   `source-workflow`.
 - Preserve least-privilege permissions and `persist-credentials: false`.
-- Pin third-party Actions to reviewed full commit SHAs with a version comment.
 - Do not add checkout or shell execution to the privileged application
   workflow.
-- Update `docs/implementation-plan.md` when changing the public interface,
-  artifact schema, workflow protocol, or security model.
 
 ## Documentation style
 
