@@ -269,8 +269,8 @@ used only for reads and PR comments with the permissions shown above.
 The examples intentionally use `Snuffy2/prek-autofix/collect@v1` and
 `Snuffy2/prek-autofix/apply@v1` as the supported public interface. `v1` is a
 moving major tag. For higher supply-chain assurance, pin both to a reviewed
-immutable release commit SHA after each release. Pin third-party actions to a
-reviewed full SHA too, as the Stage 1 checkout already does.
+immutable release commit SHA after each release. You can also pin third-party
+actions to a reviewed full SHA if your repository policy requires it.
 
 The collection implementation pins its `j178/prek-action` and artifact
 dependencies in the release build; callers do not need to reproduce those
