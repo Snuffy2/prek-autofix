@@ -20,7 +20,7 @@ import {
   verifySourceJobs,
 } from "./source-jobs";
 
-function positiveInput(name: string, fallback: number): number {
+function nonnegativeInput(name: string, fallback: number): number {
   const raw = core.getInput(name);
   const value = raw === "" ? fallback : Number(raw);
   if (!Number.isSafeInteger(value) || value < 0) {
@@ -43,8 +43,8 @@ async function run(): Promise<void> {
   const baseRepository = `${owner}/${repo}`;
   const githubToken = process.env.GITHUB_TOKEN;
   if (!githubToken) throw new Error("GITHUB_TOKEN is required");
-  const maxFiles = positiveInput("max-files", DEFAULT_MAX_FILES);
-  const maxBytes = positiveInput("max-bytes", DEFAULT_MAX_BYTES);
+  const maxFiles = nonnegativeInput("max-files", DEFAULT_MAX_FILES);
+  const maxBytes = nonnegativeInput("max-bytes", DEFAULT_MAX_BYTES);
   const sourceWorkflow = core.getInput("source-workflow") || "prek-autofix";
   const commitMessage =
     core.getInput("commit-message") || DEFAULT_COMMIT_MESSAGE;
