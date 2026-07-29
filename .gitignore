@@ -27,3 +27,7 @@ uv.lock
 venv.bak/
 venv/
 *.egg-info/
+node_modules/
+coverage/
+*.log
+dist/**/*.map

@@ -33,8 +33,10 @@ The unprivileged `pull_request` workflow will:
    up to three passes so interacting hooks can converge.
 5. Encode resulting additions, modifications, deletions, executable modes, and
    binary contents in a versioned JSON artifact.
-6. Leave the check failing when fixes await application. It passes only when
-   `prek` succeeds without producing changes.
+6. Return successfully after either a clean run or a completed artifact upload.
+7. Run a dependent signal job that fails only when fixes await application.
+   Collector, hook, infrastructure, and non-convergence failures therefore
+   remain distinguishable from the expected "fixes available" failure.
 
 This workflow receives only `contents: read`. No write token or repository
 secret is exposed to pull request code or hook processes.
@@ -45,15 +47,17 @@ The privileged `workflow_run` workflow will:
 
 1. Run from the base repository's trusted default-branch workflow definition.
 2. Retrieve the change artifact from the exact originating workflow run.
-3. Independently resolve the associated open pull request and derive its head
+3. Require the collector job to have succeeded and the dedicated signal job to
+   have failed in its expected reporting step.
+4. Independently resolve the associated open pull request and derive its head
    repository, branch, and current SHA from GitHub. Artifact-supplied target
    metadata is never authoritative.
-4. Reject stale SHAs, unexpected workflow events, path traversal, symlinks,
+5. Reject stale SHAs, unexpected workflow events, path traversal, symlinks,
    submodules, workflow-file changes, more than 100 changed files, or more than
    10 MiB of content.
-5. Create blobs, a tree, and one
+6. Create blobs, a tree, and one
    `[prek-autofix] apply automatic fixes` commit through GitHub's Git Data API.
-6. Update the pull request branch without force and only if its head still
+7. Update the pull request branch without force and only if its head still
    matches the validated source SHA.
 
 The privileged workflow must not check out pull request code, execute hooks, or
@@ -92,6 +96,8 @@ Inputs:
 | `working-directory` | `.` | Directory in which to run `prek` |
 | `cache` | `true` | Enable the official prek environment cache |
 | `max-passes` | `3` | Maximum convergence passes |
+| `max-log-bytes` | `1048576` | Maximum bytes streamed from each of stdout and stderr per pass (1024–10485760) |
+| `pass-timeout-seconds` | `600` | Timeout for each pass (1–3600 seconds) |
 
 Outputs:
 
@@ -177,6 +183,9 @@ canonical files.
 - Keep the collection runner and privileged applier in separate packages or
   entry points so credential-bearing code cannot accidentally invoke the hook
   runner.
+- Treat Linux hook supervision as a fail-closed process-lifecycle control, not
+  a hostile-code sandbox. Missing descendant-cleanup proof must prevent
+  artifact creation and Stage 2 input.
 - Pin the internal `j178/prek-action` dependency to a reviewed commit and
   automate dependency-update proposals.
 - Add concurrency keyed by source repository and branch. A stale run exits
@@ -200,6 +209,8 @@ canonical files.
   edits, branch protection, and race conflicts.
 - Verify the PAT is absent from the collection workflow, child-process
   environments, artifacts, and logs.
+- Verify only a successful collector plus the expected failing signal job can
+  reach Stage 2 mutation.
 - Run action metadata, TypeScript, bundle reproducibility, lint, workflow
   contract, documentation-snippet synchronization, and `actionlint` checks in
   CI.
@@ -216,4 +227,3 @@ canonical files.
   a replacement for it.
 - The initial release supports GitHub.com. GitHub Enterprise Server support
   requires separate compatibility validation.
-
