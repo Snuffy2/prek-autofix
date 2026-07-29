@@ -12,7 +12,8 @@ caching. The separation is necessary because hooks execute
 repository-controlled code, while fork updates require a write credential.
 GitHub only permits fork updates when the contributor enables maintainer edits,
 and `GITHUB_TOKEN` alone cannot reliably retrigger checks. The write stage
-therefore uses a dedicated machine-user personal access token (PAT).
+therefore uses a classic personal access token (PAT) from an account with write
+access to the base repository.
 
 Relevant GitHub behavior is documented in:
 
@@ -66,9 +67,10 @@ hooks, or executables from accessing the PAT.
 
 ### Authentication and fork behavior
 
-Use a dedicated bot account PAT stored as `PREK_AUTOFIX_TOKEN`:
+Use a classic PAT stored as `PREK_AUTOFIX_TOKEN`:
 
-- The bot must have write access to the base repository.
+- The account that creates the PAT must have write access to the base
+  repository.
 - Public repositories use the classic `public_repo` scope.
 - Private repositories require the classic `repo` scope.
 - Do not grant the `workflow` scope. Changes under `.github/workflows/**` are
@@ -113,7 +115,7 @@ Inputs:
 
 | Input | Default | Purpose |
 | --- | --- | --- |
-| `autofix-token` | Required | Dedicated bot PAT |
+| `autofix-token` | Required | Classic PAT from an account with repository write access |
 | `commit-message` | `[prek-autofix] apply automatic fixes` | Fix commit message |
 | `source-workflow` | `prek-autofix` | Expected Stage 1 workflow name |
 | `max-files` | `100` | Trusted changed-file limit |
@@ -141,9 +143,8 @@ The repository will include both inline README examples and complete files under
 
 The README and examples must comprehensively document:
 
-1. Creating a dedicated bot account and PAT, selecting the minimum scope, adding
-   the bot as a repository collaborator, and storing the PAT as
-   `PREK_AUTOFIX_TOKEN`.
+1. Creating a classic PAT from an account with repository write access,
+   selecting the minimum scope, and storing the PAT as `PREK_AUTOFIX_TOKEN`.
 2. The exact two-workflow flow, including matching workflow names and why
    `workflow_run` is required.
 3. Required permissions for each workflow:

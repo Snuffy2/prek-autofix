@@ -26,27 +26,35 @@ that can update the branch.
 ## Requirements and limits
 
 - Both workflow files must live on the base repository's default branch.
-- You need a dedicated machine-user account with ordinary write access to the
-  base repository. It must not have a branch-protection bypass.
 - Only regular and executable files are applied. Changes to symlinks,
   submodules, and `.github/workflows/**` are rejected.
 
 ## Quick start
 
-### 1. Create the bot credential
+### 1. Create the personal access token
 
-Create a dedicated machine-user account for this Action. Give it write access
-to the base repository, then create a classic PAT:
+Create a classic personal access token (PAT) from a GitHub account that already
+has write access to the base repository:
 
 | Repository visibility | Minimum classic PAT scope |
 | --- | --- |
 | Public | `public_repo` |
 | Private | `repo` |
 
-Do **not** grant `workflow`. Workflow-file changes are reported but never
-applied automatically. Add the PAT as the repository secret
-`PREK_AUTOFIX_TOKEN`. Do not put it in a workflow file, configuration file, or
-the Stage 1 environment.
+1. Open GitHub **Settings** → **Developer settings** → **Personal access
+   tokens** → **Tokens (classic)**.
+2. Select **Generate new token (classic)**, give the token a descriptive name,
+   and choose an expiration.
+3. Select `public_repo` for a public repository or `repo` for a private
+   repository. Do **not** select `workflow`.
+4. Generate the token and copy it.
+5. In the base repository, open **Settings** → **Secrets and variables** →
+   **Actions**. Create a repository secret named `PREK_AUTOFIX_TOKEN` and paste
+   the token as its value.
+
+Do not put the PAT in a workflow file, configuration file, or the Stage 1
+environment. Workflow-file changes are reported but never applied
+automatically.
 
 The token is needed because commits made with `GITHUB_TOKEN` do not reliably
 start the fresh checks that confirm the resulting branch is clean.
@@ -158,8 +166,8 @@ README snippets are tested against those canonical files.
 
 | Situation | Result |
 | --- | --- |
-| Same-repository pull request with changes | Collection uploads the changes, the signal job fails, the bot adds one fix commit, and that commit starts a fresh check. |
-| User-owned fork with **Allow edits from maintainers** enabled | The bot attempts the same non-force update. |
+| Same-repository pull request with changes | Collection uploads the changes, the signal job fails, the Action adds one fix commit, and that commit starts a fresh check. |
+| User-owned fork with **Allow edits from maintainers** enabled | The Action attempts the same non-force update. |
 | Fork without maintainer edits | Collection still runs. Application leaves one persistent PR comment with the reason, artifact link, and recovery steps. |
 | Protected branch or denied update | No force push or bypass. The persistent PR comment explains the denial and recovery. |
 | Hook fails but changes no files | No commit is created; fix the hook failure normally. |
@@ -204,7 +212,7 @@ For example, replace the `collect` step in Stage 1 with:
 
 | Input | Default | Meaning |
 | --- | --- | --- |
-| `autofix-token` | Required | Dedicated bot PAT; use only in Stage 2 |
+| `autofix-token` | Required | Classic PAT from an account with repository write access; use only in Stage 2 |
 | `commit-message` | `[prek-autofix] apply automatic fixes` | Commit message for the generated commit |
 | `source-workflow` | `prek-autofix` | Expected collection workflow name |
 | `max-files` | `100` | Maximum trusted changed files |
@@ -253,11 +261,11 @@ used only for reads and PR comments with the permissions shown above.
 | Symptom | Check and recovery |
 | --- | --- |
 | No application run or no artifact | Confirm both YAML files are on the default branch, the Stage 1 name is exactly `prek-autofix`, the runner meets the requirements above, and the collection log shows an artifact. Correct the configuration, then re-run Stage 1. |
-| `Resource not accessible` or token failure | Confirm the secret name is exactly `PREK_AUTOFIX_TOKEN`, the bot is a collaborator, and its classic scope is `public_repo` (public) or `repo` (private). Never add the PAT to Stage 1 to work around this. |
+| `Resource not accessible` or token failure | Confirm the secret name is exactly `PREK_AUTOFIX_TOKEN`, the account that created the PAT has repository write access, and the token's classic scope is `public_repo` (public) or `repo` (private). Never add the PAT to Stage 1 to work around this. |
 | Fork update denied | Ask the contributor to enable **Allow edits from maintainers**. They can also download the linked artifact and apply the changes themselves. |
-| Branch protection blocks the bot | Permit the bot's ordinary branch update if appropriate, or apply the artifact manually. Do not weaken protection or force-push for autofixes. |
+| Branch protection blocks the update | Apply the artifact manually. Do not weaken protection or force-push for autofixes. |
 | First-time contributor workflow waits for approval | A maintainer must approve the initial `pull_request` workflow run in GitHub's Actions UI. No artifact exists until that read-only run is approved and completes. |
-| Check keeps failing after the bot commit | Read the new Stage 1 log. A hard hook failure or non-converging hooks produce no automatic commit and need a normal fix. |
+| Check keeps failing after the fix commit | Read the new Stage 1 log. A hard hook failure or non-converging hooks produce no automatic commit and need a normal fix. |
 
 ## Pinning and upgrades
 

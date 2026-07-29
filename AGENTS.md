@@ -78,7 +78,6 @@ Treat these rules as part of the product contract:
 - Stale, malformed, oversized, or ambiguous artifacts fail closed.
 - Secrets and write-capable credentials must not appear in logs, artifacts,
   Stage 1 inputs, or test fixtures.
-- The bot account must not require a branch-protection bypass.
 
 If a requested change conflicts with one of these invariants, stop and explain
 the conflict rather than implementing it.
