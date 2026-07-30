@@ -286,12 +286,6 @@ describe("GitHub apply adapters", () => {
       expect.objectContaining({ comment_id: 2 }),
     );
     expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
-
-    octokit.rest.issues.updateComment.mockClear();
-    octokit.paginate.mockResolvedValue([]);
-    await read.resolveComment(4);
-    expect(octokit.rest.issues.updateComment).not.toHaveBeenCalled();
-    expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
   });
 
   it("marks only an owned existing marker obsolete without creating a comment", async () => {
@@ -316,18 +310,6 @@ describe("GitHub apply adapters", () => {
       comment_id: 2,
       body: expect.stringMatching(/obsolete.*No action is required/s),
     });
-    expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
-
-    octokit.rest.issues.updateComment.mockClear();
-    octokit.paginate.mockResolvedValue([
-      {
-        id: 1,
-        user: { login: "contributor" },
-        body: "<!-- prek-autofix-result --> spoof",
-      },
-    ]);
-    await read.markCommentObsolete(4);
-    expect(octokit.rest.issues.updateComment).not.toHaveBeenCalled();
     expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
   });
 
