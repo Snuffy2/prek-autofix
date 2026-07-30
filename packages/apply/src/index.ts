@@ -57,7 +57,7 @@ async function run(): Promise<void> {
     await verifySourceJobs(readOctokit, owner, repo, runId);
   } catch (error) {
     if (!(error instanceof IneligibleSourceJobsError)) throw error;
-    core.info(`${error.message}; nothing to apply.`);
+    core.info(`${error.message}; nothing to fix.`);
     return;
   }
   const download = await artifactClient.downloadArtifact(lookup.artifact.id, {

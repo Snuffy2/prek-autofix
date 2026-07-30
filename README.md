@@ -108,9 +108,9 @@ jobs:
 
 `review` uploads its versioned change artifact and succeeds after the upload.
 The dependent `signal` job deliberately fails when fixes are waiting. That
-expected failure is distinct from a collector, hook, infrastructure, or
-non-convergence failure. The action installs and caches `prek`; do not add an
-artifact action or a write token to this job.
+expected failure is distinct from a review action failure, hook failure,
+infrastructure failure, or non-convergence failure. The action installs and
+caches `prek`; do not add an artifact action or a write token to this job.
 
 Hooks configured with `language = "system"` use dependencies provided by the
 calling workflow. Install those dependencies before the `review` step. For a
