@@ -7,6 +7,14 @@ requests and safely applies mechanical fixes. Changes must preserve the trust
 boundary between the unprivileged review workflow and the privileged fix
 workflow.
 
+The overall behavior must match the safe working-tree effects of running
+`prek run --all-files` locally. If hooks leave a stable, nonempty, validated
+set of changes, apply those changes even when other hook findings remain
+unfixable and `prek` exits nonzero. A new review run on the generated commit
+must report the remaining findings. Continue to fail closed when no changes
+were produced, changes do not converge, collection fails, or the artifact
+violates a security invariant.
+
 ## Repository layout
 
 - `packages/collect/src/` runs hooks without write credentials and creates the
@@ -78,6 +86,9 @@ Treat these rules as part of the product contract:
 - Stale, malformed, oversized, or ambiguous artifacts fail closed.
 - Secrets and write-capable credentials must not appear in logs, artifacts,
   Stage 1 inputs, or test fixtures.
+- A nonzero `prek` exit is not by itself a reason to discard a stable,
+  nonempty, validated artifact. It remains a hard failure when there is no
+  artifact to apply.
 
 If a requested change conflicts with one of these invariants, stop and explain
 the conflict rather than implementing it.

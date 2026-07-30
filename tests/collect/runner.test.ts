@@ -170,12 +170,12 @@ describe("runCollect", () => {
     expect(call.outputs.get("artifact-path")).toBe("");
   });
 
-  it("persists stable fixes even when prek still reports a hard failure", async () => {
+  it("accepts stable fixes even when prek still reports unfixable findings", async () => {
     const call = await invoke(setup([result(1), result(1)]), 3, false, [
       ["a"],
       ["a"],
     ]);
-    await expect(call.promise).rejects.toBeInstanceOf(HardFailureError);
+    await expect(call.promise).resolves.toBeUndefined();
     expectSecretsExcluded();
     expect(call.outputs.get("artifact-name")).toBe("prek-autofix-42");
     expect(call.outputs.get("artifact-path")).toMatch(
