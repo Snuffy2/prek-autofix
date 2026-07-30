@@ -300,12 +300,12 @@ moving major tag. For higher supply-chain assurance, pin both to a reviewed
 immutable release commit SHA after each release. You can also pin third-party
 actions to a reviewed full SHA if your repository policy requires it.
 
-The collection implementation pins its `j178/prek-action` and artifact
-dependencies in the release build; callers do not need to reproduce those
-internal dependencies. Before upgrading, review the release notes, runner
-requirements, and workflow permissions. For a major-action upgrade, test one
-same-repository pull request and one user-owned fork with maintainer edits
-enabled before rolling it out more broadly.
+The collection implementation uses a major tag for `j178/prek-action` and
+bundles its artifact dependencies in the release build; callers do not need to
+reproduce those internal dependencies. Before upgrading, review the release
+notes, runner requirements, and workflow permissions. For a major-action
+upgrade, test one same-repository pull request and one user-owned fork with
+maintainer edits enabled before rolling it out more broadly.
 
 ## Outputs
 

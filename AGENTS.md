@@ -91,8 +91,10 @@ the conflict rather than implementing it.
 - Preserve the exact workflow names used by `workflow_run` and
   `source-workflow`.
 - Preserve least-privilege permissions and `persist-credentials: false`.
-- Do not add checkout or shell execution to the privileged application
-  workflow.
+- The repository's self-application workflow may check out the trusted default
+  branch solely to load `./apply`, with `persist-credentials: false`.
+- The privileged application workflow must never check out pull-request code,
+  execute shell commands, invoke `git`, or run hooks.
 
 ## Documentation style
 

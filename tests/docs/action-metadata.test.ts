@@ -144,7 +144,7 @@ fi
 }
 
 describe("action metadata", () => {
-  it("keeps the collection action unprivileged and pinned", async () => {
+  it("keeps the collection action unprivileged and major-tagged", async () => {
     const action = await metadata("collect/action.yml");
     expect(Object.keys(action.inputs)).toEqual([
       "prek-version",
@@ -164,12 +164,8 @@ describe("action metadata", () => {
     expect(action.runs.using).toBe("composite");
 
     const serialized = JSON.stringify(action);
-    expect(serialized).toContain(
-      "actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f",
-    );
-    expect(serialized).toContain(
-      "j178/prek-action@5337cb91e0fa35a7ff31b9ca345126d8bbbcdf16",
-    );
+    expect(serialized).toContain("actions/setup-node@v6");
+    expect(serialized).toContain("j178/prek-action@v2");
     expect(serialized).toContain(
       "$GITHUB_ACTION_PATH/../dist/collect/index.js",
     );

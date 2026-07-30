@@ -36,11 +36,11 @@ runs:
   using: composite
   steps:
     - name: Set up Node.js
-      uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
+      uses: actions/setup-node@v6
       with:
         node-version: "24"
     - id: install
-      uses: j178/prek-action@5337cb91e0fa35a7ff31b9ca345126d8bbbcdf16 # v2.0.6
+      uses: j178/prek-action@v2
       with:
         install-only: "true"
         cache: ${{ inputs.cache }}
