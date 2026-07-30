@@ -1,2 +1,2 @@
-This branch combines automatic fixes with persistent findings.   
-The workflow should still apply this cleanup.    
+This branch combines automatic fixes with persistent findings.
+The workflow should still apply this cleanup.
