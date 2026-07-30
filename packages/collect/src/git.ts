@@ -62,9 +62,7 @@ function fields(output: Buffer): string[] {
   return output.toString("utf8").split("\0").filter(Boolean);
 }
 
-export function operationForGitStatus(
-  status: string,
-): FileOperation["operation"] {
+function operationForGitStatus(status: string): FileOperation["operation"] {
   if (status === "A") return "add";
   if (status === "M") return "modify";
   if (status === "D") return "delete";
