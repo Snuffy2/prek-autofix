@@ -6,8 +6,8 @@
   "license": "MIT",
   "scripts": {
     "build": "npm run build:collect && npm run build:apply",
-    "build:collect": "esbuild packages/collect/src/index.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/collect/index.js --minify",
-    "build:apply": "esbuild packages/apply/src/index.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/apply/index.js --minify",
+    "build:collect": "esbuild packages/collect/src/index.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/collect/index.js --minify --banner:js='var import_meta_url = require(\"node:url\").pathToFileURL(__filename).href;' --define:import.meta.url=import_meta_url",
+    "build:apply": "esbuild packages/apply/src/index.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/apply/index.js --minify --banner:js='var import_meta_url = require(\"node:url\").pathToFileURL(__filename).href;' --define:import.meta.url=import_meta_url",
     "check:dist": "npm run build && git diff --exit-code -- dist",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
