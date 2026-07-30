@@ -12,10 +12,10 @@ code.
 
 ## How it works
 
-1. **`prek-autofix`** runs on `pull_request`, checks out the exact contributor
-   commit without credentials, and runs repository-controlled hooks with only
-   `contents: read`.
-2. **`prek-autofix apply`** runs on `workflow_run` from the base repository's
+1. **`prek-autofix review`** runs on `pull_request`, checks out the exact
+   contributor commit without credentials, and runs repository-controlled hooks
+   with only `contents: read`.
+2. **`prek-autofix fix`** runs on `workflow_run` from the base repository's
    default branch. It never checks out or runs pull-request code. It checks the
    artifact and the pull request's current head, then uses a bot personal access
    token (PAT) only for the GitHub update.
@@ -58,9 +58,9 @@ environment. Workflow-file changes are reported but never applied automatically.
 The token is needed because commits made with `GITHUB_TOKEN` do not reliably
 start the fresh checks that confirm the resulting branch is clean.
 
-### 2. Add the collection workflow
+### 2. Add the review workflow
 
-Create `.github/workflows/prek-autofix.yml` following the example below.
+Create `.github/workflows/prek-autofix-review.yml` following the example below.
 
 <!-- prettier-ignore-start -->
 <!-- BEGIN prek-autofix-stage-1 -->
@@ -79,11 +79,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  collect:
+  review:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
-      changed: ${{ steps.collect.outputs.changed }}
+      changed: ${{ steps.review.outputs.changed }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -92,12 +92,12 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - id: collect
-        uses: Snuffy2/prek-autofix/collect@v1
+      - id: review
+        uses: Snuffy2/prek-autofix/review@v1
 
   signal:
-    needs: collect
-    if: needs.collect.outputs.changed == 'true'
+    needs: review
+    if: needs.review.outputs.changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Report pending prek fixes
@@ -106,16 +106,16 @@ jobs:
 <!-- END prek-autofix-stage-1 -->
 <!-- prettier-ignore-end -->
 
-`collect` uploads its versioned change artifact and succeeds after the upload.
+`review` uploads its versioned change artifact and succeeds after the upload.
 The dependent `signal` job deliberately fails when fixes are waiting. That
 expected failure is distinct from a collector, hook, infrastructure, or
 non-convergence failure. The action installs and caches `prek`; do not add an
 artifact action or a write token to this job.
 
 Hooks configured with `language = "system"` use dependencies provided by the
-calling workflow. Install those dependencies before the `collect` step. For a
+calling workflow. Install those dependencies before the `review` step. For a
 Node project with a committed `package-lock.json`, add this after checkout and
-before `collect`:
+before `review`:
 
 <!-- prettier-ignore-start -->
 ```yaml
@@ -128,19 +128,19 @@ before `collect`:
 ```
 <!-- prettier-ignore-end -->
 
-`collect` installs and caches `prek`; it does not install project dependencies.
+`review` installs and caches `prek`; it does not install project dependencies.
 Use your project's corresponding setup and locked install command for other
 languages.
 
-### 3. Add the application workflow
+### 3. Add the fix workflow
 
-Create `.github/workflows/prek-autofix-apply.yml`. Its `workflows` value must
+Create `.github/workflows/prek-autofix-fix.yml`. Its `workflows` value must
 match the Stage 1 workflow's `name` exactly: `prek-autofix`.
 
 <!-- prettier-ignore-start -->
 <!-- BEGIN prek-autofix-stage-2 -->
 ```yaml
-name: prek-autofix apply
+name: prek-autofix fix
 
 on:
   workflow_run:
@@ -154,17 +154,17 @@ permissions:
 
 concurrency:
   # prettier-ignore
-  group: prek-autofix-apply-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+  group: prek-autofix-fix-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
   cancel-in-progress: false
 
 jobs:
-  apply:
+  fix:
     if: >-
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.conclusion == 'failure'
     runs-on: ubuntu-latest
     steps:
-      - uses: Snuffy2/prek-autofix/apply@v1
+      - uses: Snuffy2/prek-autofix/fix@v1
         env:
           GITHUB_TOKEN: ${{ github.token }}
         with:
@@ -179,22 +179,22 @@ base repository's trusted workflow definition even when the pull request comes
 from a fork. Do not add `actions/checkout` or `git` commands to this workflow.
 
 The complete, tested versions are also available as
-[`examples/prek-autofix.yml`](examples/prek-autofix.yml) and
-[`examples/prek-autofix-apply.yml`](examples/prek-autofix-apply.yml). The README
+[`examples/prek-autofix-review.yml`](examples/prek-autofix-review.yml) and
+[`examples/prek-autofix-fix.yml`](examples/prek-autofix-fix.yml). The README
 snippets are tested against those canonical files.
 
 ## What to expect
 
-| Situation                                                                                         | Result                                                                                                                      |
-| ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| Same-repository pull request with changes                                                         | Collection uploads the changes, the signal job fails, the Action adds one fix commit, and that commit starts a fresh check. |
-| User-owned fork with **Allow edits from maintainers** enabled                                     | The Action attempts the same non-force update.                                                                              |
-| Fork without maintainer edits                                                                     | Collection still runs. Application leaves one persistent PR comment with the reason, artifact link, and recovery steps.     |
-| Protected branch or denied update                                                                 | No force push or bypass. The persistent PR comment explains the denial and recovery.                                        |
-| Hook fails but changes no files                                                                   | No commit is created; fix the hook failure normally.                                                                        |
-| Hook leaves stable fixes but still fails                                                          | The artifact may be retained for diagnosis, but no automatic commit is created; fix the hook failure normally.              |
-| Hooks do not converge within `max-passes`                                                         | No commit is created; resolve the interacting hooks or increase the limit deliberately.                                     |
-| Stale source SHA, closed PR, wrong event, unsafe path, symlink/submodule, or workflow-file change | Application rejects the change without updating the branch.                                                                 |
+| Situation                                                                                         | Result                                                                                                                  |
+| ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Same-repository pull request with changes                                                         | Review uploads the changes, the signal job fails, the Action adds one fix commit, and that commit starts a fresh check. |
+| User-owned fork with **Allow edits from maintainers** enabled                                     | The Action attempts the same non-force update.                                                                          |
+| Fork without maintainer edits                                                                     | Review still runs. Fix leaves one persistent PR comment with the reason, artifact link, and recovery steps.             |
+| Protected branch or denied update                                                                 | No force push or bypass. The persistent PR comment explains the denial and recovery.                                    |
+| Hook fails but changes no files                                                                   | No commit is created; fix the hook failure normally.                                                                    |
+| Hook leaves stable fixes but still fails                                                          | The artifact may be retained for diagnosis, but no automatic commit is created; fix the hook failure normally.          |
+| Hooks do not converge within `max-passes`                                                         | No commit is created; resolve the interacting hooks or increase the limit deliberately.                                 |
+| Stale source SHA, closed PR, wrong event, unsafe path, symlink/submodule, or workflow-file change | Fix rejects the change without updating the branch.                                                                     |
 
 The initial check is supposed to fail when `prek` produces files to apply. The
 PAT-authored commit starts a new `pull_request` run, which passes only after
@@ -203,7 +203,7 @@ review, so normal approval and protection rules are unaffected.
 
 ## Configuration
 
-`collect` accepts these inputs:
+`review` accepts these inputs:
 
 | Input                  | Default       | Meaning                                                                              |
 | ---------------------- | ------------- | ------------------------------------------------------------------------------------ |
@@ -215,11 +215,11 @@ review, so normal approval and protection rules are unaffected.
 | `max-log-bytes`        | `1048576`     | Maximum bytes streamed from each of stdout and stderr per pass (1024–10485760)       |
 | `pass-timeout-seconds` | `600`         | Timeout for each pass (1–3600 seconds); the hook process tree is terminated on Linux |
 
-For example, replace the `collect` step in Stage 1 with:
+For example, replace the `review` step in Stage 1 with:
 
 <!-- prettier-ignore-start -->
 ```yaml
-      - uses: Snuffy2/prek-autofix/collect@v1
+      - uses: Snuffy2/prek-autofix/review@v1
         with:
           prek-version: 0.2.0
           extra-args: --all-files --show-diff-on-failure
@@ -231,13 +231,13 @@ For example, replace the `collect` step in Stage 1 with:
 ```
 <!-- prettier-ignore-end -->
 
-`apply` accepts these inputs:
+`fix` accepts these inputs:
 
 | Input             | Default                                | Meaning                                                                       |
 | ----------------- | -------------------------------------- | ----------------------------------------------------------------------------- |
 | `autofix-token`   | Required                               | Classic PAT from an account with repository write access; use only in Stage 2 |
 | `commit-message`  | `[prek-autofix] apply automatic fixes` | Commit message for the generated commit                                       |
-| `source-workflow` | `prek-autofix`                         | Expected collection workflow name                                             |
+| `source-workflow` | `prek-autofix`                         | Expected review workflow name                                                 |
 | `max-files`       | `100`                                  | Maximum trusted changed files                                                 |
 | `max-bytes`       | `10485760`                             | Maximum trusted total content bytes                                           |
 
@@ -269,8 +269,8 @@ artifact. This protects the collection lifecycle; it is not a sandbox for
 untrusted code. The collector also verifies the trusted Python interpreter and
 workspace identity, then treats hook output as an untrusted patch.
 
-Stage 2 requires a successful collector job and the exact expected failure from
-the dedicated signal job. It independently finds the open pull request and its
+Stage 2 requires a successful review job and the exact expected failure from the
+dedicated signal job. It independently finds the open pull request and its
 current head from GitHub rather than trusting artifact-supplied target metadata
 or file content. It rejects stale or unsafe input, limits file count and content
 size, excludes `.github/workflows/**`, and uses the PAT only for the validated
@@ -285,7 +285,7 @@ used only for reads and PR comments with the permissions shown above.
 
 | Symptom                                            | Check and recovery                                                                                                                                                                                                                                    |
 | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| No application run or no artifact                  | Confirm both YAML files are on the default branch, the Stage 1 name is exactly `prek-autofix`, and the collection log shows an artifact. Correct the configuration, then re-run Stage 1.                                                              |
+| No fix run or no artifact                          | Confirm both YAML files are on the default branch, the Stage 1 name is exactly `prek-autofix`, and the review log shows an artifact. Correct the configuration, then re-run Stage 1.                                                                  |
 | `Resource not accessible` or token failure         | Confirm the secret name is exactly `PREK_AUTOFIX_TOKEN`, the account that created the PAT has repository write access, and the token's classic scope is `public_repo` (public) or `repo` (private). Never add the PAT to Stage 1 to work around this. |
 | Fork update denied                                 | Ask the contributor to enable **Allow edits from maintainers**. They can also download the linked artifact and apply the changes themselves.                                                                                                          |
 | Branch protection blocks the update                | Apply the artifact manually. Do not weaken protection or force-push for autofixes.                                                                                                                                                                    |
@@ -294,11 +294,11 @@ used only for reads and PR comments with the permissions shown above.
 
 ## Pinning and upgrades
 
-The examples intentionally use `Snuffy2/prek-autofix/collect@v1` and
-`Snuffy2/prek-autofix/apply@v1` as the supported public interface. `v1` is a
-moving major tag. For higher supply-chain assurance, pin both to a reviewed
-immutable release commit SHA after each release. You can also pin third-party
-actions to a reviewed full SHA if your repository policy requires it.
+The examples intentionally use `Snuffy2/prek-autofix/review@v1` for review and
+`Snuffy2/prek-autofix/fix@v1` for fixes. `v1` is a moving major tag. For higher
+supply-chain assurance, pin both actions to a reviewed immutable release commit
+SHA after each release. You can also pin third-party actions to a reviewed full
+SHA if your repository policy requires it.
 
 The collection implementation uses a major tag for `j178/prek-action` and
 bundles its artifact dependencies in the release build; callers do not need to
@@ -309,8 +309,8 @@ maintainer edits enabled before rolling it out more broadly.
 
 ## Outputs
 
-`collect` exposes `changed`, `artifact-name`, and `prek-version` outputs.
+`review` exposes `changed`, `artifact-name`, and `prek-version` outputs.
 `changed` says whether `prek` generated applicable changes; `artifact-name`
 identifies the versioned change artifact; and `prek-version` is the installed
 version. The standard two-workflow setup does not need to consume these directly
-because `apply` resolves the originating workflow run itself.
+because `fix` resolves the originating workflow run itself.

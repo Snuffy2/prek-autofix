@@ -389,7 +389,7 @@ function validateContext(
     !context.headSha ||
     !/^[0-9a-f]{40}$/.test(context.headSha)
   ) {
-    throw new Error("collect action requires a pull_request context");
+    throw new Error("review action requires a pull_request context");
   }
 }
 

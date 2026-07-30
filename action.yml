@@ -1,5 +1,6 @@
-name: Collect prek autofixes
-description: Run prek without write credentials and upload any resulting fixes
+name: prek Autofix Review
+description: Review pull requests with prek and upload any resulting fixes
+author: Snuffy2
 inputs:
   prek-version:
     description: Version or supported version range to install
@@ -25,10 +26,10 @@ inputs:
 outputs:
   changed:
     description: Whether prek generated applicable changes
-    value: ${{ steps.collect.outputs.changed }}
+    value: ${{ steps.review.outputs.changed }}
   artifact-name:
     description: Name of the uploaded change artifact
-    value: ${{ steps.collect.outputs.artifact-name }}
+    value: ${{ steps.review.outputs.artifact-name }}
   prek-version:
     description: Resolved version of prek
     value: ${{ steps.install.outputs.prek-version }}
@@ -46,7 +47,7 @@ runs:
         cache: ${{ inputs.cache }}
         prek-version: ${{ inputs.prek-version }}
         working-directory: ${{ inputs.working-directory }}
-    - id: collect
+    - id: review
       shell: bash
       env:
         PREK_AUTOFIX_EXTRA_ARGS: ${{ inputs.extra-args }}
@@ -54,4 +55,8 @@ runs:
         PREK_AUTOFIX_MAX_PASSES: ${{ inputs.max-passes }}
         PREK_AUTOFIX_MAX_LOG_BYTES: ${{ inputs.max-log-bytes }}
         PREK_AUTOFIX_PASS_TIMEOUT_SECONDS: ${{ inputs.pass-timeout-seconds }}
-      run: node "$GITHUB_ACTION_PATH/../dist/collect/index.js"
+      run: node "$GITHUB_ACTION_PATH/dist/collect/index.js"
+
+branding:
+  icon: check-circle
+  color: green

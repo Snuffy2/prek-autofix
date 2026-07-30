@@ -12,16 +12,16 @@ function workflow(filename: string): ReturnType<typeof parse> {
 }
 
 describe("repository maintenance workflows", () => {
-  it("collects from the exact pull request head with the local action", () => {
-    const collect = workflow("prek-autofix.yml");
-    const collectJob = collect.jobs.collect;
-    const signalJob = collect.jobs.signal;
-    const checkout = collect.jobs.collect.steps[0];
+  it("reviews the exact pull request head with the local review action", () => {
+    const review = workflow("prek-autofix-review.yml");
+    const reviewJob = review.jobs.review;
+    const signalJob = review.jobs.signal;
+    const checkout = review.jobs.review.steps[0];
 
-    expect(collect.name).toBe("prek-autofix");
-    expect(collect.permissions).toEqual({ contents: "read" });
-    expect(collectJob.outputs).toEqual({
-      changed: "${{ steps.collect.outputs.changed }}",
+    expect(review.name).toBe("prek-autofix");
+    expect(review.permissions).toEqual({ contents: "read" });
+    expect(reviewJob.outputs).toEqual({
+      changed: "${{ steps.review.outputs.changed }}",
     });
     expect(checkout.uses).toMatch(/^actions\/checkout@/);
     expect(checkout.with).toMatchObject({
@@ -29,38 +29,38 @@ describe("repository maintenance workflows", () => {
       "ref": "${{ github.event.pull_request.head.sha }}",
       "persist-credentials": false,
     });
-    expect(collect.jobs.collect.steps[1]).toMatchObject({
+    expect(review.jobs.review.steps[1]).toMatchObject({
       name: "Install locked action dependencies",
       run: "npm ci --ignore-scripts",
     });
-    expect(collect.jobs.collect.steps[2]).toMatchObject({
-      id: "collect",
-      uses: "./collect",
+    expect(review.jobs.review.steps[2]).toMatchObject({
+      id: "review",
+      uses: "./review",
     });
-    expect(signalJob.needs).toBe("collect");
-    expect(signalJob.if).toBe("needs.collect.outputs.changed == 'true'");
+    expect(signalJob.needs).toBe("review");
+    expect(signalJob.if).toBe("needs.review.outputs.changed == 'true'");
     expect(signalJob.steps).toEqual([
       {
         name: "Report pending prek fixes",
         run: "exit 1",
       },
     ]);
-    expect(JSON.stringify(collectJob)).not.toContain("PREK_AUTOFIX_TOKEN");
+    expect(JSON.stringify(reviewJob)).not.toContain("PREK_AUTOFIX_TOKEN");
   });
 
-  it("loads the local apply action only from trusted main", () => {
-    const applyWorkflow = workflow("prek-autofix-apply.yml");
-    const steps = applyWorkflow.jobs.apply.steps;
+  it("loads the local fix action only from trusted main", () => {
+    const fixWorkflow = workflow("prek-autofix-fix.yml");
+    const steps = fixWorkflow.jobs.fix.steps;
 
-    expect(applyWorkflow.name).toBe("prek-autofix apply");
-    expect(applyWorkflow.on.workflow_run).toEqual({
+    expect(fixWorkflow.name).toBe("prek-autofix fix");
+    expect(fixWorkflow.on.workflow_run).toEqual({
       workflows: ["prek-autofix"],
       types: ["completed"],
     });
-    expect(applyWorkflow.jobs.apply.if).toBe(
+    expect(fixWorkflow.jobs.fix.if).toBe(
       "github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'failure'",
     );
-    expect(applyWorkflow.permissions).toEqual({
+    expect(fixWorkflow.permissions).toEqual({
       "actions": "read",
       "contents": "read",
       "pull-requests": "write",
@@ -73,7 +73,7 @@ describe("repository maintenance workflows", () => {
       },
     });
     expect(steps[1]).toMatchObject({
-      uses: "./apply",
+      uses: "./fix",
       with: {
         "autofix-token": "${{ secrets.PREK_AUTOFIX_TOKEN }}",
         "source-workflow": "prek-autofix",

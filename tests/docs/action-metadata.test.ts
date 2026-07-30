@@ -144,8 +144,35 @@ fi
 }
 
 describe("action metadata", () => {
-  it("keeps the collection action unprivileged and major-tagged", async () => {
-    const action = await metadata("collect/action.yml");
+  it("keeps the primary and nested review actions synchronized", async () => {
+    const primaryAction = await metadata("action.yml");
+    const reviewAction = await metadata("review/action.yml");
+
+    for (const action of [primaryAction, reviewAction]) {
+      expect(action.name).toBe("prek Autofix Review");
+      expect(action.author).toBe("Snuffy2");
+      expect(action.description).toBe(
+        "Review pull requests with prek and upload any resulting fixes",
+      );
+      expect(action.inputs).toEqual(primaryAction.inputs);
+      expect(action.outputs).toEqual(primaryAction.outputs);
+      expect(action.branding).toEqual({
+        icon: "check-circle",
+        color: "green",
+      });
+    }
+    expect(primaryAction.runs.using).toBe(reviewAction.runs.using);
+    expect(primaryAction.runs.steps).toEqual([
+      ...reviewAction.runs.steps.slice(0, -1),
+      {
+        ...reviewAction.runs.steps.at(-1),
+        run: 'node "$GITHUB_ACTION_PATH/dist/collect/index.js"',
+      },
+    ]);
+  });
+
+  it("keeps the review action unprivileged and major-tagged", async () => {
+    const action = await metadata("review/action.yml");
     expect(Object.keys(action.inputs)).toEqual([
       "prek-version",
       "extra-args",
@@ -175,7 +202,9 @@ describe("action metadata", () => {
   });
 
   it("uses an isolated Node 24 privileged entry point", async () => {
-    const action = await metadata("apply/action.yml");
+    const action = await metadata("fix/action.yml");
+    expect(action.name).toBe("prek Autofix Fix");
+    expect(action.author).toBe("Snuffy2");
     expect(action.runs).toEqual({
       using: "node24",
       main: "../dist/apply/index.js",

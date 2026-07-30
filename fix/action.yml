@@ -1,6 +1,7 @@
-name: Apply prek autofixes
+name: prek Autofix Fix
 description:
   Safely apply a collected prek-autofix artifact to a pull request branch
+author: Snuffy2
 inputs:
   autofix-token:
     description:
@@ -25,3 +26,7 @@ inputs:
 runs:
   using: node24
   main: ../dist/apply/index.js
+
+branding:
+  icon: edit-3
+  color: blue

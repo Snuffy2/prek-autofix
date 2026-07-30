@@ -1,4 +1,4 @@
-name: prek-autofix apply
+name: prek-autofix fix
 
 on:
   workflow_run:
@@ -12,11 +12,11 @@ permissions:
 
 concurrency:
   # prettier-ignore
-  group: prek-autofix-apply-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+  group: prek-autofix-fix-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
   cancel-in-progress: false
 
 jobs:
-  apply:
+  fix:
     if: >-
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.conclusion == 'failure'
@@ -28,8 +28,8 @@ jobs:
           ref: main
           persist-credentials: false
 
-      - name: Apply prek fixes
-        uses: ./apply
+      - name: Fix prek issues
+        uses: ./fix
         env:
           GITHUB_TOKEN: ${{ github.token }}
         with:
