@@ -124,7 +124,9 @@ afterEach(async () => {
   vi.restoreAllMocks();
   seenEnvironments.length = 0;
   const { rm } = await import("node:fs/promises");
-  await Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true })));
+  await Promise.all(
+    directories.splice(0).map((path) => rm(path, { recursive: true })),
+  );
 });
 
 describe("runCollect", () => {
@@ -173,12 +175,10 @@ describe("runCollect", () => {
   });
 
   it("uploads stable fixes even when prek still reports a hard failure", async () => {
-    const call = await invoke(
-      setup([result(1), result(1)]),
-      3,
-      false,
-      [["a"], ["a"]],
-    );
+    const call = await invoke(setup([result(1), result(1)]), 3, false, [
+      ["a"],
+      ["a"],
+    ]);
     await expect(call.promise).rejects.toBeInstanceOf(HardFailureError);
     expectSecretsExcluded();
     expect(call.uploadArtifact).toHaveBeenCalledOnce();
@@ -194,12 +194,10 @@ describe("runCollect", () => {
   });
 
   it("requires a successful fix snapshot to stabilize", async () => {
-    const call = await invoke(
-      setup([result(0), result(0)]),
-      3,
-      false,
-      [["a"], ["a"]],
-    );
+    const call = await invoke(setup([result(0), result(0)]), 3, false, [
+      ["a"],
+      ["a"],
+    ]);
 
     await expect(call.promise).resolves.toBeUndefined();
     expect(call.collectChanges).toHaveBeenCalledTimes(2);
@@ -207,12 +205,10 @@ describe("runCollect", () => {
   });
 
   it("rejects ever-changing successful fix snapshots", async () => {
-    const call = await invoke(
-      setup([result(0), result(0)]),
-      2,
-      false,
-      [["a"], ["b"]],
-    );
+    const call = await invoke(setup([result(0), result(0)]), 2, false, [
+      ["a"],
+      ["b"],
+    ]);
 
     await expect(call.promise).rejects.toBeInstanceOf(NonConvergenceError);
     expect(call.collectChanges).toHaveBeenCalledTimes(2);
@@ -278,13 +274,10 @@ describe("runCollect", () => {
     );
     expect(call.uploadArtifact).toHaveBeenCalledOnce();
     const uploadCall = call.uploadArtifact.mock.calls[0] as
-      | [string, string[]]
-      | undefined;
+      [string, string[]] | undefined;
     const uploadedFile = uploadCall?.[1][0];
     expect(uploadedFile).toBeDefined();
-    const artifact = JSON.parse(
-      await readFile(uploadedFile!, "utf8"),
-    );
+    const artifact = JSON.parse(await readFile(uploadedFile!, "utf8"));
     expect(artifact.source).toMatchObject({
       runId: 42,
       pullRequestNumber: 7,
@@ -294,15 +287,10 @@ describe("runCollect", () => {
   });
 
   it("rejects workflow changes before uploading an artifact", async () => {
-    const call = await invoke(
-      setup([result(0), result(0)]),
-      3,
-      false,
-      [
-        [".github/workflows/unsafe.yml"],
-        [".github/workflows/unsafe.yml"],
-      ],
-    );
+    const call = await invoke(setup([result(0), result(0)]), 3, false, [
+      [".github/workflows/unsafe.yml"],
+      [".github/workflows/unsafe.yml"],
+    ]);
 
     await expect(call.promise).rejects.toThrow(
       "workflow files cannot be applied automatically: .github/workflows/unsafe.yml",
@@ -506,15 +494,11 @@ describe("executeCommand", () => {
 
   it("times out a hook and reports process-tree termination", async () => {
     await expect(
-      executeCommand(
-        process.execPath,
-        ["-e", "setInterval(() => {}, 1000)"],
-        {
-          cwd: process.cwd(),
-          env: process.env,
-          timeoutMs: 25,
-        },
-      ),
+      executeCommand(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+        cwd: process.cwd(),
+        env: process.env,
+        timeoutMs: 25,
+      }),
     ).rejects.toThrow(
       `prek pass timed out after 1 seconds; terminated hook process${
         process.platform === "linux" ? " tree" : ""
@@ -550,7 +534,9 @@ describe("executeCommand", () => {
   it.skipIf(process.platform !== "linux")(
     "prevents hooks from writing to the supervisor protocol descriptor",
     async () => {
-      const directory = await mkdtemp(join(tmpdir(), "collect-protocol-isolation-"));
+      const directory = await mkdtemp(
+        join(tmpdir(), "collect-protocol-isolation-"),
+      );
       directories.push(directory);
       const observation = join(directory, "protocol-observation");
       const script = `

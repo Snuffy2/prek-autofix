@@ -188,7 +188,9 @@ export const executeCommand: Execute = async (command, args, options) =>
       supervised &&
       (!options.trustedPythonPath || !isAbsolute(options.trustedPythonPath))
     ) {
-      reject(new Error("secure hook supervision requires a pinned Python path"));
+      reject(
+        new Error("secure hook supervision requires a pinned Python path"),
+      );
       return;
     }
     const spawnedCommand = supervised ? options.trustedPythonPath! : command;
@@ -374,7 +376,9 @@ export const executeCommand: Execute = async (command, args, options) =>
     });
   });
 
-function validateContext(context: CollectContext): asserts context is CollectContext & {
+function validateContext(
+  context: CollectContext,
+): asserts context is CollectContext & {
   pullRequestNumber: number;
   headSha: string;
 } {

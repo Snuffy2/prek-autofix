@@ -83,7 +83,9 @@ async function repository(): Promise<string> {
 
 afterEach(async () => {
   const { rm } = await import("node:fs/promises");
-  await Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true })));
+  await Promise.all(
+    directories.splice(0).map((path) => rm(path, { recursive: true })),
+  );
 });
 
 describe("collectOperations", () => {
@@ -100,15 +102,20 @@ describe("collectOperations", () => {
     );
 
     const operations = await collectOperations(root, executeCommand, env);
-    expect(operations.map(({ path, operation, mode }) => ({ path, operation, mode })))
-      .toEqual([
-        { path: "binary.bin", operation: "add", mode: "100644" },
-        { path: "delete.txt", operation: "delete", mode: "100644" },
-        { path: "rename.txt", operation: "delete", mode: "100644" },
-        { path: "renamed.txt", operation: "add", mode: "100644" },
-        { path: "script.sh", operation: "modify", mode: "100755" },
-        { path: "text.txt", operation: "modify", mode: "100644" },
-      ]);
+    expect(
+      operations.map(({ path, operation, mode }) => ({
+        path,
+        operation,
+        mode,
+      })),
+    ).toEqual([
+      { path: "binary.bin", operation: "add", mode: "100644" },
+      { path: "delete.txt", operation: "delete", mode: "100644" },
+      { path: "rename.txt", operation: "delete", mode: "100644" },
+      { path: "renamed.txt", operation: "add", mode: "100644" },
+      { path: "script.sh", operation: "modify", mode: "100755" },
+      { path: "text.txt", operation: "modify", mode: "100644" },
+    ]);
     expect(
       Buffer.from(
         operations.find((item) => item.path === "binary.bin")?.content ?? "",
@@ -140,11 +147,16 @@ describe("collectOperations", () => {
 
     const operations = await collectOperations(root, executeCommand, env);
 
-    expect(operations.map(({ path, operation, mode }) => ({ path, operation, mode })))
-      .toEqual([
-        { path: "rename.txt", operation: "delete", mode: "100644" },
-        { path: "renamed.txt", operation: "add", mode: "100644" },
-      ]);
+    expect(
+      operations.map(({ path, operation, mode }) => ({
+        path,
+        operation,
+        mode,
+      })),
+    ).toEqual([
+      { path: "rename.txt", operation: "delete", mode: "100644" },
+      { path: "renamed.txt", operation: "add", mode: "100644" },
+    ]);
   });
 
   it("rejects 101 changed files before inspecting tracked modes or files", async () => {
@@ -170,7 +182,10 @@ describe("collectOperations", () => {
 
   it("rejects a file larger than the content ceiling", async () => {
     const root = await repository();
-    await writeFile(join(root, "large.bin"), Buffer.alloc(DEFAULT_MAX_BYTES + 1));
+    await writeFile(
+      join(root, "large.bin"),
+      Buffer.alloc(DEFAULT_MAX_BYTES + 1),
+    );
 
     await expect(collectOperations(root, executeCommand, env)).rejects.toThrow(
       `collected content exceeds maximum of ${DEFAULT_MAX_BYTES} bytes`,
@@ -185,7 +200,9 @@ describe("collectOperations", () => {
     await writeFile(outside, "outside\n");
     await symlink(outside, join(root, "linked.txt"));
 
-    await expect(collectOperations(root, executeCommand, env)).rejects.toThrow();
+    await expect(
+      collectOperations(root, executeCommand, env),
+    ).rejects.toThrow();
   });
 
   it("never follows an ancestor replaced with an outside symlink", async () => {
@@ -254,9 +271,9 @@ describe("collectOperations", () => {
     );
 
     expect(instrumented).toBe(true);
-    expect(
-      Buffer.from(operations[0]?.content ?? "", "base64").toString(),
-    ).toBe("inside\n");
+    expect(Buffer.from(operations[0]?.content ?? "", "base64").toString()).toBe(
+      "inside\n",
+    );
     expect(JSON.stringify(operations)).not.toContain(
       Buffer.from("outside\n").toString("base64"),
     );
@@ -292,10 +309,18 @@ describe("collectOperations", () => {
         };
       }
       if (gitSubcommand(args) === "ls-files") {
-        return { exitCode: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+        return {
+          exitCode: 0,
+          stdout: Buffer.alloc(0),
+          stderr: Buffer.alloc(0),
+        };
       }
       if (gitSubcommand(args) === "ls-tree") {
-        return { exitCode: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+        return {
+          exitCode: 0,
+          stdout: Buffer.alloc(0),
+          stderr: Buffer.alloc(0),
+        };
       }
       throw new Error(`unexpected command: ${args.join(" ")}`);
     });
@@ -477,7 +502,9 @@ describe("operationForGitStatus", () => {
 
 describe("trusted collector helpers", () => {
   it("rejects a writable non-root trust anchor before execution", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "collect-untrusted-python-"));
+    const directory = await mkdtemp(
+      join(tmpdir(), "collect-untrusted-python-"),
+    );
     directories.push(directory);
     const fakePython = join(directory, "python3");
     await writeFile(fakePython, "#!/bin/sh\nexit 0\n");
@@ -530,9 +557,9 @@ describe("trusted collector helpers", () => {
     };
     const execute: Execute = vi.fn(executeCommand);
 
-    await expect(collectOperations(root, execute, hostileEnv)).resolves.toHaveLength(
-      1,
-    );
+    await expect(
+      collectOperations(root, execute, hostileEnv),
+    ).resolves.toHaveLength(1);
     expect(execute).toHaveBeenCalledWith(
       TRUSTED_GIT_PATH,
       expect.anything(),
@@ -588,8 +615,6 @@ describe("trusted collector helpers", () => {
     await expect(writeArtifact(root, artifact, identity)).rejects.toThrow(
       "workspace identity changed while hooks were running",
     );
-    await expect(
-      readFile(join(root, "prek-autofix.json")),
-    ).rejects.toThrow();
+    await expect(readFile(join(root, "prek-autofix.json"))).rejects.toThrow();
   });
 });

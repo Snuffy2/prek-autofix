@@ -1,0 +1,63 @@
+# Configuration file for `prek`, a git hook framework written in Rust.
+# See https://prek.j178.dev for more information.
+#:schema https://www.schemastore.org/prek.json
+
+[[repos]]
+repo = "https://github.com/pre-commit/pre-commit-hooks"
+rev = "v6.0.0"
+
+[[repos.hooks]]
+id = "trailing-whitespace"
+exclude = "(^dist/|.*\\.md$)"
+
+[[repos.hooks]]
+id = "end-of-file-fixer"
+exclude = "(^dist/|.*\\.md$)"
+
+[[repos.hooks]]
+id = "check-yaml"
+
+[[repos.hooks]]
+id = "check-toml"
+
+[[repos.hooks]]
+id = "check-json"
+
+[[repos.hooks]]
+id = "check-added-large-files"
+exclude = "^dist/(collect|apply)/index\\.js$"
+
+[[repos]]
+repo = "https://github.com/rhysd/actionlint"
+rev = "v1.7.12"
+
+[[repos.hooks]]
+id = "actionlint"
+additional_dependencies = [
+  "github.com/wasilibs/go-shellcheck/cmd/shellcheck@v0.11.1",
+]
+
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "prettier"
+name = "prettier"
+entry = "npm exec -- prettier --write"
+language = "system"
+types_or = ["json", "markdown", "ts", "yaml"]
+
+[[repos.hooks]]
+id = "eslint"
+name = "eslint"
+entry = "npm run lint --"
+language = "system"
+types = ["ts"]
+
+[[repos.hooks]]
+id = "typescript"
+name = "typescript"
+entry = "npm run typecheck"
+language = "system"
+pass_filenames = false
+types = ["ts"]

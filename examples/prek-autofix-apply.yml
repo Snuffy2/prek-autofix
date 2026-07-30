@@ -11,6 +11,7 @@ permissions:
   pull-requests: write
 
 concurrency:
+  # prettier-ignore
   group: prek-autofix-apply-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
   cancel-in-progress: false
 

@@ -1,4 +1,11 @@
-import { chmod, constants, mkdtemp, open, realpath, stat } from "node:fs/promises";
+import {
+  chmod,
+  constants,
+  mkdtemp,
+  open,
+  realpath,
+  stat,
+} from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import {
   DEFAULT_MAX_BYTES,
@@ -151,7 +158,10 @@ export async function assertExactHead(
     env,
     captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES,
   });
-  if (head.exitCode !== 0 || head.stdout.toString("utf8").trim() !== expectedSha) {
+  if (
+    head.exitCode !== 0 ||
+    head.stdout.toString("utf8").trim() !== expectedSha
+  ) {
     throw new Error("checkout HEAD does not match pull request head SHA");
   }
 }
@@ -172,8 +182,10 @@ export async function assertExactCleanCheckout(
       captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES,
     },
   );
-  if (status.exitCode !== 0) throw new Error("could not inspect checkout status");
-  if (status.stdout.length !== 0) throw new Error("initial checkout is not clean");
+  if (status.exitCode !== 0)
+    throw new Error("could not inspect checkout status");
+  if (status.stdout.length !== 0)
+    throw new Error("initial checkout is not clean");
 }
 
 async function trackedModes(
@@ -376,8 +388,10 @@ export async function collectOperations(
   }
 
   const changes = fields(diff.stdout);
-  const entries: Array<{ operation: FileOperation["operation"]; path: string }> =
-    [];
+  const entries: Array<{
+    operation: FileOperation["operation"];
+    path: string;
+  }> = [];
   for (let index = 0; index < changes.length; index += 2) {
     const status = changes[index];
     const file = changes[index + 1];

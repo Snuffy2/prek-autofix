@@ -73,7 +73,10 @@ describe("artifact contract", () => {
       parseChangeArtifact({
         ...validArtifact,
         operations: [
-          { ...validArtifact.operations[0], path: ".github/workflow/check.yml" },
+          {
+            ...validArtifact.operations[0],
+            path: ".github/workflow/check.yml",
+          },
         ],
       }),
     ).not.toThrow();
@@ -125,15 +128,14 @@ describe("artifact contract", () => {
       ...validArtifact.operations[0],
       path: Array.from(
         {
-          length:
-            componentsPerPath + (pathIndex === 99 ? 1 : 0),
+          length: componentsPerPath + (pathIndex === 99 ? 1 : 0),
         },
         (_, componentIndex) => `p${pathIndex}-${componentIndex}`,
       ).join("/"),
     }));
-    expect(() =>
-      parseChangeArtifact({ ...validArtifact, operations }),
-    ).toThrow(`more than ${MAX_TOTAL_PATH_COMPONENTS} total components`);
+    expect(() => parseChangeArtifact({ ...validArtifact, operations })).toThrow(
+      `more than ${MAX_TOTAL_PATH_COMPONENTS} total components`,
+    );
   });
 
   it.each(["120000", "160000", "040000", "100600"])(
@@ -161,10 +163,7 @@ describe("artifact contract", () => {
     expect(() =>
       parseChangeArtifact({
         ...validArtifact,
-        operations: [
-          validArtifact.operations[0],
-          validArtifact.operations[0],
-        ],
+        operations: [validArtifact.operations[0], validArtifact.operations[0]],
       }),
     ).toThrow(/duplicate path/);
   });
@@ -178,9 +177,7 @@ describe("artifact contract", () => {
       }),
     );
 
-    expect(() =>
-      parseChangeArtifact({ ...validArtifact, operations }),
-    ).toThrow(
+    expect(() => parseChangeArtifact({ ...validArtifact, operations })).toThrow(
       `artifact has ${DEFAULT_MAX_FILES + 1} files; maximum is ${DEFAULT_MAX_FILES}`,
     );
   });

@@ -51,7 +51,9 @@ jobs:
     permissions:
       contents: write
     concurrency:
-      group: release-major-${{ github.repository }}-${{ needs.verify.outputs.major-tag }}
+      group:
+        release-major-${{ github.repository }}-${{
+        needs.verify.outputs.major-tag }}
       cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:
