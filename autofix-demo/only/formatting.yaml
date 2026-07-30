@@ -1,0 +1,2 @@
+scenario: auto-fix only
+nested: {enabled: true, items: [one,two,three]}

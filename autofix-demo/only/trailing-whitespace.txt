@@ -1,0 +1,2 @@
+This branch contains only automatically fixable problems.   
+The workflow should clean this line too.    
