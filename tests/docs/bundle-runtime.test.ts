@@ -17,7 +17,7 @@ function runBundle(path: string): string {
 }
 
 describe("bundled action startup", () => {
-  it("starts the collection bundle", () => {
+  it("starts the review bundle", () => {
     const output = runBundle("dist/collect/index.js");
 
     expect(output).toContain(
@@ -26,10 +26,10 @@ describe("bundled action startup", () => {
     expect(output).not.toContain("ERR_INVALID_ARG_VALUE");
   });
 
-  it("starts the application bundle", () => {
+  it("starts the fix bundle", () => {
     const output = runBundle("dist/apply/index.js");
 
-    expect(output).toContain("apply action may only run for workflow_run");
+    expect(output).toContain("fix action may only run for workflow_run");
     expect(output).not.toContain("ERR_INVALID_ARG_VALUE");
   });
 });

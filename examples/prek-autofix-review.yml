@@ -12,11 +12,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  collect:
+  review:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
-      changed: ${{ steps.collect.outputs.changed }}
+      changed: ${{ steps.review.outputs.changed }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -25,12 +25,12 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - id: collect
-        uses: Snuffy2/prek-autofix/collect@v1
+      - id: review
+        uses: Snuffy2/prek-autofix/review@v1
 
   signal:
-    needs: collect
-    if: needs.collect.outputs.changed == 'true'
+    needs: review
+    if: needs.review.outputs.changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Report pending prek fixes

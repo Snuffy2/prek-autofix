@@ -25,7 +25,7 @@ function nonnegativeInput(name: string, fallback: number): number {
 
 async function run(): Promise<void> {
   if (github.context.eventName !== "workflow_run") {
-    throw new Error("apply action may only run for workflow_run");
+    throw new Error("fix action may only run for workflow_run");
   }
   const runId = Number(github.context.payload.workflow_run?.id);
   if (!Number.isSafeInteger(runId) || runId <= 0) {
@@ -57,7 +57,7 @@ async function run(): Promise<void> {
     await verifySourceJobs(readOctokit, owner, repo, runId);
   } catch (error) {
     if (!(error instanceof IneligibleSourceJobsError)) throw error;
-    core.info(`${error.message}; nothing to apply.`);
+    core.info(`${error.message}; nothing to fix.`);
     return;
   }
   const download = await artifactClient.downloadArtifact(lookup.artifact.id, {

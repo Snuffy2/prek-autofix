@@ -172,14 +172,14 @@ export function createReadClient(
       await reconcileMarkerComments(
         prNumber,
         `${COMMENT_MARKER}
-This prek-autofix apply run is obsolete because the pull request branch has advanced. No action is required for this generated artifact.`,
+This prek-autofix fix run is obsolete because the pull request branch has advanced. No action is required for this generated artifact.`,
         false,
       );
     },
     async resolveComment(prNumber) {
       await reconcileMarkerComments(
         prNumber,
-        `${COMMENT_MARKER}\nprek-autofix applied the generated changes successfully.`,
+        `${COMMENT_MARKER}\nprek-autofix fixed the generated changes successfully.`,
         false,
       );
     },

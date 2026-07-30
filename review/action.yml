@@ -1,0 +1,62 @@
+name: prek Autofix Review
+description: Review pull requests with prek and upload any resulting fixes
+author: Snuffy2
+inputs:
+  prek-version:
+    description: Version or supported version range to install
+    default: latest
+  extra-args:
+    description: Arguments appended to prek run
+    default: --all-files
+  working-directory:
+    description: Directory in which to run prek
+    default: .
+  cache:
+    description: Enable the prek environment cache
+    default: "true"
+  max-passes:
+    description: Maximum convergence passes
+    default: "3"
+  max-log-bytes:
+    description: Maximum bytes streamed from each of stdout and stderr per pass
+    default: "1048576"
+  pass-timeout-seconds:
+    description: Timeout for each convergence pass, from 1 through 3600 seconds
+    default: "600"
+outputs:
+  changed:
+    description: Whether prek generated applicable changes
+    value: ${{ steps.review.outputs.changed }}
+  artifact-name:
+    description: Name of the uploaded change artifact
+    value: ${{ steps.review.outputs.artifact-name }}
+  prek-version:
+    description: Resolved version of prek
+    value: ${{ steps.install.outputs.prek-version }}
+runs:
+  using: composite
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: "24"
+    - id: install
+      uses: j178/prek-action@v2
+      with:
+        install-only: "true"
+        cache: ${{ inputs.cache }}
+        prek-version: ${{ inputs.prek-version }}
+        working-directory: ${{ inputs.working-directory }}
+    - id: review
+      shell: bash
+      env:
+        PREK_AUTOFIX_EXTRA_ARGS: ${{ inputs.extra-args }}
+        PREK_AUTOFIX_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        PREK_AUTOFIX_MAX_PASSES: ${{ inputs.max-passes }}
+        PREK_AUTOFIX_MAX_LOG_BYTES: ${{ inputs.max-log-bytes }}
+        PREK_AUTOFIX_PASS_TIMEOUT_SECONDS: ${{ inputs.pass-timeout-seconds }}
+      run: node "$GITHUB_ACTION_PATH/../dist/collect/index.js"
+
+branding:
+  icon: check-circle
+  color: green

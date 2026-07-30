@@ -4,8 +4,8 @@
 
 `prek-autofix` is a TypeScript GitHub Action that runs `prek` against pull
 requests and safely applies mechanical fixes. Changes must preserve the trust
-boundary between the unprivileged collection workflow and the privileged
-application workflow.
+boundary between the unprivileged review workflow and the privileged fix
+workflow.
 
 ## Repository layout
 
@@ -14,8 +14,8 @@ application workflow.
 - `packages/apply/src/` validates a completed collection run and applies an
   approved artifact through the GitHub API.
 - `packages/shared/src/` contains the artifact format and shared validation.
-- `collect/action.yml` and `apply/action.yml` define the public Action
-  interfaces.
+- `action.yml` and `review/action.yml` define the same public review Action
+  interface; `fix/action.yml` defines the privileged fix Action interface.
 - `dist/collect/index.js` and `dist/apply/index.js` are generated, committed
   release bundles.
 - `examples/` contains the canonical consumer workflows.
@@ -67,9 +67,9 @@ bundle with the source change.
 
 Treat these rules as part of the product contract:
 
-- Collection runs pull-request-controlled code with read-only repository
-  permission and without the autofix token.
-- Application never checks out pull-request code, invokes `git`, or runs hooks.
+- Review runs pull-request-controlled code with read-only repository permission
+  and without the autofix token.
+- Fix never checks out pull-request code, invokes `git`, or runs hooks.
 - The autofix token is used only after the workflow run, artifact, pull
   request, current head, paths, file modes, and limits have been validated.
 - Branch updates remain non-force, atomic, and tied to the validated source
@@ -91,10 +91,10 @@ the conflict rather than implementing it.
 - Preserve the exact workflow names used by `workflow_run` and
   `source-workflow`.
 - Preserve least-privilege permissions and `persist-credentials: false`.
-- The repository's self-application workflow may check out the trusted default
-  branch solely to load `./apply`, with `persist-credentials: false`.
-- The privileged application workflow must never check out pull-request code,
-  execute shell commands, invoke `git`, or run hooks.
+- The repository's self-fix workflow may check out the trusted default branch
+  solely to load `./fix`, with `persist-credentials: false`.
+- The privileged fix workflow must never check out pull-request code, execute
+  shell commands, invoke `git`, or run hooks.
 
 ## Documentation style
 

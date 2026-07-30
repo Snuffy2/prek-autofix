@@ -7,9 +7,9 @@ import {
 
 const eligibleJobs = () => [
   {
-    name: "collect",
+    name: "review",
     conclusion: "success",
-    steps: [{ name: "Collect prek autofixes", conclusion: "success" }],
+    steps: [{ name: "Review prek fixes", conclusion: "success" }],
   },
   {
     name: "signal",
@@ -19,17 +19,17 @@ const eligibleJobs = () => [
 ];
 
 describe("source workflow job eligibility", () => {
-  it("accepts a successful collector and the expected failing signal", () => {
+  it("accepts a successful review and the expected failing signal", () => {
     expect(() => assertEligibleSourceJobs(eligibleJobs())).not.toThrow();
   });
 
   it.each([
     {
-      name: "collector failure",
+      name: "review failure",
       mutate: (jobs: ReturnType<typeof eligibleJobs>) => {
         jobs[0]!.conclusion = "failure";
       },
-      message: "collect job did not complete successfully",
+      message: "review job did not complete successfully",
     },
     {
       name: "signal success",
@@ -46,11 +46,11 @@ describe("source workflow job eligibility", () => {
       message: "signal job did not fail in the expected step",
     },
     {
-      name: "duplicate collector",
+      name: "duplicate review",
       mutate: (jobs: ReturnType<typeof eligibleJobs>) => {
         jobs.push({ ...jobs[0]!, steps: [...jobs[0]!.steps] });
       },
-      message: "exactly one collect job and one signal job",
+      message: "exactly one review job and one signal job",
     },
   ])("rejects $name", ({ mutate, message }) => {
     const jobs = eligibleJobs();

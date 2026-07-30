@@ -25,20 +25,20 @@ function readReadmeSnippet(marker: string): string {
 }
 
 describe("public workflow documentation", () => {
-  const collectPath = "examples/prek-autofix.yml";
-  const applyPath = "examples/prek-autofix-apply.yml";
+  const reviewPath = "examples/prek-autofix-review.yml";
+  const fixPath = "examples/prek-autofix-fix.yml";
 
   it("keeps README Stage 1 synchronized with the canonical workflow", () => {
-    expect(readReadmeSnippet("prek-autofix-stage-1")).toBe(read(collectPath));
+    expect(readReadmeSnippet("prek-autofix-stage-1")).toBe(read(reviewPath));
   });
 
   it("keeps README Stage 2 synchronized with the canonical workflow", () => {
-    expect(readReadmeSnippet("prek-autofix-stage-2")).toBe(read(applyPath));
+    expect(readReadmeSnippet("prek-autofix-stage-2")).toBe(read(fixPath));
   });
 
-  it("keeps the collection workflow read-only and on the PR head", () => {
-    const workflow = parse(read(collectPath));
-    const checkout = workflow.jobs.collect.steps[0];
+  it("keeps the review workflow read-only and on the PR head", () => {
+    const workflow = parse(read(reviewPath));
+    const checkout = workflow.jobs.review.steps[0];
 
     expect(workflow.name).toBe("prek-autofix");
     expect(workflow.on.pull_request.types).toContain("synchronize");
@@ -53,16 +53,16 @@ describe("public workflow documentation", () => {
       "ref": "${{ github.event.pull_request.head.sha }}",
       "persist-credentials": false,
     });
-    expect(workflow.jobs.collect.outputs).toEqual({
-      changed: "${{ steps.collect.outputs.changed }}",
+    expect(workflow.jobs.review.outputs).toEqual({
+      changed: "${{ steps.review.outputs.changed }}",
     });
-    expect(workflow.jobs.collect.steps[1]).toMatchObject({
-      id: "collect",
-      uses: "Snuffy2/prek-autofix/collect@v1",
+    expect(workflow.jobs.review.steps[1]).toMatchObject({
+      id: "review",
+      uses: "Snuffy2/prek-autofix/review@v1",
     });
     expect(workflow.jobs.signal).toEqual({
-      "needs": "collect",
-      "if": "needs.collect.outputs.changed == 'true'",
+      "needs": "review",
+      "if": "needs.review.outputs.changed == 'true'",
       "runs-on": "ubuntu-latest",
       "steps": [
         {
@@ -71,12 +71,12 @@ describe("public workflow documentation", () => {
         },
       ],
     });
-    expect(workflow.jobs.collect["timeout-minutes"]).toBe(15);
+    expect(workflow.jobs.review["timeout-minutes"]).toBe(15);
   });
 
-  it("keeps the application workflow privileged without a checkout", () => {
-    const workflow = parse(read(applyPath));
-    const apply = workflow.jobs.apply;
+  it("keeps the fix workflow privileged without a checkout", () => {
+    const workflow = parse(read(fixPath));
+    const fix = workflow.jobs.fix;
 
     expect(workflow.on.workflow_run).toEqual({
       workflows: ["prek-autofix"],
@@ -89,12 +89,12 @@ describe("public workflow documentation", () => {
     });
     expect(workflow.concurrency).toEqual({
       "group":
-        "prek-autofix-apply-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}",
+        "prek-autofix-fix-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}",
       "cancel-in-progress": false,
     });
-    expect(apply.steps).toEqual([
+    expect(fix.steps).toEqual([
       {
-        uses: "Snuffy2/prek-autofix/apply@v1",
+        uses: "Snuffy2/prek-autofix/fix@v1",
         env: {
           GITHUB_TOKEN: "${{ github.token }}",
         },
@@ -104,6 +104,6 @@ describe("public workflow documentation", () => {
         },
       },
     ]);
-    expect(JSON.stringify(apply)).not.toContain("actions/checkout");
+    expect(JSON.stringify(fix)).not.toContain("actions/checkout");
   });
 });

@@ -12,11 +12,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  collect:
+  review:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
-      changed: ${{ steps.collect.outputs.changed }}
+      changed: ${{ steps.review.outputs.changed }}
     steps:
       - name: Checkout pull request head
         uses: actions/checkout@v7
@@ -29,13 +29,13 @@ jobs:
       - name: Install locked action dependencies
         run: npm ci --ignore-scripts
 
-      - name: Collect prek fixes
-        id: collect
-        uses: ./collect
+      - name: Review prek fixes
+        id: review
+        uses: ./review
 
   signal:
-    needs: collect
-    if: needs.collect.outputs.changed == 'true'
+    needs: review
+    if: needs.review.outputs.changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Report pending prek fixes
