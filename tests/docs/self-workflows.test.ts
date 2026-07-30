@@ -14,10 +14,15 @@ function workflow(filename: string): ReturnType<typeof parse> {
 describe("repository maintenance workflows", () => {
   it("collects from the exact pull request head with the local action", () => {
     const collect = workflow("prek-autofix.yml");
+    const collectJob = collect.jobs.collect;
+    const signalJob = collect.jobs.signal;
     const checkout = collect.jobs.collect.steps[0];
 
     expect(collect.name).toBe("prek-autofix");
     expect(collect.permissions).toEqual({ contents: "read" });
+    expect(collectJob.outputs).toEqual({
+      changed: "${{ steps.collect.outputs.changed }}",
+    });
     expect(checkout.uses).toMatch(/^actions\/checkout@/);
     expect(checkout.with).toMatchObject({
       "repository": "${{ github.event.pull_request.head.repo.full_name }}",
@@ -28,9 +33,15 @@ describe("repository maintenance workflows", () => {
       id: "collect",
       uses: "./collect",
     });
-    expect(JSON.stringify(collect.jobs.collect)).not.toContain(
-      "PREK_AUTOFIX_TOKEN",
-    );
+    expect(signalJob.needs).toBe("collect");
+    expect(signalJob.if).toBe("needs.collect.outputs.changed == 'true'");
+    expect(signalJob.steps).toEqual([
+      {
+        name: "Report pending prek fixes",
+        run: "exit 1",
+      },
+    ]);
+    expect(JSON.stringify(collectJob)).not.toContain("PREK_AUTOFIX_TOKEN");
   });
 
   it("loads the local apply action only from trusted main", () => {
@@ -42,6 +53,9 @@ describe("repository maintenance workflows", () => {
       workflows: ["prek-autofix"],
       types: ["completed"],
     });
+    expect(applyWorkflow.jobs.apply.if).toBe(
+      "github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'failure'",
+    );
     expect(applyWorkflow.permissions).toEqual({
       "actions": "read",
       "contents": "read",
