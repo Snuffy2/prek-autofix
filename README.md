@@ -112,6 +112,26 @@ expected failure is distinct from a collector, hook, infrastructure, or
 non-convergence failure. The action installs and caches `prek`; do not add an
 artifact action or a write token to this job.
 
+Hooks configured with `language = "system"` use dependencies provided by the
+calling workflow. Install those dependencies before the `collect` step. For a
+Node project with a committed `package-lock.json`, add this after checkout and
+before `collect`:
+
+<!-- prettier-ignore-start -->
+```yaml
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+```
+<!-- prettier-ignore-end -->
+
+`collect` installs and caches `prek`; it does not install project dependencies.
+Use your project's corresponding setup and locked install command for other
+languages.
+
 ### 3. Add the application workflow
 
 Create `.github/workflows/prek-autofix-apply.yml`. Its `workflows` value must
@@ -197,17 +217,19 @@ review, so normal approval and protection rules are unaffected.
 
 For example, replace the `collect` step in Stage 1 with:
 
+<!-- prettier-ignore-start -->
 ```yaml
-- uses: Snuffy2/prek-autofix/collect@v1
-  with:
-    prek-version: 0.2.0
-    extra-args: --all-files --show-diff-on-failure
-    working-directory: tools
-    cache: true
-    max-passes: 2
-    max-log-bytes: 1048576
-    pass-timeout-seconds: 600
+      - uses: Snuffy2/prek-autofix/collect@v1
+        with:
+          prek-version: 0.2.0
+          extra-args: --all-files --show-diff-on-failure
+          working-directory: tools
+          cache: true
+          max-passes: 2
+          max-log-bytes: 1048576
+          pass-timeout-seconds: 600
 ```
+<!-- prettier-ignore-end -->
 
 `apply` accepts these inputs:
 
@@ -221,14 +243,16 @@ For example, replace the `collect` step in Stage 1 with:
 
 To use a different commit message or tighter limits, extend the Stage 2 step:
 
+<!-- prettier-ignore-start -->
 ```yaml
-with:
-  autofix-token: ${{ secrets.PREK_AUTOFIX_TOKEN }}
-  source-workflow: prek-autofix
-  commit-message: "chore: apply prek fixes"
-  max-files: 25
-  max-bytes: 1048576
+        with:
+          autofix-token: ${{ secrets.PREK_AUTOFIX_TOKEN }}
+          source-workflow: prek-autofix
+          commit-message: "chore: apply prek fixes"
+          max-files: 25
+          max-bytes: 1048576
 ```
+<!-- prettier-ignore-end -->
 
 Quote YAML values with spaces or special characters. Start with the defaults
 unless you have a measured need for smaller limits.
