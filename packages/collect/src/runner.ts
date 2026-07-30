@@ -566,5 +566,5 @@ export async function runCollect(
     deps.setOutput("artifact-name", artifactName(context.runId));
     deps.setOutput("artifact-path", file);
   }
-  if (hardFailure) throw hardFailure;
+  if (hardFailure && operations.length === 0) throw hardFailure;
 }

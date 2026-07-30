@@ -107,10 +107,11 @@ jobs:
 <!-- prettier-ignore-end -->
 
 `review` uploads its versioned change artifact and succeeds after the upload.
-The dependent `signal` job deliberately fails when fixes are waiting. That
-expected failure is distinct from a review action failure, hook failure,
-infrastructure failure, or non-convergence failure. The action installs and
-caches `prek`; do not add an artifact action or a write token to this job.
+This includes a stable set of fixes left by `prek` when other hook findings
+remain unfixable. The dependent `signal` job deliberately fails when fixes are
+waiting. That expected failure is distinct from a collection, infrastructure, or
+non-convergence failure. The action installs and caches `prek`; do not add an
+artifact action or a write token to this job.
 
 Hooks configured with `language = "system"` use dependencies provided by the
 calling workflow. Install those dependencies before the `review` step. For a
@@ -192,7 +193,7 @@ snippets are tested against those canonical files.
 | Fork without maintainer edits                                                                     | Review still runs. Fix leaves one persistent PR comment with the reason, artifact link, and recovery steps.             |
 | Protected branch or denied update                                                                 | No force push or bypass. The persistent PR comment explains the denial and recovery.                                    |
 | Hook fails but changes no files                                                                   | No commit is created; fix the hook failure normally.                                                                    |
-| Hook leaves stable fixes but still fails                                                          | The artifact may be retained for diagnosis, but no automatic commit is created; fix the hook failure normally.          |
+| Hook leaves stable fixes but other findings remain                                                | The Action applies the stable fixes. The generated commit's new review run reports the remaining findings.              |
 | Hooks do not converge within `max-passes`                                                         | No commit is created; resolve the interacting hooks or increase the limit deliberately.                                 |
 | Stale source SHA, closed PR, wrong event, unsafe path, symlink/submodule, or workflow-file change | Fix rejects the change without updating the branch.                                                                     |
 
@@ -290,7 +291,7 @@ used only for reads and PR comments with the permissions shown above.
 | Fork update denied                                 | Ask the contributor to enable **Allow edits from maintainers**. They can also download the linked artifact and apply the changes themselves.                                                                                                          |
 | Branch protection blocks the update                | Apply the artifact manually. Do not weaken protection or force-push for autofixes.                                                                                                                                                                    |
 | First-time contributor workflow waits for approval | A maintainer must approve the initial `pull_request` workflow run in GitHub's Actions UI. No artifact exists until that read-only run is approved and completes.                                                                                      |
-| Check keeps failing after the fix commit           | Read the new Stage 1 log. A hard hook failure or non-converging hooks produce no automatic commit and need a normal fix.                                                                                                                              |
+| Check keeps failing after the fix commit           | Read the new Stage 1 log. Remaining findings without stable fixes, or non-converging hooks, need a normal fix.                                                                                                                                        |
 
 ## Pinning and upgrades
 
