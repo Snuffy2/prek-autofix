@@ -9,8 +9,7 @@ export const MAX_PATH_BYTES = 4_096;
 export const MAX_PATH_COMPONENTS = 32;
 export const MAX_TOTAL_PATH_COMPONENTS = 1_000;
 export const MAX_SOURCE_STRING_BYTES = 255;
-export const DEFAULT_COMMIT_MESSAGE =
-  "[prek-autofix] apply automatic fixes";
+export const DEFAULT_COMMIT_MESSAGE = "[prek-autofix] apply automatic fixes";
 export const COMMENT_MARKER = "<!-- prek-autofix-result -->";
 
 export type FileOperationKind = "add" | "modify" | "delete";
@@ -77,9 +76,7 @@ export function isWorkflowPath(candidate: string): boolean {
   );
 }
 
-export function validatePathComponentBudget(
-  paths: readonly string[],
-): void {
+export function validatePathComponentBudget(paths: readonly string[]): void {
   let totalComponents = 0;
   for (const candidate of paths) {
     const componentCount = candidate.split("/").length;
@@ -105,7 +102,9 @@ function parseSource(value: unknown): ArtifactSource {
   const { runId, repository, workflow, event, pullRequestNumber, headSha } =
     value;
   if (!Number.isSafeInteger(runId) || (runId as number) <= 0) {
-    throw new ArtifactValidationError("source runId must be a positive integer");
+    throw new ArtifactValidationError(
+      "source runId must be a positive integer",
+    );
   }
   if (
     typeof repository !== "string" ||
@@ -156,18 +155,16 @@ function parseOperation(value: unknown): FileOperation {
   }
   const { path: filePath, operation, mode, content } = value;
   if (typeof filePath !== "string" || !isSafeRepositoryPath(filePath)) {
-    throw new ArtifactValidationError(`unsafe artifact path: ${String(filePath)}`);
+    throw new ArtifactValidationError(
+      `unsafe artifact path: ${String(filePath)}`,
+    );
   }
   if (isWorkflowPath(filePath)) {
     throw new ArtifactValidationError(
       `workflow files cannot be applied automatically: ${filePath}`,
     );
   }
-  if (
-    operation !== "add" &&
-    operation !== "modify" &&
-    operation !== "delete"
-  ) {
+  if (operation !== "add" && operation !== "modify" && operation !== "delete") {
     throw new ArtifactValidationError(`invalid operation for ${filePath}`);
   }
   if (mode !== "100644" && mode !== "100755") {
@@ -226,9 +223,7 @@ export function parseChangeArtifact(
   }
 
   const operations = value.operations.map(parseOperation);
-  validatePathComponentBudget(
-    operations.map((operation) => operation.path),
-  );
+  validatePathComponentBudget(operations.map((operation) => operation.path));
   const seen = new Set<string>();
   let totalBytes = 0;
   for (const operation of operations) {

@@ -170,8 +170,12 @@ describe("action metadata", () => {
     expect(serialized).toContain(
       "j178/prek-action@5337cb91e0fa35a7ff31b9ca345126d8bbbcdf16",
     );
-    expect(serialized).toContain("$GITHUB_ACTION_PATH/../dist/collect/index.js");
-    expect(serialized).not.toMatch(/autofix-token|PREK_AUTOFIX_TOKEN|checkout/i);
+    expect(serialized).toContain(
+      "$GITHUB_ACTION_PATH/../dist/collect/index.js",
+    );
+    expect(serialized).not.toMatch(
+      /autofix-token|PREK_AUTOFIX_TOKEN|checkout/i,
+    );
   });
 
   it("uses an isolated Node 24 privileged entry point", async () => {
@@ -203,7 +207,9 @@ describe("action metadata", () => {
   it("isolates release verification from repository write credentials", async () => {
     const workflow = await metadata(".github/workflows/release.yml");
     expect(workflow.permissions).toEqual({ contents: "read" });
-    expect(workflow.jobs.verify.steps[0].with["persist-credentials"]).toBe(false);
+    expect(workflow.jobs.verify.steps[0].with["persist-credentials"]).toBe(
+      false,
+    );
     expect(workflow.jobs["update-major"].permissions).toEqual({
       contents: "write",
     });
@@ -211,7 +217,7 @@ describe("action metadata", () => {
       /npm ci|npm test|checkout|packages\//,
     );
     expect(workflow.jobs["update-major"].concurrency).toEqual({
-      group:
+      "group":
         "release-major-${{ github.repository }}-${{ needs.verify.outputs.major-tag }}",
       "cancel-in-progress": false,
     });
@@ -285,9 +291,9 @@ describe("action metadata", () => {
       { name: "v1.11.0", commit: { sha: unverifiedNewerSha } },
     ];
 
-    expect(
-      decideRelease(script, "v1.10.0", triggeringSha, tags),
-    ).toBe(`update\t${triggeringSha}\t${oldSha}`);
+    expect(decideRelease(script, "v1.10.0", triggeringSha, tags)).toBe(
+      `update\t${triggeringSha}\t${oldSha}`,
+    );
   });
 
   it("allows a surviving verified pending job to advance after replacement", async () => {
@@ -306,12 +312,7 @@ describe("action metadata", () => {
     ];
 
     expect(
-      decideRelease(
-        script,
-        "v1.10.0",
-        runningSha,
-        tagsBeforeRunningUpdate,
-      ),
+      decideRelease(script, "v1.10.0", runningSha, tagsBeforeRunningUpdate),
     ).toBe(`update\t${runningSha}\t${oldSha}`);
 
     const tagsAfterRunningUpdate = tagsBeforeRunningUpdate.map((tag) =>
@@ -471,9 +472,9 @@ describe("action metadata", () => {
       },
     ];
 
-    expect(
-      decideRelease(script, "v1.10.0", targetSha, tags, releases),
-    ).toBe(`create\t${targetSha}`);
+    expect(decideRelease(script, "v1.10.0", targetSha, tags, releases)).toBe(
+      `create\t${targetSha}`,
+    );
   });
 
   it("requires the triggering release and every eligible release to match a tag", async () => {

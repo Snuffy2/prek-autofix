@@ -14,9 +14,9 @@ describe("apply artifact lookup", () => {
 
   it("returns successfully when the collector artifact is missing", async () => {
     const client = {
-      getArtifact: vi.fn().mockRejectedValue(
-        new ArtifactNotFoundError("artifact is absent"),
-      ),
+      getArtifact: vi
+        .fn()
+        .mockRejectedValue(new ArtifactNotFoundError("artifact is absent")),
     };
 
     await expect(

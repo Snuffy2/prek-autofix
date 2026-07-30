@@ -10,15 +10,9 @@ import {
   parseChangeArtifact,
 } from "../../shared/src/artifact";
 import { getArtifactIfPresent } from "./artifact-lookup";
-import {
-  applyArtifact,
-  maximumRawArtifactBytes,
-} from "./apply";
+import { applyArtifact, maximumRawArtifactBytes } from "./apply";
 import { createMutationClient, createReadClient } from "./github";
-import {
-  IneligibleSourceJobsError,
-  verifySourceJobs,
-} from "./source-jobs";
+import { IneligibleSourceJobsError, verifySourceJobs } from "./source-jobs";
 
 function nonnegativeInput(name: string, fallback: number): number {
   const raw = core.getInput(name);
@@ -67,20 +61,22 @@ async function run(): Promise<void> {
     return;
   }
   const download = await artifactClient.downloadArtifact(lookup.artifact.id, {
-      findBy: {
-        token: githubToken,
-        workflowRunId: runId,
-        repositoryOwner: owner,
-        repositoryName: repo,
-      },
-    });
-  if (!download.downloadPath) throw new Error("artifact download path is missing");
+    findBy: {
+      token: githubToken,
+      workflowRunId: runId,
+      repositoryOwner: owner,
+      repositoryName: repo,
+    },
+  });
+  if (!download.downloadPath)
+    throw new Error("artifact download path is missing");
   const artifactPath = join(download.downloadPath, "prek-autofix.json");
   const rawLimit = maximumRawArtifactBytes(maxBytes, maxFiles);
   const fileStat = await stat(artifactPath);
   if (fileStat.size > rawLimit) throw new Error("artifact JSON is too large");
   const raw = await readFile(artifactPath, "utf8");
-  if (Buffer.byteLength(raw) > rawLimit) throw new Error("artifact JSON is too large");
+  if (Buffer.byteLength(raw) > rawLimit)
+    throw new Error("artifact JSON is too large");
   const artifact = parseChangeArtifact(JSON.parse(raw), maxFiles, maxBytes);
 
   const pat = core.getInput("autofix-token", { required: true });
@@ -89,11 +85,13 @@ async function run(): Promise<void> {
   const read = createReadClient(readOctokit, owner, repo);
   const mutation = createMutationClient(patOctokit);
   await applyArtifact(read, mutation, {
-    baseRepository, runId, artifact,
-    artifactUrl:
-      `${github.context.serverUrl}/${baseRepository}/actions/runs/${runId}/artifacts/${lookup.artifact.id}`,
+    baseRepository,
+    runId,
+    artifact,
+    artifactUrl: `${github.context.serverUrl}/${baseRepository}/actions/runs/${runId}/artifacts/${lookup.artifact.id}`,
     sourceRunUrl: `${github.context.serverUrl}/${baseRepository}/actions/runs/${runId}`,
-    sourceWorkflow, commitMessage,
+    sourceWorkflow,
+    commitMessage,
   });
 }
 

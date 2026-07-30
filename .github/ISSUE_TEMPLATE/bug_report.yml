@@ -25,7 +25,9 @@ body:
     id: logs
     attributes:
       label: Relevant logs
-      description: Please copy and paste any relevant logs. This will be automatically formatted into code, so no need for backticks.
+      description:
+        Please copy and paste any relevant logs. This will be automatically
+        formatted into code, so no need for backticks.
   - type: textarea
     id: additional-details
     attributes:

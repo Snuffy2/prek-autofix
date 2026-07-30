@@ -108,7 +108,9 @@ export function maximumRawArtifactBytes(
     !Number.isSafeInteger(operationOverhead) ||
     encodedContent > Number.MAX_SAFE_INTEGER - operationOverhead
   ) {
-    throw new ApplyError("configured limits are too large to safely bound artifact JSON");
+    throw new ApplyError(
+      "configured limits are too large to safely bound artifact JSON",
+    );
   }
   return Math.max(65_536, encodedContent + operationOverhead);
 }
@@ -199,7 +201,9 @@ export async function applyArtifact(
     throw new ApplyError("source workflow run name or event is not eligible");
   }
 
-  const candidates = (await read.listAssociatedPullRequests(run.headSha)).filter(
+  const candidates = (
+    await read.listAssociatedPullRequests(run.headSha)
+  ).filter(
     (pr) =>
       pr.state === "open" &&
       pr.baseRepository === request.baseRepository &&
@@ -225,7 +229,9 @@ export async function applyArtifact(
     claims.pullRequestNumber !== pr.number ||
     claims.headSha !== run.headSha
   ) {
-    throw new ApplyError("artifact source claims do not match the workflow run");
+    throw new ApplyError(
+      "artifact source claims do not match the workflow run",
+    );
   }
   const sameRepository = pr.headRepository === request.baseRepository;
   if (!sameRepository && pr.headRepositoryOwnerType !== "User") {
@@ -270,10 +276,7 @@ export async function applyArtifact(
     for (const operation of request.artifact.operations) {
       let sha: string | null = null;
       if (operation.operation !== "delete") {
-        sha = await mutation.createBlob(
-          pr.headRepository,
-          operation.content!,
-        );
+        sha = await mutation.createBlob(pr.headRepository, operation.content!);
       }
       treeEntries.push({
         path: operation.path,

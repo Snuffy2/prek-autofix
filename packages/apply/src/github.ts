@@ -42,33 +42,45 @@ export function createReadClient(
     body: string,
     createWhenAbsent: boolean,
   ): Promise<void> => {
-    const comments = await octokit.paginate(
-      octokit.rest.issues.listComments,
-      { owner, repo, issue_number: prNumber, per_page: 100 },
-    );
+    const comments = await octokit.paginate(octokit.rest.issues.listComments, {
+      owner,
+      repo,
+      issue_number: prNumber,
+      per_page: 100,
+    });
     const [canonicalId, ...duplicateIds] = ownMarkerCommentIds(comments);
     if (canonicalId === undefined) {
       if (createWhenAbsent) {
         await octokit.rest.issues.createComment({
-          owner, repo, issue_number: prNumber, body,
+          owner,
+          repo,
+          issue_number: prNumber,
+          body,
         });
       }
       return;
     }
     for (const duplicateId of duplicateIds) {
       await octokit.rest.issues.deleteComment({
-        owner, repo, comment_id: duplicateId,
+        owner,
+        repo,
+        comment_id: duplicateId,
       });
     }
     await octokit.rest.issues.updateComment({
-      owner, repo, comment_id: canonicalId, body,
+      owner,
+      repo,
+      comment_id: canonicalId,
+      body,
     });
   };
 
   return {
     async getWorkflowRun(id): Promise<WorkflowRun> {
       const { data } = await octokit.rest.actions.getWorkflowRun({
-        owner, repo, run_id: id,
+        owner,
+        repo,
+        run_id: id,
       });
       return {
         id: data.id,
@@ -106,7 +118,9 @@ export function createReadClient(
     async getCommitTreeSha(repository, sha) {
       const [targetOwner, targetRepo] = repositoryParts(repository);
       const { data } = await octokit.rest.git.getCommit({
-        owner: targetOwner, repo: targetRepo, commit_sha: sha,
+        owner: targetOwner,
+        repo: targetRepo,
+        commit_sha: sha,
       });
       return data.tree.sha;
     },
@@ -177,21 +191,31 @@ export function createMutationClient(octokit: Octokit): MutationClient {
     async createBlob(repository, content) {
       const [owner, repo] = repositoryParts(repository);
       const { data } = await octokit.rest.git.createBlob({
-        owner, repo, content, encoding: "base64",
+        owner,
+        repo,
+        content,
+        encoding: "base64",
       });
       return data.sha;
     },
     async createTree(repository, baseTree, tree) {
       const [owner, repo] = repositoryParts(repository);
       const { data } = await octokit.rest.git.createTree({
-        owner, repo, base_tree: baseTree, tree,
+        owner,
+        repo,
+        base_tree: baseTree,
+        tree,
       });
       return data.sha;
     },
     async createCommit(repository, message, tree, parent) {
       const [owner, repo] = repositoryParts(repository);
       const { data } = await octokit.rest.git.createCommit({
-        owner, repo, message, tree, parents: [parent],
+        owner,
+        repo,
+        message,
+        tree,
+        parents: [parent],
       });
       return data.sha;
     },

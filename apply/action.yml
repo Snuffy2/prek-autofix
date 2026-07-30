@@ -1,8 +1,10 @@
 name: Apply prek autofixes
-description: Safely apply a collected prek-autofix artifact to a pull request branch
+description:
+  Safely apply a collected prek-autofix artifact to a pull request branch
 inputs:
   autofix-token:
-    description: Classic PAT with repository write access used only for Git Data mutations
+    description:
+      Classic PAT with repository write access used only for Git Data mutations
     required: true
   commit-message:
     description: Commit message for the generated fix commit

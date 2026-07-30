@@ -9,6 +9,8 @@
     "build:collect": "esbuild packages/collect/src/index.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/collect/index.js --minify",
     "build:apply": "esbuild packages/apply/src/index.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/apply/index.js --minify",
     "check:dist": "npm run build && git diff --exit-code -- dist",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "lint": "eslint \"**/*.ts\" --max-warnings 0",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
@@ -23,6 +25,8 @@
     "@types/node": "^24.0.0",
     "esbuild": "^0.28.1",
     "eslint": "^10.8.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.9.6",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.65.0",
     "vitest": "^4.1.10",

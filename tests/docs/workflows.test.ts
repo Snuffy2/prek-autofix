@@ -44,13 +44,13 @@ describe("public workflow documentation", () => {
     expect(workflow.on.pull_request.types).toContain("synchronize");
     expect(workflow.permissions).toEqual({ contents: "read" });
     expect(workflow.concurrency).toEqual({
-      group: "prek-autofix-${{ github.event.pull_request.number }}",
+      "group": "prek-autofix-${{ github.event.pull_request.number }}",
       "cancel-in-progress": true,
     });
     expect(checkout.uses).toMatch(/^actions\/checkout@/);
     expect(checkout.with).toMatchObject({
-      repository: "${{ github.event.pull_request.head.repo.full_name }}",
-      ref: "${{ github.event.pull_request.head.sha }}",
+      "repository": "${{ github.event.pull_request.head.repo.full_name }}",
+      "ref": "${{ github.event.pull_request.head.sha }}",
       "persist-credentials": false,
     });
     expect(workflow.jobs.collect.outputs).toEqual({
@@ -61,10 +61,10 @@ describe("public workflow documentation", () => {
       uses: "Snuffy2/prek-autofix/collect@v1",
     });
     expect(workflow.jobs.signal).toEqual({
-      needs: "collect",
-      if: "needs.collect.outputs.changed == 'true'",
+      "needs": "collect",
+      "if": "needs.collect.outputs.changed == 'true'",
       "runs-on": "ubuntu-latest",
-      steps: [
+      "steps": [
         {
           name: "Report pending prek fixes",
           run: "exit 1",
@@ -83,12 +83,12 @@ describe("public workflow documentation", () => {
       types: ["completed"],
     });
     expect(workflow.permissions).toEqual({
-      actions: "read",
-      contents: "read",
+      "actions": "read",
+      "contents": "read",
       "pull-requests": "write",
     });
     expect(workflow.concurrency).toEqual({
-      group:
+      "group":
         "prek-autofix-apply-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}",
       "cancel-in-progress": false,
     });
