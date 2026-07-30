@@ -1,4 +1,3 @@
-import { DefaultArtifactClient } from "@actions/artifact";
 import * as core from "@actions/core";
 import * as github from "@actions/github";
 import { executeCommand, runCollect } from "./runner";
@@ -36,7 +35,6 @@ async function main(): Promise<void> {
     },
     {
       execute: executeCommand,
-      artifact: new DefaultArtifactClient(),
       env: process.env,
       setOutput: core.setOutput,
     },

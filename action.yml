@@ -48,6 +48,7 @@ runs:
         prek-version: ${{ inputs.prek-version }}
         working-directory: ${{ inputs.working-directory }}
     - id: review
+      continue-on-error: true
       shell: bash
       env:
         PREK_AUTOFIX_EXTRA_ARGS: ${{ inputs.extra-args }}
@@ -56,6 +57,19 @@ runs:
         PREK_AUTOFIX_MAX_LOG_BYTES: ${{ inputs.max-log-bytes }}
         PREK_AUTOFIX_PASS_TIMEOUT_SECONDS: ${{ inputs.pass-timeout-seconds }}
       run: node "$GITHUB_ACTION_PATH/dist/collect/index.js"
+    - id: upload
+      name: Upload prek fixes
+      if: steps.review.outputs.artifact-name != ''
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ steps.review.outputs.artifact-name }}
+        path: ${{ steps.review.outputs.artifact-path }}
+        if-no-files-found: error
+    - id: propagate
+      name: Propagate collection failure
+      if: steps.review.outcome == 'failure'
+      shell: bash
+      run: exit 1
 
 branding:
   icon: check-circle

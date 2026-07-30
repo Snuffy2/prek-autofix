@@ -162,13 +162,16 @@ describe("action metadata", () => {
       });
     }
     expect(primaryAction.runs.using).toBe(reviewAction.runs.using);
-    expect(primaryAction.runs.steps).toEqual([
-      ...reviewAction.runs.steps.slice(0, -1),
-      {
-        ...reviewAction.runs.steps.at(-1),
-        run: 'node "$GITHUB_ACTION_PATH/dist/collect/index.js"',
-      },
-    ]);
+    expect(primaryAction.runs.steps).toEqual(
+      reviewAction.runs.steps.map((step: Record<string, any>) =>
+        step.id === "review"
+          ? {
+              ...step,
+              run: 'node "$GITHUB_ACTION_PATH/dist/collect/index.js"',
+            }
+          : step,
+      ),
+    );
   });
 
   it("keeps the review action unprivileged and major-tagged", async () => {
@@ -193,11 +196,48 @@ describe("action metadata", () => {
     const serialized = JSON.stringify(action);
     expect(serialized).toContain("actions/setup-node@v6");
     expect(serialized).toContain("j178/prek-action@v2");
+    expect(serialized).toContain("actions/upload-artifact@v7");
     expect(serialized).toContain(
       "$GITHUB_ACTION_PATH/../dist/collect/index.js",
     );
     expect(serialized).not.toMatch(
       /autofix-token|PREK_AUTOFIX_TOKEN|checkout/i,
+    );
+  });
+
+  it("uploads a persisted artifact before propagating collection failure", async () => {
+    const action = await metadata("review/action.yml");
+    const review = action.runs.steps.find(
+      (step: Record<string, any>) => step.id === "review",
+    );
+    const upload = action.runs.steps.find(
+      (step: Record<string, any>) => step.id === "upload",
+    );
+    const propagate = action.runs.steps.find(
+      (step: Record<string, any>) => step.id === "propagate",
+    );
+
+    expect(review["continue-on-error"]).toBe(true);
+    expect(upload).toEqual({
+      id: "upload",
+      name: "Upload prek fixes",
+      if: "steps.review.outputs.artifact-name != ''",
+      uses: "actions/upload-artifact@v7",
+      with: {
+        "name": "${{ steps.review.outputs.artifact-name }}",
+        "path": "${{ steps.review.outputs.artifact-path }}",
+        "if-no-files-found": "error",
+      },
+    });
+    expect(propagate).toEqual({
+      id: "propagate",
+      name: "Propagate collection failure",
+      if: "steps.review.outcome == 'failure'",
+      shell: "bash",
+      run: "exit 1",
+    });
+    expect(action.runs.steps.indexOf(upload)).toBeLessThan(
+      action.runs.steps.indexOf(propagate),
     );
   });
 
