@@ -15,8 +15,6 @@ jobs:
   review:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    outputs:
-      changed: ${{ steps.review.outputs.changed }}
     steps:
       - name: Checkout pull request head
         uses: actions/checkout@v7
@@ -32,11 +30,3 @@ jobs:
       - name: Review prek fixes
         id: review
         uses: ./review
-
-  signal:
-    needs: review
-    if: needs.review.outputs.changed == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Report pending prek fixes
-        run: exit 1

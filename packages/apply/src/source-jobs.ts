@@ -2,57 +2,31 @@ import type { getOctokit } from "@actions/github";
 
 type Octokit = ReturnType<typeof getOctokit>;
 
-export interface SourceJobStep {
-  name: string;
-  conclusion: string | null;
-}
-
 export interface SourceJob {
   name: string;
   conclusion: string | null;
-  steps?: SourceJobStep[] | null;
 }
 
 const REVIEW_JOB = "review";
-const SIGNAL_JOB = "signal";
-const SIGNAL_STEP = "Report pending prek fixes";
 
 export class IneligibleSourceJobsError extends Error {}
 
 /**
- * Verify that the source workflow failed for the expected autofix signal.
+ * Verify that collection completed successfully.
  *
  * The job result is a reliability boundary: collector or infrastructure
- * failures must never be mistaken for the intentional "fixes available"
- * failure emitted by the signal job.
+ * failures must never be mistaken for a successful artifact collection.
  */
 export function assertEligibleSourceJobs(jobs: SourceJob[]): void {
   const reviewJobs = jobs.filter((job) => job.name === REVIEW_JOB);
-  const signals = jobs.filter((job) => job.name === SIGNAL_JOB);
-  if (reviewJobs.length !== 1 || signals.length !== 1) {
+  if (reviewJobs.length !== 1) {
     throw new IneligibleSourceJobsError(
-      "source workflow must contain exactly one review job and one signal job",
+      "source workflow must contain exactly one review job",
     );
   }
   if (reviewJobs[0]!.conclusion !== "success") {
     throw new IneligibleSourceJobsError(
       "source review job did not complete successfully",
-    );
-  }
-  if (signals[0]!.conclusion !== "failure") {
-    throw new IneligibleSourceJobsError(
-      "source signal job did not report pending fixes",
-    );
-  }
-  const reportingSteps = (signals[0]!.steps ?? []).filter(
-    (step) => step.name === SIGNAL_STEP,
-  );
-  if (
-    reportingSteps.length !== 1 ||
-    reportingSteps[0]!.conclusion !== "failure"
-  ) {
-    throw new IneligibleSourceJobsError(
-      "source signal job did not fail in the expected step",
     );
   }
 }

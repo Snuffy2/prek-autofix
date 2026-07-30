@@ -82,8 +82,6 @@ jobs:
   review:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    outputs:
-      changed: ${{ steps.review.outputs.changed }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -94,23 +92,14 @@ jobs:
 
       - id: review
         uses: Snuffy2/prek-autofix/review@v1
-
-  signal:
-    needs: review
-    if: needs.review.outputs.changed == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Report pending prek fixes
-        run: exit 1
 ```
 <!-- END prek-autofix-stage-1 -->
 <!-- prettier-ignore-end -->
 
 `review` uploads its versioned change artifact and succeeds after the upload.
 This includes a stable set of fixes left by `prek` when other hook findings
-remain unfixable. The dependent `signal` job deliberately fails when fixes are
-waiting. That expected failure is distinct from a collection, infrastructure, or
-non-convergence failure. The action installs and caches `prek`; do not add an
+remain unfixable. Collection, infrastructure, and non-convergence failures still
+fail the review job. The action installs and caches `prek`; do not add an
 artifact action or a write token to this job.
 
 Hooks configured with `language = "system"` use dependencies provided by the
@@ -160,9 +149,7 @@ concurrency:
 
 jobs:
   fix:
-    if: >-
-      github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.conclusion == 'failure'
+    if: github.event.workflow_run.event == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: Snuffy2/prek-autofix/fix@v1
@@ -186,21 +173,21 @@ snippets are tested against those canonical files.
 
 ## What to expect
 
-| Situation                                                                                         | Result                                                                                                                  |
-| ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Same-repository pull request with changes                                                         | Review uploads the changes, the signal job fails, the Action adds one fix commit, and that commit starts a fresh check. |
-| User-owned fork with **Allow edits from maintainers** enabled                                     | The Action attempts the same non-force update.                                                                          |
-| Fork without maintainer edits                                                                     | Review still runs. Fix leaves one persistent PR comment with the reason, artifact link, and recovery steps.             |
-| Protected branch or denied update                                                                 | No force push or bypass. The persistent PR comment explains the denial and recovery.                                    |
-| Hook fails but changes no files                                                                   | No commit is created; fix the hook failure normally.                                                                    |
-| Hook leaves stable fixes but other findings remain                                                | The Action applies the stable fixes. The generated commit's new review run reports the remaining findings.              |
-| Hooks do not converge within `max-passes`                                                         | No commit is created; resolve the interacting hooks or increase the limit deliberately.                                 |
-| Stale source SHA, closed PR, wrong event, unsafe path, symlink/submodule, or workflow-file change | Fix rejects the change without updating the branch.                                                                     |
+| Situation                                                                                         | Result                                                                                                      |
+| ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Same-repository pull request with changes                                                         | Review uploads the changes, then the fix workflow adds one fix commit and that commit starts a fresh check. |
+| User-owned fork with **Allow edits from maintainers** enabled                                     | The Action attempts the same non-force update.                                                              |
+| Fork without maintainer edits                                                                     | Review still runs. Fix leaves one persistent PR comment with the reason, artifact link, and recovery steps. |
+| Protected branch or denied update                                                                 | No force push or bypass. The persistent PR comment explains the denial and recovery.                        |
+| Hook fails but changes no files                                                                   | No commit is created; fix the hook failure normally.                                                        |
+| Hook leaves stable fixes but other findings remain                                                | The Action applies the stable fixes. The generated commit's new review run reports the remaining findings.  |
+| Hooks do not converge within `max-passes`                                                         | No commit is created; resolve the interacting hooks or increase the limit deliberately.                     |
+| Stale source SHA, closed PR, wrong event, unsafe path, symlink/submodule, or workflow-file change | Fix rejects the change without updating the branch.                                                         |
 
-The initial check is supposed to fail when `prek` produces files to apply. The
-PAT-authored commit starts a new `pull_request` run, which passes only after
-`prek` completes without more changes. This Action never submits an approving
-review, so normal approval and protection rules are unaffected.
+The initial review succeeds after it uploads validated changes. The PAT-authored
+commit starts a new `pull_request` run, which reports any remaining findings.
+This Action never submits an approving review, so normal approval and protection
+rules are unaffected.
 
 ## Configuration
 
@@ -270,12 +257,13 @@ artifact. This protects the collection lifecycle; it is not a sandbox for
 untrusted code. The collector also verifies the trusted Python interpreter and
 workspace identity, then treats hook output as an untrusted patch.
 
-Stage 2 requires a successful review job and the exact expected failure from the
-dedicated signal job. It independently finds the open pull request and its
-current head from GitHub rather than trusting artifact-supplied target metadata
-or file content. It rejects stale or unsafe input, limits file count and content
-size, excludes `.github/workflows/**`, and uses the PAT only for the validated
-Git Data API update.
+Stage 2 starts after every completed Stage 1 pull-request workflow. It applies
+changes only when exactly one review job succeeded and the run contains the
+expected artifact. It independently finds the open pull request and its current
+head from GitHub rather than trusting artifact-supplied target metadata or file
+content. It rejects stale or unsafe input, limits file count and content size,
+excludes `.github/workflows/**`, and uses the PAT only for the validated Git
+Data API update.
 
 The final branch update is atomic: if the contributor pushed a new commit,
 application stops instead of overwriting it. Stage 2 does not check out

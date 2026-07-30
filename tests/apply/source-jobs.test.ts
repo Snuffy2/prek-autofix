@@ -11,15 +11,10 @@ const eligibleJobs = () => [
     conclusion: "success",
     steps: [{ name: "Review prek fixes", conclusion: "success" }],
   },
-  {
-    name: "signal",
-    conclusion: "failure",
-    steps: [{ name: "Report pending prek fixes", conclusion: "failure" }],
-  },
 ];
 
 describe("source workflow job eligibility", () => {
-  it("accepts a successful review and the expected failing signal", () => {
+  it("accepts a successful review", () => {
     expect(() => assertEligibleSourceJobs(eligibleJobs())).not.toThrow();
   });
 
@@ -32,25 +27,18 @@ describe("source workflow job eligibility", () => {
       message: "review job did not complete successfully",
     },
     {
-      name: "signal success",
-      mutate: (jobs: ReturnType<typeof eligibleJobs>) => {
-        jobs[1]!.conclusion = "success";
-      },
-      message: "signal job did not report pending fixes",
-    },
-    {
-      name: "wrong failing step",
-      mutate: (jobs: ReturnType<typeof eligibleJobs>) => {
-        jobs[1]!.steps[0]!.name = "Unexpected failure";
-      },
-      message: "signal job did not fail in the expected step",
-    },
-    {
       name: "duplicate review",
       mutate: (jobs: ReturnType<typeof eligibleJobs>) => {
         jobs.push({ ...jobs[0]!, steps: [...jobs[0]!.steps] });
       },
-      message: "exactly one review job and one signal job",
+      message: "exactly one review job",
+    },
+    {
+      name: "missing review",
+      mutate: (jobs: ReturnType<typeof eligibleJobs>) => {
+        jobs.splice(0);
+      },
+      message: "exactly one review job",
     },
   ])("rejects $name", ({ mutate, message }) => {
     const jobs = eligibleJobs();
