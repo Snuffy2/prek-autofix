@@ -145,16 +145,6 @@ describe("applyArtifact", () => {
     expect(read.upsertComment).not.toHaveBeenCalled();
   });
 
-  it("rejects forged artifact claims before reading or mutating the tree", async () => {
-    const { artifact, read, mutation } = fixture();
-    artifact.source.pullRequestNumber = 99;
-    await expect(
-      applyArtifact(read, mutation, request(artifact)),
-    ).rejects.toThrow("artifact source claims");
-    expect(read.getTreeEntries).not.toHaveBeenCalled();
-    expect(mutation.createBlob).not.toHaveBeenCalled();
-  });
-
   it.each([
     ["runId", 8],
     ["repository", "evil/repo"],
@@ -166,7 +156,7 @@ describe("applyArtifact", () => {
     Object.assign(artifact.source, { [field]: value });
     await expect(
       applyArtifact(read, mutation, request(artifact)),
-    ).rejects.toThrow();
+    ).rejects.toThrow("artifact source claims");
     expect(read.getTreeEntries).not.toHaveBeenCalled();
     expect(mutation.createBlob).not.toHaveBeenCalled();
   });

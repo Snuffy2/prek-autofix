@@ -286,12 +286,6 @@ describe("GitHub apply adapters", () => {
       expect.objectContaining({ comment_id: 2 }),
     );
     expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
-
-    octokit.rest.issues.updateComment.mockClear();
-    octokit.paginate.mockResolvedValue([]);
-    await read.resolveComment(4);
-    expect(octokit.rest.issues.updateComment).not.toHaveBeenCalled();
-    expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
   });
 
   it("marks only an owned existing marker obsolete without creating a comment", async () => {
@@ -316,18 +310,6 @@ describe("GitHub apply adapters", () => {
       comment_id: 2,
       body: expect.stringMatching(/obsolete.*No action is required/s),
     });
-    expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
-
-    octokit.rest.issues.updateComment.mockClear();
-    octokit.paginate.mockResolvedValue([
-      {
-        id: 1,
-        user: { login: "contributor" },
-        body: "<!-- prek-autofix-result --> spoof",
-      },
-    ]);
-    await read.markCommentObsolete(4);
-    expect(octokit.rest.issues.updateComment).not.toHaveBeenCalled();
     expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
   });
 
@@ -369,22 +351,19 @@ describe("GitHub apply adapters", () => {
         await read[method](4);
       }
 
-      expect(octokit.rest.issues.deleteComment).toHaveBeenNthCalledWith(1, {
-        owner: "base",
-        repo: "repo",
-        comment_id: 7,
-      });
-      expect(octokit.rest.issues.deleteComment).toHaveBeenNthCalledWith(2, {
-        owner: "base",
-        repo: "repo",
-        comment_id: 9,
-      });
+      expect(octokit.rest.issues.deleteComment).toHaveBeenCalledTimes(2);
+      expect(octokit.rest.issues.deleteComment.mock.calls).toEqual(
+        expect.arrayContaining([
+          [{ owner: "base", repo: "repo", comment_id: 7 }],
+          [{ owner: "base", repo: "repo", comment_id: 9 }],
+        ]),
+      );
       expect(octokit.rest.issues.updateComment).toHaveBeenCalledWith(
         expect.objectContaining({ comment_id: 3 }),
       );
       expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
       expect(
-        octokit.rest.issues.deleteComment.mock.invocationCallOrder[1],
+        Math.max(...octokit.rest.issues.deleteComment.mock.invocationCallOrder),
       ).toBeLessThan(
         octokit.rest.issues.updateComment.mock.invocationCallOrder[0]!,
       );

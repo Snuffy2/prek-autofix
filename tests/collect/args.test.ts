@@ -8,8 +8,10 @@ describe("parseExtraArgs", () => {
     ).toEqual(["--all-files", "--hook-stage", "pre commit", "a b"]);
   });
 
-  it("rejects incomplete shell syntax", () => {
-    expect(() => parseExtraArgs("'unfinished")).toThrow("unterminated");
-    expect(() => parseExtraArgs("unfinished\\")).toThrow("unterminated");
+  it.each([
+    ["quote", "'unfinished"],
+    ["escape", "unfinished\\"],
+  ])("rejects an unterminated %s", (_syntax, input) => {
+    expect(() => parseExtraArgs(input)).toThrow("unterminated");
   });
 });

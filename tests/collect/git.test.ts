@@ -16,7 +16,6 @@ import {
   captureRootIdentity,
   captureTrustedPython,
   GIT_CAPTURE_LIMIT_BYTES,
-  operationForGitStatus,
   TRUSTED_GIT_PATH,
   writeArtifact,
   type Execute,
@@ -330,6 +329,22 @@ describe("collectOperations", () => {
     expect(operations).toHaveLength(DEFAULT_MAX_FILES);
   });
 
+  it("rejects unsupported Git statuses at the collection boundary", async () => {
+    const root = await mkdtemp(join(tmpdir(), "collect-status-"));
+    directories.push(root);
+    const execute: Execute = vi.fn(async (_command, args) => {
+      if (gitSubcommand(args) === "diff") {
+        return resultBuffer("T\0changed.txt\0");
+      }
+      if (gitSubcommand(args) === "ls-files") return resultBuffer("");
+      throw new Error(`unexpected command: ${args.join(" ")}`);
+    });
+
+    await expect(collectOperations(root, execute, env)).rejects.toThrow(
+      "unsupported git diff status: T",
+    );
+  });
+
   it("rejects a substituted workspace pathname against its pinned identity", async () => {
     const root = await repository();
     const identity = await captureRootIdentity(root);
@@ -487,17 +502,6 @@ describe("collectOperations", () => {
       await expect(readFile(mutation)).rejects.toThrow();
     },
   );
-});
-
-describe("operationForGitStatus", () => {
-  it("maps supported statuses and rejects unsupported statuses", () => {
-    expect(operationForGitStatus("A")).toBe("add");
-    expect(operationForGitStatus("M")).toBe("modify");
-    expect(operationForGitStatus("D")).toBe("delete");
-    expect(() => operationForGitStatus("T")).toThrow(
-      "unsupported git diff status: T",
-    );
-  });
 });
 
 describe("trusted collector helpers", () => {
