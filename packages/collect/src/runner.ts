@@ -1,8 +1,7 @@
 import { spawn } from "node:child_process";
 import type { Readable } from "node:stream";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
-import type { ArtifactClient } from "@actions/artifact";
 import type { FileOperation } from "../../shared/src/artifact";
 import {
   ARTIFACT_SCHEMA_VERSION,
@@ -47,7 +46,6 @@ export interface CollectInputs {
 
 export interface CollectDeps {
   execute: Execute;
-  artifact: Pick<ArtifactClient, "uploadArtifact">;
   env: NodeJS.ProcessEnv;
   setOutput(name: string, value: string): void;
   collectChanges?: (
@@ -522,16 +520,13 @@ export async function runCollect(
   }
 
   deps.setOutput("changed", String(operations.length > 0));
+  deps.setOutput("artifact-name", "");
+  deps.setOutput("artifact-path", "");
   if (!converged && !hardFailure) {
-    deps.setOutput("artifact-name", "");
     throw new NonConvergenceError(
       `prek did not converge after ${inputs.maxPasses} passes`,
     );
   }
-  deps.setOutput(
-    "artifact-name",
-    operations.length ? artifactName(context.runId) : "",
-  );
   if (operations.length > 0) {
     await assertRootIdentity(workspace, workspaceIdentity);
     await assertRootIdentity(artifactRoot, artifactRootIdentity);
@@ -568,11 +563,8 @@ export async function runCollect(
       deps.execute,
       childEnv,
     );
-    await deps.artifact.uploadArtifact(
-      artifactName(context.runId),
-      [file],
-      dirname(file),
-    );
+    deps.setOutput("artifact-name", artifactName(context.runId));
+    deps.setOutput("artifact-path", file);
   }
   if (hardFailure) throw hardFailure;
 }

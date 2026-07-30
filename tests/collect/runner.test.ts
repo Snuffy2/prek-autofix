@@ -65,11 +65,6 @@ async function invoke(
           ? result(0, " M dirty\0")
           : execute(command, args, options)
     : execute;
-  const uploadArtifact = vi.fn(async () => ({
-    id: 1,
-    size: 10,
-    digest: "digest",
-  }));
   const outputs = new Map<string, string>();
   let inspection = 0;
   const collectChanges = vi.fn(async () =>
@@ -100,7 +95,6 @@ async function invoke(
     },
     {
       execute: wrapped,
-      artifact: { uploadArtifact },
       env: {
         PATH: process.env.PATH,
         PREK_AUTOFIX_TOKEN: "do-not-leak",
@@ -117,7 +111,7 @@ async function invoke(
       collectChanges,
     },
   );
-  return { promise, uploadArtifact, outputs, workspace, collectChanges };
+  return { promise, outputs, workspace, collectChanges };
 }
 
 afterEach(async () => {
@@ -153,7 +147,8 @@ describe("runCollect", () => {
       }),
     );
     expect(call.outputs.get("changed")).toBe("false");
-    expect(call.uploadArtifact).not.toHaveBeenCalled();
+    expect(call.outputs.get("artifact-name")).toBe("");
+    expect(call.outputs.get("artifact-path")).toBe("");
   });
 
   it("rejects an initially dirty checkout before running prek", async () => {
@@ -171,17 +166,21 @@ describe("runCollect", () => {
     const call = await invoke(setup([result(2)]));
     await expect(call.promise).rejects.toBeInstanceOf(HardFailureError);
     expectSecretsExcluded();
-    expect(call.uploadArtifact).not.toHaveBeenCalled();
+    expect(call.outputs.get("artifact-name")).toBe("");
+    expect(call.outputs.get("artifact-path")).toBe("");
   });
 
-  it("uploads stable fixes even when prek still reports a hard failure", async () => {
+  it("persists stable fixes even when prek still reports a hard failure", async () => {
     const call = await invoke(setup([result(1), result(1)]), 3, false, [
       ["a"],
       ["a"],
     ]);
     await expect(call.promise).rejects.toBeInstanceOf(HardFailureError);
     expectSecretsExcluded();
-    expect(call.uploadArtifact).toHaveBeenCalledOnce();
+    expect(call.outputs.get("artifact-name")).toBe("prek-autofix-42");
+    expect(call.outputs.get("artifact-path")).toMatch(
+      /prek-autofix-[^/]+\/prek-autofix\.json$/,
+    );
   });
 
   it("reports nonconvergence when every pass changes the tree", async () => {
@@ -189,8 +188,8 @@ describe("runCollect", () => {
     const call = await invoke(execute, 2, false, [["a"], ["b"]]);
     await expect(call.promise).rejects.toBeInstanceOf(NonConvergenceError);
     expectSecretsExcluded();
-    expect(call.uploadArtifact).not.toHaveBeenCalled();
     expect(call.outputs.get("artifact-name")).toBe("");
+    expect(call.outputs.get("artifact-path")).toBe("");
   });
 
   it("requires a successful fix snapshot to stabilize", async () => {
@@ -201,7 +200,9 @@ describe("runCollect", () => {
 
     await expect(call.promise).resolves.toBeUndefined();
     expect(call.collectChanges).toHaveBeenCalledTimes(2);
-    expect(call.uploadArtifact).toHaveBeenCalledOnce();
+    expect(call.outputs.get("artifact-path")).toMatch(
+      /prek-autofix-[^/]+\/prek-autofix\.json$/,
+    );
   });
 
   it("rejects ever-changing successful fix snapshots", async () => {
@@ -212,8 +213,8 @@ describe("runCollect", () => {
 
     await expect(call.promise).rejects.toBeInstanceOf(NonConvergenceError);
     expect(call.collectChanges).toHaveBeenCalledTimes(2);
-    expect(call.uploadArtifact).not.toHaveBeenCalled();
     expect(call.outputs.get("artifact-name")).toBe("");
+    expect(call.outputs.get("artifact-path")).toBe("");
   });
 
   it("stops before change collection when a hook changes HEAD", async () => {
@@ -233,7 +234,7 @@ describe("runCollect", () => {
       "checkout HEAD does not match pull request head SHA",
     );
     expect(call.collectChanges).not.toHaveBeenCalled();
-    expect(call.uploadArtifact).not.toHaveBeenCalled();
+    expect(call.outputs).toEqual(new Map());
   });
 
   it("stops when the workspace pathname is substituted after a hook", async () => {
@@ -259,25 +260,18 @@ describe("runCollect", () => {
       "workspace identity changed while hooks were running",
     );
     expect(substituted).toBe(true);
-    expect(call.uploadArtifact).not.toHaveBeenCalled();
+    expect(call.outputs).toEqual(new Map());
   });
 
-  it("uploads converged fixes and reports them through outputs", async () => {
+  it("persists converged fixes and reports them through outputs", async () => {
     const execute = setup([result(1), result(0)]);
     const call = await invoke(execute, 3, false, [["a"], ["a"]]);
     await expect(call.promise).resolves.toBeUndefined();
-    expect(call.outputs).toEqual(
-      new Map([
-        ["changed", "true"],
-        ["artifact-name", "prek-autofix-42"],
-      ]),
-    );
-    expect(call.uploadArtifact).toHaveBeenCalledOnce();
-    const uploadCall = call.uploadArtifact.mock.calls[0] as
-      [string, string[]] | undefined;
-    const uploadedFile = uploadCall?.[1][0];
-    expect(uploadedFile).toBeDefined();
-    const artifact = JSON.parse(await readFile(uploadedFile!, "utf8"));
+    expect(call.outputs.get("changed")).toBe("true");
+    expect(call.outputs.get("artifact-name")).toBe("prek-autofix-42");
+    const artifactPath = call.outputs.get("artifact-path");
+    expect(artifactPath).toMatch(/prek-autofix-[^/]+\/prek-autofix\.json$/);
+    const artifact = JSON.parse(await readFile(artifactPath!, "utf8"));
     expect(artifact.source).toMatchObject({
       runId: 42,
       pullRequestNumber: 7,
@@ -286,7 +280,7 @@ describe("runCollect", () => {
     expect(JSON.stringify(artifact)).not.toContain("do-not-leak");
   });
 
-  it("rejects workflow changes before uploading an artifact", async () => {
+  it("rejects workflow changes before persisting an artifact", async () => {
     const call = await invoke(setup([result(0), result(0)]), 3, false, [
       [".github/workflows/unsafe.yml"],
       [".github/workflows/unsafe.yml"],
@@ -295,7 +289,8 @@ describe("runCollect", () => {
     await expect(call.promise).rejects.toThrow(
       "workflow files cannot be applied automatically: .github/workflows/unsafe.yml",
     );
-    expect(call.uploadArtifact).not.toHaveBeenCalled();
+    expect(call.outputs.get("artifact-name")).toBe("");
+    expect(call.outputs.get("artifact-path")).toBe("");
   });
 
   it("allows only required hook runtime and cache environment variables", () => {
