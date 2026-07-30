@@ -1,0 +1,2 @@
+scenario: mixed
+nested: {enabled: true, items: [one,two,three]}
