@@ -1,1 +1,4 @@
-{"purpose":"exercise prettier","nested":{"enabled":true,"items":[1,2,3]}}
+{
+  "purpose": "exercise prettier",
+  "nested": { "enabled": true, "items": [1, 2, 3] }
+}
