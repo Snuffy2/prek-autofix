@@ -30,6 +30,10 @@ describe("repository maintenance workflows", () => {
       "persist-credentials": false,
     });
     expect(collect.jobs.collect.steps[1]).toMatchObject({
+      name: "Install locked action dependencies",
+      run: "npm ci --ignore-scripts",
+    });
+    expect(collect.jobs.collect.steps[2]).toMatchObject({
       id: "collect",
       uses: "./collect",
     });
