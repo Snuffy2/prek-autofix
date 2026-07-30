@@ -1,0 +1,2 @@
+This line intentionally has trailing spaces.   
+This file exists only for the disposable autofix demonstration.    
