@@ -38,11 +38,15 @@ describe("artifact contract", () => {
     expect(artifactName(42, 3)).toBe("prek-autofix-42-3");
   });
 
-  it("requires a positive source run attempt", () => {
+  it.each([
+    ["missing", undefined],
+    ["zero", 0],
+    ["fractional", 1.5],
+  ])("rejects a %s source run attempt", (_name, runAttempt) => {
     expect(() =>
       parseChangeArtifact({
         ...validArtifact,
-        source: { ...validArtifact.source, runAttempt: 0 },
+        source: { ...validArtifact.source, runAttempt },
       }),
     ).toThrow("source runAttempt must be a positive integer");
   });

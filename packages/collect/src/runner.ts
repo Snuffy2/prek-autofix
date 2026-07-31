@@ -381,6 +381,9 @@ function validateContext(
   pullRequestNumber: number;
   headSha: string;
 } {
+  if (!Number.isSafeInteger(context.runAttempt) || context.runAttempt <= 0) {
+    throw new Error("runAttempt must be a positive integer");
+  }
   if (
     context.eventName !== "pull_request" ||
     !Number.isSafeInteger(context.pullRequestNumber) ||

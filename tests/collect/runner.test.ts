@@ -56,6 +56,7 @@ async function invoke(
   initialStatus = false,
   changes: string[][] = [[]],
   platform: NodeJS.Platform = "linux",
+  runAttempt = 3,
 ) {
   const workspace = await mkdtemp(join(tmpdir(), "collect-runner-"));
   directories.push(workspace);
@@ -79,7 +80,7 @@ async function invoke(
     {
       eventName: "pull_request",
       runId: 42,
-      runAttempt: 3,
+      runAttempt,
       repository: "owner/repo",
       workflow: "prek-autofix",
       pullRequestNumber: 7,
@@ -125,6 +126,19 @@ afterEach(async () => {
 });
 
 describe("runCollect", () => {
+  it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+    "rejects invalid run attempt %s before executing commands",
+    async (runAttempt) => {
+      const execute = setup([result(0)]);
+      const call = await invoke(execute, 3, false, [[]], "linux", runAttempt);
+
+      await expect(call.promise).rejects.toThrow(
+        "runAttempt must be a positive integer",
+      );
+      expect(execute).not.toHaveBeenCalled();
+    },
+  );
+
   it("fails closed on unsupported runner platforms", async () => {
     const execute = setup([result(0)]);
     const call = await invoke(execute, 3, false, [[]], "darwin");
