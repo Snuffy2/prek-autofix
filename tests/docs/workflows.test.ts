@@ -83,9 +83,6 @@ describe("public workflow documentation", () => {
     expect(fix.steps).toEqual([
       {
         uses: "Snuffy2/prek-autofix/fix@v1",
-        env: {
-          GITHUB_TOKEN: "${{ github.token }}",
-        },
         with: {
           "autofix-token": "${{ secrets.PREK_AUTOFIX_TOKEN }}",
           "source-workflow": "prek-autofix",

@@ -249,6 +249,10 @@ describe("action metadata", () => {
       using: "node24",
       main: "../dist/apply/index.js",
     });
+    expect(action.inputs["github-token"]).toMatchObject({
+      required: false,
+      default: "${{ github.token }}",
+    });
     expect(action.inputs["autofix-token"].required).toBe(true);
     expect(action.inputs["commit-message"].default).toBe(
       "[prek-autofix] apply automatic fixes",
@@ -258,6 +262,10 @@ describe("action metadata", () => {
     expect(action.inputs["max-bytes"].default).toBe("10485760");
 
     const source = await readFile("packages/apply/src/index.ts", "utf8");
+    expect(source).toContain(
+      'core.getInput("github-token", { required: true })',
+    );
+    expect(source).not.toContain("process.env.GITHUB_TOKEN");
     expect(source).not.toMatch(/child_process|spawn\(|exec\(|checkout/);
     expect(source).not.toMatch(/["']git["']/);
   });

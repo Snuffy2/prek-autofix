@@ -39,8 +39,8 @@ async function run(): Promise<void> {
     ? [github.context.repo.owner, github.context.repo.repo]
     : ["", ""];
   const baseRepository = `${owner}/${repo}`;
-  const githubToken = process.env.GITHUB_TOKEN;
-  if (!githubToken) throw new Error("GITHUB_TOKEN is required");
+  const githubToken = core.getInput("github-token", { required: true });
+  core.setSecret(githubToken);
   const maxFiles = nonnegativeInput("max-files", DEFAULT_MAX_FILES);
   const maxBytes = nonnegativeInput("max-bytes", DEFAULT_MAX_BYTES);
   const sourceWorkflow = core.getInput("source-workflow") || "prek-autofix";
