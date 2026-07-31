@@ -20,10 +20,10 @@ describe("apply artifact lookup", () => {
     };
 
     await expect(
-      getArtifactIfPresent(client, 7, "base", "repo", "token"),
+      getArtifactIfPresent(client, 7, 3, "base", "repo", "token"),
     ).resolves.toBeUndefined();
     expect(core.info).toHaveBeenCalledWith(
-      "No prek-autofix-7 artifact was produced; nothing to apply.",
+      "No prek-autofix-7-3 artifact was produced; nothing to apply.",
     );
   });
 
@@ -35,7 +35,7 @@ describe("apply artifact lookup", () => {
     };
 
     await expect(
-      getArtifactIfPresent(client, 7, "base", "repo", "token"),
+      getArtifactIfPresent(client, 7, 3, "base", "repo", "token"),
     ).resolves.toBeUndefined();
   });
 
@@ -46,7 +46,7 @@ describe("apply artifact lookup", () => {
     };
 
     await expect(
-      getArtifactIfPresent(client, 7, "base", "repo", "token"),
+      getArtifactIfPresent(client, 7, 3, "base", "repo", "token"),
     ).rejects.toBe(error);
     expect(core.info).not.toHaveBeenCalled();
   });
@@ -55,7 +55,7 @@ describe("apply artifact lookup", () => {
     const lookup = {
       artifact: {
         id: 42,
-        name: "prek-autofix-7",
+        name: "prek-autofix-7-3",
         size: 100,
         digest: "sha256:digest",
         createdAt: new Date(),
@@ -66,9 +66,9 @@ describe("apply artifact lookup", () => {
     };
 
     await expect(
-      getArtifactIfPresent(client, 7, "base", "repo", "token"),
+      getArtifactIfPresent(client, 7, 3, "base", "repo", "token"),
     ).resolves.toBe(lookup);
-    expect(client.getArtifact).toHaveBeenCalledWith("prek-autofix-7", {
+    expect(client.getArtifact).toHaveBeenCalledWith("prek-autofix-7-3", {
       findBy: {
         token: "token",
         workflowRunId: 7,

@@ -16,12 +16,13 @@ interface ArtifactLookupClient {
 export async function getArtifactIfPresent(
   artifactClient: ArtifactLookupClient,
   runId: number,
+  runAttempt: number,
   owner: string,
   repo: string,
   githubToken: string,
 ): Promise<GetArtifactResponse | undefined> {
   try {
-    return await artifactClient.getArtifact(artifactName(runId), {
+    return await artifactClient.getArtifact(artifactName(runId, runAttempt), {
       findBy: {
         token: githubToken,
         workflowRunId: runId,
@@ -35,7 +36,7 @@ export async function getArtifactIfPresent(
       (error instanceof Error && error.name === "ArtifactNotFoundError")
     ) {
       core.info(
-        `No ${artifactName(runId)} artifact was produced; nothing to apply.`,
+        `No ${artifactName(runId, runAttempt)} artifact was produced; nothing to apply.`,
       );
       return undefined;
     }

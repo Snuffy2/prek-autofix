@@ -79,6 +79,7 @@ async function invoke(
     {
       eventName: "pull_request",
       runId: 42,
+      runAttempt: 3,
       repository: "owner/repo",
       workflow: "prek-autofix",
       pullRequestNumber: 7,
@@ -177,7 +178,7 @@ describe("runCollect", () => {
     ]);
     await expect(call.promise).resolves.toBeUndefined();
     expectSecretsExcluded();
-    expect(call.outputs.get("artifact-name")).toBe("prek-autofix-42");
+    expect(call.outputs.get("artifact-name")).toBe("prek-autofix-42-3");
     expect(call.outputs.get("artifact-path")).toMatch(
       /prek-autofix-[^/]+\/prek-autofix\.json$/,
     );
@@ -268,12 +269,13 @@ describe("runCollect", () => {
     const call = await invoke(execute, 3, false, [["a"], ["a"]]);
     await expect(call.promise).resolves.toBeUndefined();
     expect(call.outputs.get("changed")).toBe("true");
-    expect(call.outputs.get("artifact-name")).toBe("prek-autofix-42");
+    expect(call.outputs.get("artifact-name")).toBe("prek-autofix-42-3");
     const artifactPath = call.outputs.get("artifact-path");
     expect(artifactPath).toMatch(/prek-autofix-[^/]+\/prek-autofix\.json$/);
     const artifact = JSON.parse(await readFile(artifactPath!, "utf8"));
     expect(artifact.source).toMatchObject({
       runId: 42,
+      runAttempt: 3,
       pullRequestNumber: 7,
       headSha: SHA,
     });

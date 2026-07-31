@@ -78,34 +78,34 @@ describe("source workflow job eligibility", () => {
     );
   });
 
-  it("loads only the latest run attempt through the read token", async () => {
-    const listJobsForWorkflowRun = vi.fn();
+  it("loads only the requested run attempt through the read token", async () => {
+    const listJobsForWorkflowRunAttempt = vi.fn();
     const paginate = vi.fn().mockResolvedValue(eligibleJobs());
     const octokit = {
-      rest: { actions: { listJobsForWorkflowRun } },
+      rest: { actions: { listJobsForWorkflowRunAttempt } },
       paginate,
     };
 
     await expect(
-      verifySourceJobs(octokit as never, "base", "repo", 7),
+      verifySourceJobs(octokit as never, "base", "repo", 7, 3),
     ).resolves.toBeUndefined();
-    expect(paginate).toHaveBeenCalledWith(listJobsForWorkflowRun, {
+    expect(paginate).toHaveBeenCalledWith(listJobsForWorkflowRunAttempt, {
       owner: "base",
       repo: "repo",
       run_id: 7,
-      filter: "latest",
+      attempt_number: 3,
       per_page: 100,
     });
   });
 
   it("rejects a malformed paginate response", async () => {
     const octokit = {
-      rest: { actions: { listJobsForWorkflowRun: vi.fn() } },
+      rest: { actions: { listJobsForWorkflowRunAttempt: vi.fn() } },
       paginate: vi.fn().mockResolvedValue(null),
     };
 
     await expect(
-      verifySourceJobs(octokit as never, "base", "repo", 7),
+      verifySourceJobs(octokit as never, "base", "repo", 7, 3),
     ).rejects.toBeInstanceOf(IneligibleSourceJobsError);
   });
 });

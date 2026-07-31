@@ -15,6 +15,7 @@ const validArtifact = {
   schemaVersion: ARTIFACT_SCHEMA_VERSION,
   source: {
     runId: 42,
+    runAttempt: 3,
     repository: "owner/repository",
     workflow: "prek-autofix",
     event: "pull_request",
@@ -34,7 +35,16 @@ const validArtifact = {
 describe("artifact contract", () => {
   it("parses a valid artifact", () => {
     expect(parseChangeArtifact(validArtifact)).toEqual(validArtifact);
-    expect(artifactName(42)).toBe("prek-autofix-42");
+    expect(artifactName(42, 3)).toBe("prek-autofix-42-3");
+  });
+
+  it("requires a positive source run attempt", () => {
+    expect(() =>
+      parseChangeArtifact({
+        ...validArtifact,
+        source: { ...validArtifact.source, runAttempt: 0 },
+      }),
+    ).toThrow("source runAttempt must be a positive integer");
   });
 
   it.each([

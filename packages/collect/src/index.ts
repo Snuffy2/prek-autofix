@@ -8,6 +8,7 @@ async function main(): Promise<void> {
     {
       eventName: github.context.eventName,
       runId: github.context.runId,
+      runAttempt: github.context.runAttempt,
       repository: `${github.context.repo.owner}/${github.context.repo.repo}`,
       workflow: github.context.workflow,
       pullRequestNumber: payload?.number,

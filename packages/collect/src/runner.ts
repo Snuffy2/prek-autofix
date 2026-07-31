@@ -28,6 +28,7 @@ import {
 export interface CollectContext {
   eventName: string;
   runId: number;
+  runAttempt: number;
   repository: string;
   workflow: string;
   pullRequestNumber?: number;
@@ -542,6 +543,7 @@ export async function runCollect(
       schemaVersion: ARTIFACT_SCHEMA_VERSION,
       source: {
         runId: context.runId,
+        runAttempt: context.runAttempt,
         repository: context.repository,
         workflow: context.workflow,
         event: "pull_request",
@@ -563,7 +565,10 @@ export async function runCollect(
       deps.execute,
       childEnv,
     );
-    deps.setOutput("artifact-name", artifactName(context.runId));
+    deps.setOutput(
+      "artifact-name",
+      artifactName(context.runId, context.runAttempt),
+    );
     deps.setOutput("artifact-path", file);
   }
   if (hardFailure && operations.length === 0) throw hardFailure;

@@ -49,20 +49,21 @@ export function assertEligibleSourceJobs(jobs: unknown): void {
   }
 }
 
-/** Load and verify the latest-attempt jobs for a source workflow run. */
+/** Load and verify the jobs for an exact source workflow run attempt. */
 export async function verifySourceJobs(
   octokit: Octokit,
   owner: string,
   repo: string,
   runId: number,
+  runAttempt: number,
 ): Promise<void> {
   const jobs = await octokit.paginate(
-    octokit.rest.actions.listJobsForWorkflowRun,
+    octokit.rest.actions.listJobsForWorkflowRunAttempt,
     {
       owner,
       repo,
       run_id: runId,
-      filter: "latest",
+      attempt_number: runAttempt,
       per_page: 100,
     },
   );

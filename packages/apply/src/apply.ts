@@ -171,6 +171,7 @@ prek-autofix could not apply the generated changes: **${reason}**
 export interface ApplyRequest {
   baseRepository: string;
   runId: number;
+  runAttempt: number;
   artifact: ChangeArtifact;
   artifactUrl: string;
   sourceRunUrl: string;
@@ -223,6 +224,7 @@ export async function applyArtifact(
   const claims = request.artifact.source;
   if (
     claims.runId !== run.id ||
+    claims.runAttempt !== request.runAttempt ||
     claims.repository !== request.baseRepository ||
     claims.workflow !== run.name ||
     claims.event !== "pull_request" ||
