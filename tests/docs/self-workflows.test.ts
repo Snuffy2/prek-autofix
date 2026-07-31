@@ -73,7 +73,7 @@ describe("repository maintenance workflows", () => {
   });
 
   it("uses the released autoupdate action for repository maintenance", () => {
-    const autoupdate = workflow("prek_autoupdate_self.yml");
+    const autoupdate = workflow("prek_autoupdate.yml");
     const steps = autoupdate.jobs["prek-autoupdate"].steps;
 
     expect(autoupdate.on).toMatchObject({
