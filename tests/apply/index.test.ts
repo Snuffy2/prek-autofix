@@ -7,6 +7,7 @@ import { getArtifactIfPresent } from "../../packages/apply/src/artifact-lookup";
 const mocks = vi.hoisted(() => ({
   artifactClient: vi.fn(),
   setFailed: vi.fn(),
+  verifySourceJobs: vi.fn(),
   context: {
     eventName: "workflow_run",
     payload: {
@@ -42,6 +43,17 @@ vi.mock("@actions/github", () => ({
   context: mocks.context,
   getOctokit: vi.fn(),
 }));
+
+vi.mock("../../packages/apply/src/source-jobs", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("../../packages/apply/src/source-jobs")
+    >();
+  return {
+    ...actual,
+    verifySourceJobs: mocks.verifySourceJobs,
+  };
+});
 
 describe("apply entrypoint validation", () => {
   beforeEach(() => {
@@ -95,6 +107,64 @@ describe("apply entrypoint validation", () => {
       expect(github.getOctokit).not.toHaveBeenCalled();
     },
   );
+
+  it("uses the built-in token for read access and artifact retrieval", async () => {
+    const githubToken = "built-in-token-sentinel";
+    const readOctokit = { rest: {} };
+    const artifactClient = {
+      getArtifact: vi.fn().mockResolvedValue({
+        artifact: {
+          id: 42,
+          name: "prek-autofix-7-3",
+          size: 100,
+          digest: "sha256:digest",
+          createdAt: new Date(),
+        },
+      }),
+      downloadArtifact: vi.fn().mockResolvedValue({}),
+    };
+    vi.mocked(core.getInput).mockImplementation((name) =>
+      name === "github-token" ? githubToken : "",
+    );
+    vi.mocked(github.getOctokit).mockReturnValue(readOctokit as never);
+    mocks.artifactClient.mockImplementation(function ArtifactClient() {
+      return artifactClient;
+    });
+    mocks.verifySourceJobs.mockResolvedValue(undefined);
+
+    await import("../../packages/apply/src/index.js");
+
+    await vi.waitFor(() => {
+      expect(core.setFailed).toHaveBeenCalledWith(
+        "artifact download path is missing",
+      );
+    });
+    expect(core.getInput).toHaveBeenCalledWith("github-token", {
+      required: true,
+    });
+    expect(core.setSecret).toHaveBeenCalledWith(githubToken);
+    expect(github.getOctokit).toHaveBeenCalledWith(githubToken);
+    expect(mocks.verifySourceJobs).toHaveBeenCalledWith(
+      readOctokit,
+      "base",
+      "repo",
+      7,
+      3,
+    );
+    const findBy = {
+      token: githubToken,
+      workflowRunId: 7,
+      repositoryOwner: "base",
+      repositoryName: "repo",
+    };
+    expect(artifactClient.getArtifact).toHaveBeenCalledWith(
+      "prek-autofix-7-3",
+      { findBy },
+    );
+    expect(artifactClient.downloadArtifact).toHaveBeenCalledWith(42, {
+      findBy,
+    });
+  });
 });
 
 describe("apply artifact lookup behavior", () => {
