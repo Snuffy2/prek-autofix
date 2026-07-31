@@ -28,8 +28,6 @@ jobs:
 
       - name: Fix prek issues
         uses: ./fix
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
         with:
           autofix-token: ${{ secrets.PREK_AUTOFIX_TOKEN }}
           source-workflow: prek-autofix

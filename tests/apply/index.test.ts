@@ -52,6 +52,7 @@ describe("apply entrypoint validation", () => {
       id: 7,
       run_attempt: 3,
     };
+    vi.mocked(core.getInput).mockReturnValue("");
   });
 
   it.each([
@@ -80,34 +81,18 @@ describe("apply entrypoint validation", () => {
       message: "workflow_run.run_attempt is required",
     },
   ])(
-    "rejects $name before token access or artifact lookup",
+    "rejects $name before input access or artifact lookup",
     async ({ eventName, runAttempt, message }) => {
       mocks.context.eventName = eventName;
       mocks.context.payload.workflow_run.run_attempt = runAttempt;
-      const originalEnv = process.env;
-      const tokenAccess = vi.fn(
-        (target: NodeJS.ProcessEnv, property: string | symbol) =>
-          Reflect.get(target, property),
-      );
-      process.env = new Proxy(originalEnv, {
-        get(target, property) {
-          if (property === "GITHUB_TOKEN") return tokenAccess(target, property);
-          return Reflect.get(target, property);
-        },
+      await import("../../packages/apply/src/index.js");
+
+      await vi.waitFor(() => {
+        expect(core.setFailed).toHaveBeenCalledWith(message);
       });
-
-      try {
-        await import("../../packages/apply/src/index.js");
-
-        await vi.waitFor(() => {
-          expect(core.setFailed).toHaveBeenCalledWith(message);
-        });
-        expect(tokenAccess).not.toHaveBeenCalled();
-        expect(mocks.artifactClient).not.toHaveBeenCalled();
-        expect(github.getOctokit).not.toHaveBeenCalled();
-      } finally {
-        process.env = originalEnv;
-      }
+      expect(core.getInput).not.toHaveBeenCalled();
+      expect(mocks.artifactClient).not.toHaveBeenCalled();
+      expect(github.getOctokit).not.toHaveBeenCalled();
     },
   );
 });

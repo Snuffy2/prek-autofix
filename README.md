@@ -153,8 +153,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: Snuffy2/prek-autofix/fix@v1
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
         with:
           autofix-token: ${{ secrets.PREK_AUTOFIX_TOKEN }}
           source-workflow: prek-autofix
@@ -221,13 +219,14 @@ For example, replace the `review` step in Stage 1 with:
 
 `fix` accepts these inputs:
 
-| Input             | Default                                | Meaning                                                                       |
-| ----------------- | -------------------------------------- | ----------------------------------------------------------------------------- |
-| `autofix-token`   | Required                               | Classic PAT from an account with repository write access; use only in Stage 2 |
-| `commit-message`  | `[prek-autofix] apply automatic fixes` | Commit message for the generated commit                                       |
-| `source-workflow` | `prek-autofix`                         | Expected review workflow name                                                 |
-| `max-files`       | `100`                                  | Maximum trusted changed files                                                 |
-| `max-bytes`       | `10485760`                             | Maximum trusted total content bytes                                           |
+| Input             | Default                                | Meaning                                                                              |
+| ----------------- | -------------------------------------- | ------------------------------------------------------------------------------------ |
+| `github-token`    | `${{ github.token }}`                  | Built-in read-only token used to validate and download the artifact                  |
+| `autofix-token`   | Required                               | Classic PAT from an account with repository write access; used only after validation |
+| `commit-message`  | `[prek-autofix] apply automatic fixes` | Commit message for the generated commit                                              |
+| `source-workflow` | `prek-autofix`                         | Expected review workflow name                                                        |
+| `max-files`       | `100`                                  | Maximum trusted changed files                                                        |
+| `max-bytes`       | `10485760`                             | Maximum trusted total content bytes                                                  |
 
 To use a different commit message or tighter limits, extend the Stage 2 step:
 

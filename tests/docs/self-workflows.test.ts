@@ -69,6 +69,7 @@ describe("repository maintenance workflows", () => {
       },
     });
     expect(JSON.stringify(steps[0])).not.toContain("PREK_AUTOFIX_TOKEN");
+    expect(JSON.stringify(steps)).not.toContain("GITHUB_TOKEN");
     expect(JSON.stringify(steps).match(/PREK_AUTOFIX_TOKEN/g)).toHaveLength(1);
   });
 });
