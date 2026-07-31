@@ -5,7 +5,8 @@ author: Snuffy2
 inputs:
   github-token:
     description:
-      Read-only workflow token used to validate and download the artifact
+      Workflow token with read-only repository contents access and pull-request
+      comment write access, used to validate and download the artifact
     required: false
     default: ${{ github.token }}
   autofix-token:
