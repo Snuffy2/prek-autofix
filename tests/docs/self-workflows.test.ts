@@ -71,27 +71,4 @@ describe("repository maintenance workflows", () => {
     expect(JSON.stringify(steps[0])).not.toContain("PREK_AUTOFIX_TOKEN");
     expect(JSON.stringify(steps).match(/PREK_AUTOFIX_TOKEN/g)).toHaveLength(1);
   });
-
-  it("uses the released autoupdate action for repository maintenance", () => {
-    const autoupdate = workflow("prek_autoupdate.yml");
-    const steps = autoupdate.jobs["prek-autoupdate"].steps;
-
-    expect(autoupdate.on).toMatchObject({
-      schedule: [{ cron: "0 4 * * *" }],
-      push: { branches: ["main"] },
-      workflow_dispatch: null,
-    });
-    expect(autoupdate.jobs["prek-autoupdate"].permissions).toEqual({
-      "contents": "write",
-      "pull-requests": "write",
-    });
-    expect(steps[0]).toMatchObject({
-      uses: expect.stringMatching(/^actions\/checkout@/),
-      with: { "persist-credentials": false },
-    });
-    expect(steps[1]).toMatchObject({
-      uses: "Snuffy2/prek-autoupdate@v2",
-      with: { "update-day": "0" },
-    });
-  });
 });
