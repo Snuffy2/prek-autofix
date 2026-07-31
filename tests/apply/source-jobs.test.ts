@@ -19,6 +19,35 @@ describe("source workflow job eligibility", () => {
   });
 
   it.each([
+    { name: "null", jobs: null },
+    { name: "an object", jobs: { name: "review", conclusion: "success" } },
+    { name: "a string", jobs: "jobs" },
+  ])("rejects malformed top-level payload: $name", ({ jobs }) => {
+    expect(() => assertEligibleSourceJobs(jobs)).toThrow(
+      IneligibleSourceJobsError,
+    );
+    expect(() => assertEligibleSourceJobs(jobs)).toThrow(
+      "source workflow returned malformed jobs",
+    );
+  });
+
+  it.each([
+    { name: "null job", job: null },
+    { name: "array job", job: [] },
+    { name: "missing name", job: { conclusion: "success" } },
+    { name: "non-string name", job: { name: 1, conclusion: "success" } },
+    { name: "missing conclusion", job: { name: "review" } },
+    { name: "invalid conclusion", job: { name: "review", conclusion: 1 } },
+  ])("rejects malformed job fields: $name", ({ job }) => {
+    expect(() => assertEligibleSourceJobs([job])).toThrow(
+      IneligibleSourceJobsError,
+    );
+    expect(() => assertEligibleSourceJobs([job])).toThrow(
+      "source workflow returned malformed jobs",
+    );
+  });
+
+  it.each([
     {
       name: "review failure",
       mutate: (jobs: ReturnType<typeof eligibleJobs>) => {
@@ -67,5 +96,16 @@ describe("source workflow job eligibility", () => {
       filter: "latest",
       per_page: 100,
     });
+  });
+
+  it("rejects a malformed paginate response", async () => {
+    const octokit = {
+      rest: { actions: { listJobsForWorkflowRun: vi.fn() } },
+      paginate: vi.fn().mockResolvedValue(null),
+    };
+
+    await expect(
+      verifySourceJobs(octokit as never, "base", "repo", 7),
+    ).rejects.toBeInstanceOf(IneligibleSourceJobsError);
   });
 });

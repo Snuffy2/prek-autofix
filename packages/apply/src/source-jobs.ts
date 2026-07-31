@@ -11,13 +11,31 @@ const REVIEW_JOB = "review";
 
 export class IneligibleSourceJobsError extends Error {}
 
+function isSourceJob(value: unknown): value is SourceJob {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    "name" in value &&
+    typeof value.name === "string" &&
+    "conclusion" in value &&
+    (typeof value.conclusion === "string" || value.conclusion === null)
+  );
+}
+
 /**
  * Verify that collection completed successfully.
  *
  * The job result is a reliability boundary: collector or infrastructure
  * failures must never be mistaken for a successful artifact collection.
  */
-export function assertEligibleSourceJobs(jobs: SourceJob[]): void {
+export function assertEligibleSourceJobs(jobs: unknown): void {
+  if (!Array.isArray(jobs) || !jobs.every(isSourceJob)) {
+    throw new IneligibleSourceJobsError(
+      "source workflow returned malformed jobs",
+    );
+  }
+
   const reviewJobs = jobs.filter((job) => job.name === REVIEW_JOB);
   if (reviewJobs.length !== 1) {
     throw new IneligibleSourceJobsError(
@@ -38,7 +56,7 @@ export async function verifySourceJobs(
   repo: string,
   runId: number,
 ): Promise<void> {
-  const jobs = (await octokit.paginate(
+  const jobs = await octokit.paginate(
     octokit.rest.actions.listJobsForWorkflowRun,
     {
       owner,
@@ -47,6 +65,6 @@ export async function verifySourceJobs(
       filter: "latest",
       per_page: 100,
     },
-  )) as SourceJob[];
+  );
   assertEligibleSourceJobs(jobs);
 }
