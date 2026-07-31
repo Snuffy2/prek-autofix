@@ -13,6 +13,7 @@ function fixture() {
     schemaVersion: 1,
     source: {
       runId: 7,
+      runAttempt: 2,
       repository: "base/repo",
       workflow: "prek-autofix",
       event: "pull_request",
@@ -71,6 +72,7 @@ function fixture() {
 const request = (artifact: ChangeArtifact) => ({
   baseRepository: "base/repo",
   runId: 7,
+  runAttempt: 2,
   artifact,
   artifactUrl: "https://example/artifact",
   sourceRunUrl: "https://example/run",
@@ -147,6 +149,7 @@ describe("applyArtifact", () => {
 
   it.each([
     ["runId", 8],
+    ["runAttempt", 3],
     ["repository", "evil/repo"],
     ["workflow", "evil"],
     ["pullRequestNumber", 99],

@@ -1,13 +1,118 @@
 import { ArtifactNotFoundError } from "@actions/artifact";
 import * as core from "@actions/core";
+import * as github from "@actions/github";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getArtifactIfPresent } from "../../packages/apply/src/artifact-lookup";
 
-vi.mock("@actions/core", () => ({
-  info: vi.fn(),
+const mocks = vi.hoisted(() => ({
+  artifactClient: vi.fn(),
+  setFailed: vi.fn(),
+  context: {
+    eventName: "workflow_run",
+    payload: {
+      workflow_run: {
+        id: 7,
+        run_attempt: 3 as number | undefined,
+      },
+    },
+    repo: {
+      owner: "base",
+      repo: "repo",
+    },
+    serverUrl: "https://github.example",
+  },
 }));
 
-describe("apply artifact lookup", () => {
+vi.mock("@actions/artifact", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@actions/artifact")>();
+  return {
+    ...actual,
+    DefaultArtifactClient: mocks.artifactClient,
+  };
+});
+
+vi.mock("@actions/core", () => ({
+  getInput: vi.fn(),
+  info: vi.fn(),
+  setFailed: mocks.setFailed,
+  setSecret: vi.fn(),
+}));
+
+vi.mock("@actions/github", () => ({
+  context: mocks.context,
+  getOctokit: vi.fn(),
+}));
+
+describe("apply entrypoint validation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+    mocks.context.eventName = "workflow_run";
+    mocks.context.payload.workflow_run = {
+      id: 7,
+      run_attempt: 3,
+    };
+  });
+
+  it.each([
+    {
+      name: "a non-workflow_run event",
+      eventName: "pull_request",
+      runAttempt: 3,
+      message: "fix action may only run for workflow_run",
+    },
+    {
+      name: "a missing workflow run attempt",
+      eventName: "workflow_run",
+      runAttempt: undefined,
+      message: "workflow_run.run_attempt is required",
+    },
+    {
+      name: "a zero workflow run attempt",
+      eventName: "workflow_run",
+      runAttempt: 0,
+      message: "workflow_run.run_attempt is required",
+    },
+    {
+      name: "a fractional workflow run attempt",
+      eventName: "workflow_run",
+      runAttempt: 1.5,
+      message: "workflow_run.run_attempt is required",
+    },
+  ])(
+    "rejects $name before token access or artifact lookup",
+    async ({ eventName, runAttempt, message }) => {
+      mocks.context.eventName = eventName;
+      mocks.context.payload.workflow_run.run_attempt = runAttempt;
+      const originalEnv = process.env;
+      const tokenAccess = vi.fn(
+        (target: NodeJS.ProcessEnv, property: string | symbol) =>
+          Reflect.get(target, property),
+      );
+      process.env = new Proxy(originalEnv, {
+        get(target, property) {
+          if (property === "GITHUB_TOKEN") return tokenAccess(target, property);
+          return Reflect.get(target, property);
+        },
+      });
+
+      try {
+        await import("../../packages/apply/src/index.js");
+
+        await vi.waitFor(() => {
+          expect(core.setFailed).toHaveBeenCalledWith(message);
+        });
+        expect(tokenAccess).not.toHaveBeenCalled();
+        expect(mocks.artifactClient).not.toHaveBeenCalled();
+        expect(github.getOctokit).not.toHaveBeenCalled();
+      } finally {
+        process.env = originalEnv;
+      }
+    },
+  );
+});
+
+describe("apply artifact lookup behavior", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -20,10 +125,10 @@ describe("apply artifact lookup", () => {
     };
 
     await expect(
-      getArtifactIfPresent(client, 7, "base", "repo", "token"),
+      getArtifactIfPresent(client, 7, 3, "base", "repo", "token"),
     ).resolves.toBeUndefined();
     expect(core.info).toHaveBeenCalledWith(
-      "No prek-autofix-7 artifact was produced; nothing to apply.",
+      "No prek-autofix-7-3 artifact was produced; nothing to apply.",
     );
   });
 
@@ -35,7 +140,7 @@ describe("apply artifact lookup", () => {
     };
 
     await expect(
-      getArtifactIfPresent(client, 7, "base", "repo", "token"),
+      getArtifactIfPresent(client, 7, 3, "base", "repo", "token"),
     ).resolves.toBeUndefined();
   });
 
@@ -46,7 +151,7 @@ describe("apply artifact lookup", () => {
     };
 
     await expect(
-      getArtifactIfPresent(client, 7, "base", "repo", "token"),
+      getArtifactIfPresent(client, 7, 3, "base", "repo", "token"),
     ).rejects.toBe(error);
     expect(core.info).not.toHaveBeenCalled();
   });
@@ -55,7 +160,7 @@ describe("apply artifact lookup", () => {
     const lookup = {
       artifact: {
         id: 42,
-        name: "prek-autofix-7",
+        name: "prek-autofix-7-3",
         size: 100,
         digest: "sha256:digest",
         createdAt: new Date(),
@@ -66,9 +171,9 @@ describe("apply artifact lookup", () => {
     };
 
     await expect(
-      getArtifactIfPresent(client, 7, "base", "repo", "token"),
+      getArtifactIfPresent(client, 7, 3, "base", "repo", "token"),
     ).resolves.toBe(lookup);
-    expect(client.getArtifact).toHaveBeenCalledWith("prek-autofix-7", {
+    expect(client.getArtifact).toHaveBeenCalledWith("prek-autofix-7-3", {
       findBy: {
         token: "token",
         workflowRunId: 7,

@@ -15,14 +15,10 @@ describe("repository maintenance workflows", () => {
   it("reviews the exact pull request head with the local review action", () => {
     const review = workflow("prek-autofix-review.yml");
     const reviewJob = review.jobs.review;
-    const signalJob = review.jobs.signal;
     const checkout = review.jobs.review.steps[0];
 
     expect(review.name).toBe("prek-autofix");
     expect(review.permissions).toEqual({ contents: "read" });
-    expect(reviewJob.outputs).toEqual({
-      changed: "${{ steps.review.outputs.changed }}",
-    });
     expect(checkout.uses).toMatch(/^actions\/checkout@/);
     expect(checkout.with).toMatchObject({
       "repository": "${{ github.event.pull_request.head.repo.full_name }}",
@@ -37,14 +33,7 @@ describe("repository maintenance workflows", () => {
       id: "review",
       uses: "./review",
     });
-    expect(signalJob.needs).toBe("review");
-    expect(signalJob.if).toBe("needs.review.outputs.changed == 'true'");
-    expect(signalJob.steps).toEqual([
-      {
-        name: "Report pending prek fixes",
-        run: "exit 1",
-      },
-    ]);
+    expect(Object.keys(review.jobs)).toEqual(["review"]);
     expect(JSON.stringify(reviewJob)).not.toContain("PREK_AUTOFIX_TOKEN");
   });
 
@@ -58,7 +47,7 @@ describe("repository maintenance workflows", () => {
       types: ["completed"],
     });
     expect(fixWorkflow.jobs.fix.if).toBe(
-      "github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'failure'",
+      "github.event.workflow_run.event == 'pull_request'",
     );
     expect(fixWorkflow.permissions).toEqual({
       "actions": "read",

@@ -39,6 +39,7 @@ const artifact: ChangeArtifact = {
   schemaVersion: ARTIFACT_SCHEMA_VERSION,
   source: {
     runId: 1,
+    runAttempt: 1,
     repository: "owner/repo",
     workflow: "test",
     event: "pull_request",

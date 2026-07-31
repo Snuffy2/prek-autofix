@@ -23,6 +23,7 @@ export interface FileOperation {
 
 export interface ArtifactSource {
   runId: number;
+  runAttempt: number;
   repository: string;
   workflow: string;
   event: "pull_request";
@@ -99,11 +100,23 @@ function parseSource(value: unknown): ArtifactSource {
     throw new ArtifactValidationError("artifact source must be an object");
   }
 
-  const { runId, repository, workflow, event, pullRequestNumber, headSha } =
-    value;
+  const {
+    runId,
+    runAttempt,
+    repository,
+    workflow,
+    event,
+    pullRequestNumber,
+    headSha,
+  } = value;
   if (!Number.isSafeInteger(runId) || (runId as number) <= 0) {
     throw new ArtifactValidationError(
       "source runId must be a positive integer",
+    );
+  }
+  if (!Number.isSafeInteger(runAttempt) || (runAttempt as number) <= 0) {
+    throw new ArtifactValidationError(
+      "source runAttempt must be a positive integer",
     );
   }
   if (
@@ -141,6 +154,7 @@ function parseSource(value: unknown): ArtifactSource {
 
   return {
     runId: runId as number,
+    runAttempt: runAttempt as number,
     repository,
     workflow,
     event,
@@ -274,6 +288,6 @@ export function parseChangeArtifact(
   };
 }
 
-export function artifactName(runId: number): string {
-  return `prek-autofix-${runId}`;
+export function artifactName(runId: number, runAttempt: number): string {
+  return `prek-autofix-${runId}-${runAttempt}`;
 }

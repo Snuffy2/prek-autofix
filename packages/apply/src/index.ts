@@ -31,6 +31,10 @@ async function run(): Promise<void> {
   if (!Number.isSafeInteger(runId) || runId <= 0) {
     throw new Error("workflow_run.id is required");
   }
+  const runAttempt = Number(github.context.payload.workflow_run?.run_attempt);
+  if (!Number.isSafeInteger(runAttempt) || runAttempt <= 0) {
+    throw new Error("workflow_run.run_attempt is required");
+  }
   const [owner, repo] = github.context.repo.owner
     ? [github.context.repo.owner, github.context.repo.repo]
     : ["", ""];
@@ -48,13 +52,14 @@ async function run(): Promise<void> {
   const lookup = await getArtifactIfPresent(
     artifactClient,
     runId,
+    runAttempt,
     owner,
     repo,
     githubToken,
   );
   if (!lookup) return;
   try {
-    await verifySourceJobs(readOctokit, owner, repo, runId);
+    await verifySourceJobs(readOctokit, owner, repo, runId, runAttempt);
   } catch (error) {
     if (!(error instanceof IneligibleSourceJobsError)) throw error;
     core.info(`${error.message}; nothing to fix.`);
@@ -87,6 +92,7 @@ async function run(): Promise<void> {
   await applyArtifact(read, mutation, {
     baseRepository,
     runId,
+    runAttempt,
     artifact,
     artifactUrl: `${github.context.serverUrl}/${baseRepository}/actions/runs/${runId}/artifacts/${lookup.artifact.id}`,
     sourceRunUrl: `${github.context.serverUrl}/${baseRepository}/actions/runs/${runId}`,

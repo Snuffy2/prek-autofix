@@ -15,8 +15,6 @@ jobs:
   review:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    outputs:
-      changed: ${{ steps.review.outputs.changed }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -27,11 +25,3 @@ jobs:
 
       - id: review
         uses: Snuffy2/prek-autofix/review@v1
-
-  signal:
-    needs: review
-    if: needs.review.outputs.changed == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Report pending prek fixes
-        run: exit 1

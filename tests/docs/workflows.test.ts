@@ -53,24 +53,11 @@ describe("public workflow documentation", () => {
       "ref": "${{ github.event.pull_request.head.sha }}",
       "persist-credentials": false,
     });
-    expect(workflow.jobs.review.outputs).toEqual({
-      changed: "${{ steps.review.outputs.changed }}",
-    });
     expect(workflow.jobs.review.steps[1]).toMatchObject({
       id: "review",
       uses: "Snuffy2/prek-autofix/review@v1",
     });
-    expect(workflow.jobs.signal).toEqual({
-      "needs": "review",
-      "if": "needs.review.outputs.changed == 'true'",
-      "runs-on": "ubuntu-latest",
-      "steps": [
-        {
-          name: "Report pending prek fixes",
-          run: "exit 1",
-        },
-      ],
-    });
+    expect(Object.keys(workflow.jobs)).toEqual(["review"]);
     expect(workflow.jobs.review["timeout-minutes"]).toBe(15);
   });
 
@@ -92,6 +79,7 @@ describe("public workflow documentation", () => {
         "prek-autofix-fix-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}",
       "cancel-in-progress": false,
     });
+    expect(fix.if).toBe("github.event.workflow_run.event == 'pull_request'");
     expect(fix.steps).toEqual([
       {
         uses: "Snuffy2/prek-autofix/fix@v1",
