@@ -17,8 +17,10 @@ code.
    with only `contents: read`.
 2. **`prek-autofix fix`** runs on `workflow_run` from the base repository's
    default branch. It never checks out or runs pull-request code. It checks the
-   artifact and the pull request's current head, then uses a bot personal access
-   token (PAT) only for the GitHub update.
+   artifact and the pull request's current head, then uses the required
+   `autofix-token` input only for the GitHub update. A configured personal
+   access token (PAT) is always preferred. When that input resolves empty, the
+   Action falls back to `GITHUB_TOKEN` for a same-repository pull request.
 
 Hooks are code supplied by the pull request, so they must never receive a token
 that can update the branch.
@@ -31,10 +33,16 @@ that can update the branch.
 
 ## Quick start
 
-### 1. Create the personal access token
+### 1. Create the cross-repository token when needed
 
-Create a classic personal access token (PAT) from a GitHub account that already
-has write access to the base repository:
+Skip this step if every pull request has its base and head branch in the same
+repository and the fix workflow grants `contents: write`. This includes a pull
+request opened inside a fork from one branch of that fork to another. When the
+secret is absent, the Action uses the fork's built-in `GITHUB_TOKEN` for that
+update.
+
+To update a pull-request branch in a different repository, create a classic PAT
+from a GitHub account that already has write access to the base repository:
 
 | Repository visibility | Minimum classic PAT scope |
 | --------------------- | ------------------------- |
@@ -55,8 +63,14 @@ has write access to the base repository:
 Do not put the PAT in a workflow file, configuration file, or the Stage 1
 environment. Workflow-file changes are reported but never applied automatically.
 
-The token is needed because commits made with `GITHUB_TOKEN` do not reliably
-start the fresh checks that confirm the resulting branch is clean.
+The PAT is also useful for same-repository pull requests when the existing fix
+workflow grants only `contents: read`, or when you want the fix commit's fresh
+checks to start without intervention. GitHub creates an approval-required
+`pull_request` run when `GITHUB_TOKEN` updates a pull request; a user with write
+access must approve that run. The workflow keeps the `autofix-token` action
+input required and continues to pass `PREK_AUTOFIX_TOKEN`. The Action uses a
+nonempty value regardless of workflow content permissions and falls back to
+`github.token` internally only when the secret resolves empty.
 
 ### 2. Add the review workflow
 
@@ -139,7 +153,7 @@ on:
 
 permissions:
   actions: read
-  contents: read
+  contents: write
   pull-requests: write
 
 concurrency:
@@ -163,6 +177,12 @@ jobs:
 Keep this workflow on the default branch. A `workflow_run` workflow uses the
 base repository's trusted workflow definition even when the pull request comes
 from a fork. Do not add `actions/checkout` or `git` commands to this workflow.
+Changing `contents: read` to `contents: write` is the only workflow migration
+needed for the fallback. The existing `autofix-token` line does not change. A
+configured PAT is always used; otherwise, `contents: write` lets the fallback
+`GITHUB_TOKEN` update a branch in the same repository. The built-in token cannot
+update a head branch in another repository, so that case requires
+`PREK_AUTOFIX_TOKEN`.
 
 The complete, tested versions are also available as
 [`examples/prek-autofix-review.yml`](examples/prek-autofix-review.yml) and
@@ -171,21 +191,24 @@ snippets are tested against those canonical files.
 
 ## What to expect
 
-| Situation                                                                                         | Result                                                                                                      |
-| ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| Same-repository pull request with changes                                                         | Review uploads the changes, then the fix workflow adds one fix commit and that commit starts a fresh check. |
-| User-owned fork with **Allow edits from maintainers** enabled                                     | The Action attempts the same non-force update.                                                              |
-| Fork without maintainer edits                                                                     | Review still runs. Fix leaves one persistent PR comment with the reason, artifact link, and recovery steps. |
-| Protected branch or denied update                                                                 | No force push or bypass. The persistent PR comment explains the denial and recovery.                        |
-| Hook fails but changes no files                                                                   | No commit is created; fix the hook failure normally.                                                        |
-| Hook leaves stable fixes but other findings remain                                                | The Action applies the stable fixes. The generated commit's new review run reports the remaining findings.  |
-| Hooks do not converge within `max-passes`                                                         | No commit is created; resolve the interacting hooks or increase the limit deliberately.                     |
-| Stale source SHA, closed PR, wrong event, unsafe path, symlink/submodule, or workflow-file change | Fix rejects the change without updating the branch.                                                         |
+| Situation                                                                                         | Result                                                                                                                                 |
+| ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Same-repository pull request without `PREK_AUTOFIX_TOKEN`                                         | Fix uses `GITHUB_TOKEN`; the generated commit's fresh review waits for approval from a user with write access.                         |
+| Same-repository pull request with `PREK_AUTOFIX_TOKEN`                                            | Fix uses the PAT, and the generated commit starts a fresh review without the `GITHUB_TOKEN` approval step.                             |
+| User-owned fork with **Allow edits from maintainers** and `PREK_AUTOFIX_TOKEN`                    | The Action attempts the same non-force update using the PAT.                                                                           |
+| Cross-repository pull request without `PREK_AUTOFIX_TOKEN`                                        | Fix leaves one persistent PR comment explaining that a token with access to the head repository is required.                           |
+| Fork without maintainer edits                                                                     | Review still runs. Fix leaves one persistent PR comment with the reason, artifact link, and recovery steps.                            |
+| Protected branch or denied update                                                                 | No force push or bypass. The persistent PR comment explains the denial and recovery.                                                   |
+| Hook fails but changes no files                                                                   | No commit is created; fix the hook failure normally.                                                                                   |
+| Hook leaves stable fixes but other findings remain                                                | The Action applies the stable fixes. The generated commit's new review run reports the remaining findings after any required approval. |
+| Hooks do not converge within `max-passes`                                                         | No commit is created; resolve the interacting hooks or increase the limit deliberately.                                                |
+| Stale source SHA, closed PR, wrong event, unsafe path, symlink/submodule, or workflow-file change | Fix rejects the change without updating the branch.                                                                                    |
 
-The initial review succeeds after it uploads validated changes. The PAT-authored
+The initial review succeeds after it uploads validated changes. The generated
 commit starts a new `pull_request` run, which reports any remaining findings.
-This Action never submits an approving review, so normal approval and protection
-rules are unaffected.
+When the commit uses `GITHUB_TOKEN`, GitHub requires a user with write access to
+approve that run. This Action never submits an approving review, so normal
+approval and protection rules are unaffected.
 
 ## Configuration
 
@@ -219,14 +242,14 @@ For example, replace the `review` step in Stage 1 with:
 
 `fix` accepts these inputs:
 
-| Input             | Default                                | Meaning                                                                                                                                    |
-| ----------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `github-token`    | `${{ github.token }}`                  | Built-in token with read-only repository contents access and pull-request comment write access; used to validate and download the artifact |
-| `autofix-token`   | Required                               | Classic PAT from an account with repository write access; used only after validation                                                       |
-| `commit-message`  | `[prek-autofix] apply automatic fixes` | Commit message for the generated commit                                                                                                    |
-| `source-workflow` | `prek-autofix`                         | Expected review workflow name                                                                                                              |
-| `max-files`       | `100`                                  | Maximum trusted changed files                                                                                                              |
-| `max-bytes`       | `10485760`                             | Maximum trusted total content bytes                                                                                                        |
+| Input             | Default                                | Meaning                                                                                                                                                      |
+| ----------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `github-token`    | `${{ github.token }}`                  | Built-in token used to validate the source run, download the artifact, and manage recovery comments                                                          |
+| `autofix-token`   | Required                               | Mutation-token input used only after validation; a nonempty value is always used, while an empty value falls back to `github.token` for a same-repository PR |
+| `commit-message`  | `[prek-autofix] apply automatic fixes` | Commit message for the generated commit                                                                                                                      |
+| `source-workflow` | `prek-autofix`                         | Expected review workflow name                                                                                                                                |
+| `max-files`       | `100`                                  | Maximum trusted changed files                                                                                                                                |
+| `max-bytes`       | `10485760`                             | Maximum trusted total content bytes                                                                                                                          |
 
 To use a different commit message or tighter limits, extend the Stage 2 step:
 
@@ -261,24 +284,27 @@ changes only when exactly one review job succeeded and the run contains the
 expected artifact. It independently finds the open pull request and its current
 head from GitHub rather than trusting artifact-supplied target metadata or file
 content. It rejects stale or unsafe input, limits file count and content size,
-excludes `.github/workflows/**`, and uses the PAT only for the validated Git
-Data API update.
+excludes `.github/workflows/**`, and uses the selected autofix token only for
+the validated Git Data API update. The built-in token is rejected for a
+cross-repository update before any branch mutation is attempted.
 
 The final branch update is atomic: if the contributor pushed a new commit,
 application stops instead of overwriting it. Stage 2 does not check out
-pull-request code, invoke `git`, or run hooks. Its separate `GITHUB_TOKEN` is
-used only for reads and PR comments with the permissions shown above.
+pull-request code, invoke `git`, or run hooks. Its `github-token` input is used
+for reads and PR comments. When the required `autofix-token` input resolves
+empty, the Action may also select that built-in token internally for a validated
+same-repository update.
 
 ## Troubleshooting and recovery
 
-| Symptom                                            | Check and recovery                                                                                                                                                                                                                                    |
-| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| No fix run or no artifact                          | Confirm both YAML files are on the default branch, the Stage 1 name is exactly `prek-autofix`, and the review log shows an artifact. Correct the configuration, then re-run Stage 1.                                                                  |
-| `Resource not accessible` or token failure         | Confirm the secret name is exactly `PREK_AUTOFIX_TOKEN`, the account that created the PAT has repository write access, and the token's classic scope is `public_repo` (public) or `repo` (private). Never add the PAT to Stage 1 to work around this. |
-| Fork update denied                                 | Ask the contributor to enable **Allow edits from maintainers**. They can also download the linked artifact and apply the changes themselves.                                                                                                          |
-| Branch protection blocks the update                | Apply the artifact manually. Do not weaken protection or force-push for autofixes.                                                                                                                                                                    |
-| First-time contributor workflow waits for approval | A maintainer must approve the initial `pull_request` workflow run in GitHub's Actions UI. No artifact exists until that read-only run is approved and completes.                                                                                      |
-| Check keeps failing after the fix commit           | Read the new Stage 1 log. Remaining findings without stable fixes, or non-converging hooks, need a normal fix.                                                                                                                                        |
+| Symptom                                            | Check and recovery                                                                                                                                                                                                                                                                              |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No fix run or no artifact                          | Confirm both YAML files are on the default branch, the Stage 1 name is exactly `prek-autofix`, and the review log shows an artifact. Correct the configuration, then re-run Stage 1.                                                                                                            |
+| `Resource not accessible` or token failure         | For a same-repository PR, confirm Stage 2 grants `contents: write`. For a cross-repository PR, confirm the secret is named `PREK_AUTOFIX_TOKEN`, its account can update the head repository, and its classic scope is `public_repo` (public) or `repo` (private). Never add the PAT to Stage 1. |
+| Fork update denied                                 | Ask the contributor to enable **Allow edits from maintainers**. They can also download the linked artifact and apply the changes themselves.                                                                                                                                                    |
+| Branch protection blocks the update                | Apply the artifact manually. Do not weaken protection or force-push for autofixes.                                                                                                                                                                                                              |
+| First-time contributor workflow waits for approval | A maintainer must approve the initial `pull_request` workflow run in GitHub's Actions UI. No artifact exists until that read-only run is approved and completes.                                                                                                                                |
+| Check keeps failing after the fix commit           | Read the new Stage 1 log. Remaining findings without stable fixes, or non-converging hooks, need a normal fix.                                                                                                                                                                                  |
 
 ## Pinning and upgrades
 

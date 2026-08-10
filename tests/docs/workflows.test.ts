@@ -71,7 +71,7 @@ describe("public workflow documentation", () => {
     });
     expect(workflow.permissions).toEqual({
       "actions": "read",
-      "contents": "read",
+      "contents": "write",
       "pull-requests": "write",
     });
     expect(workflow.concurrency).toEqual({

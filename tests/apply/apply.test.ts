@@ -78,6 +78,7 @@ const request = (artifact: ChangeArtifact) => ({
   sourceRunUrl: "https://example/run",
   sourceWorkflow: "prek-autofix",
   commitMessage: "fix",
+  mutationTokenIsBuiltIn: false,
 });
 
 describe("applyArtifact", () => {
@@ -250,9 +251,30 @@ describe("applyArtifact", () => {
       },
     ]);
     await expect(
-      applyArtifact(read, mutation, request(artifact)),
+      applyArtifact(read, mutation, {
+        ...request(artifact),
+        mutationTokenIsBuiltIn: true,
+      }),
     ).resolves.toBeDefined();
     expect(read.getMaintainerCanModify).not.toHaveBeenCalled();
+  });
+
+  it("rejects the built-in token for a cross-repository update", async () => {
+    const { artifact, read, mutation } = fixture();
+    await expect(
+      applyArtifact(read, mutation, {
+        ...request(artifact),
+        mutationTokenIsBuiltIn: true,
+      }),
+    ).rejects.toThrow("cross-repository updates require an autofix token");
+    expect(read.upsertComment).toHaveBeenCalledWith(
+      4,
+      expect.stringContaining(
+        "cross-repository updates require an autofix token",
+      ),
+    );
+    expect(read.getMaintainerCanModify).not.toHaveBeenCalled();
+    expect(mutation.createBlob).not.toHaveBeenCalled();
   });
 
   it("rejects organization-owned forks with a persistent comment", async () => {

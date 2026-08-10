@@ -177,6 +177,7 @@ export interface ApplyRequest {
   sourceRunUrl: string;
   sourceWorkflow: string;
   commitMessage: string;
+  mutationTokenIsBuiltIn: boolean;
 }
 
 export interface ApplyResult {
@@ -236,6 +237,15 @@ export async function applyArtifact(
     );
   }
   const sameRepository = pr.headRepository === request.baseRepository;
+  if (!sameRepository && request.mutationTokenIsBuiltIn) {
+    const reason =
+      "cross-repository updates require an autofix token with access to the head repository";
+    await read.upsertComment(
+      pr.number,
+      recoveryComment(reason, request.artifactUrl, request.sourceRunUrl),
+    );
+    throw new ApplyError(reason);
+  }
   if (!sameRepository && pr.headRepositoryOwnerType !== "User") {
     const reason = "only user-owned forks are eligible";
     await read.upsertComment(

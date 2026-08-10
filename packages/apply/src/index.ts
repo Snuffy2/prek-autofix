@@ -13,6 +13,7 @@ import { getArtifactIfPresent } from "./artifact-lookup";
 import { applyArtifact, maximumRawArtifactBytes } from "./apply";
 import { createMutationClient, createReadClient } from "./github";
 import { IneligibleSourceJobsError, verifySourceJobs } from "./source-jobs";
+import { selectMutationToken } from "./token";
 
 function nonnegativeInput(name: string, fallback: number): number {
   const raw = core.getInput(name);
@@ -84,11 +85,14 @@ async function run(): Promise<void> {
     throw new Error("artifact JSON is too large");
   const artifact = parseChangeArtifact(JSON.parse(raw), maxFiles, maxBytes);
 
-  const pat = core.getInput("autofix-token", { required: true });
-  core.setSecret(pat);
-  const patOctokit = github.getOctokit(pat);
+  const mutationCredential = selectMutationToken(
+    core.getInput("autofix-token"),
+    githubToken,
+  );
+  core.setSecret(mutationCredential.token);
+  const mutationOctokit = github.getOctokit(mutationCredential.token);
   const read = createReadClient(readOctokit, owner, repo);
-  const mutation = createMutationClient(patOctokit);
+  const mutation = createMutationClient(mutationOctokit);
   await applyArtifact(read, mutation, {
     baseRepository,
     runId,
@@ -98,6 +102,7 @@ async function run(): Promise<void> {
     sourceRunUrl: `${github.context.serverUrl}/${baseRepository}/actions/runs/${runId}`,
     sourceWorkflow,
     commitMessage,
+    mutationTokenIsBuiltIn: mutationCredential.isBuiltIn,
   });
 }
 
