@@ -17,7 +17,10 @@ updates:
         versions:
           - ">=7.0.0"
   - package-ecosystem: "github-actions"
-    directory: "/"
+    directories:
+      - "/"
+      - "/review"
+      - "/fix"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
@@ -28,3 +31,7 @@ updates:
         update-types:
           - "minor"
           - "patch"
+      major-actions-by-dependency:
+        group-by: "dependency-name"
+        update-types:
+          - "major"
