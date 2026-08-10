@@ -143,8 +143,9 @@ permissions:
   pull-requests: write
 
 concurrency:
-  # prettier-ignore
-  group: prek-autofix-fix-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+  group:
+    prek-autofix-fix-${{ github.event.workflow_run.head_repository.full_name
+    }}-${{ github.event.workflow_run.head_branch }}
   cancel-in-progress: false
 
 jobs:
