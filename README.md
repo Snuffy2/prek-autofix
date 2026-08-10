@@ -63,14 +63,11 @@ from a GitHub account that already has write access to the base repository:
 Do not put the PAT in a workflow file, configuration file, or the Stage 1
 environment. Workflow-file changes are reported but never applied automatically.
 
-The PAT is also useful for same-repository pull requests when the existing fix
-workflow grants only `contents: read`, or when you want the fix commit's fresh
-checks to start without intervention. GitHub creates an approval-required
-`pull_request` run when `GITHUB_TOKEN` updates a pull request; a user with write
-access must approve that run. The workflow keeps the `autofix-token` action
-input required and continues to pass `PREK_AUTOFIX_TOKEN`. The Action uses a
-nonempty value regardless of workflow content permissions and falls back to
-`github.token` internally only when the secret resolves empty.
+A PAT is also useful for same-repository pull requests: it lets the fix workflow
+retain `contents: read` and avoids the follow-up review approval that a
+`GITHUB_TOKEN` update requires. Keep the `autofix-token` input required and pass
+`PREK_AUTOFIX_TOKEN`; the Stage 2 migration instructions and outcome table below
+explain the token behavior and approval requirements.
 
 ### 2. Add the review workflow
 
@@ -203,12 +200,6 @@ snippets are tested against those canonical files.
 | Hook leaves stable fixes but other findings remain                                                | The Action applies the stable fixes. The generated commit's new review run reports the remaining findings after any required approval. |
 | Hooks do not converge within `max-passes`                                                         | No commit is created; resolve the interacting hooks or increase the limit deliberately.                                                |
 | Stale source SHA, closed PR, wrong event, unsafe path, symlink/submodule, or workflow-file change | Fix rejects the change without updating the branch.                                                                                    |
-
-The initial review succeeds after it uploads validated changes. The generated
-commit starts a new `pull_request` run, which reports any remaining findings.
-When the commit uses `GITHUB_TOKEN`, GitHub requires a user with write access to
-approve that run. This Action never submits an approving review, so normal
-approval and protection rules are unaffected.
 
 ## Configuration
 
