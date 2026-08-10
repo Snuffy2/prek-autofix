@@ -283,6 +283,9 @@ describe("applyArtifact", () => {
     );
     expect(read.getMaintainerCanModify).not.toHaveBeenCalled();
     expect(mutation.createBlob).not.toHaveBeenCalled();
+    expect(mutation.createTree).not.toHaveBeenCalled();
+    expect(mutation.createCommit).not.toHaveBeenCalled();
+    expect(mutation.updateRef).not.toHaveBeenCalled();
   });
 
   it("rejects organization-owned forks with a persistent comment", async () => {
