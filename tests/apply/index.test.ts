@@ -5,8 +5,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getArtifactIfPresent } from "../../packages/apply/src/artifact-lookup";
 
 const mocks = vi.hoisted(() => ({
+  applyArtifact: vi.fn(),
   artifactClient: vi.fn(),
+  readFile: vi.fn(),
   setFailed: vi.fn(),
+  stat: vi.fn(),
   verifySourceJobs: vi.fn(),
   context: {
     eventName: "workflow_run",
@@ -23,6 +26,17 @@ const mocks = vi.hoisted(() => ({
     serverUrl: "https://github.example",
   },
 }));
+
+vi.mock("node:fs/promises", () => ({
+  readFile: mocks.readFile,
+  stat: mocks.stat,
+}));
+
+vi.mock("../../packages/apply/src/apply", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../packages/apply/src/apply")>();
+  return { ...actual, applyArtifact: mocks.applyArtifact };
+});
 
 vi.mock("@actions/artifact", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@actions/artifact")>();
@@ -65,6 +79,10 @@ describe("apply entrypoint validation", () => {
       run_attempt: 3,
     };
     vi.mocked(core.getInput).mockReturnValue("");
+    mocks.applyArtifact.mockResolvedValue({
+      pullRequestNumber: 4,
+      commitSha: "commit",
+    });
   });
 
   it.each([
@@ -165,6 +183,92 @@ describe("apply entrypoint validation", () => {
       findBy,
     });
   });
+
+  it.each([
+    {
+      name: "empty autofix input",
+      autofixToken: "",
+      expectedMutationToken: "github-token",
+      expectedFallback: true,
+    },
+    {
+      name: "configured autofix token",
+      autofixToken: "configured-token",
+      expectedMutationToken: "configured-token",
+      expectedFallback: false,
+    },
+  ])(
+    "parses the artifact and wires the mutation credential for $name",
+    async ({ autofixToken, expectedMutationToken, expectedFallback }) => {
+      const artifactClient = {
+        getArtifact: vi.fn().mockResolvedValue({
+          artifact: {
+            id: 42,
+            name: "prek-autofix-7-3",
+            size: 100,
+            digest: "sha256:digest",
+            createdAt: new Date(),
+          },
+        }),
+        downloadArtifact: vi.fn().mockResolvedValue({
+          downloadPath: "/artifact",
+        }),
+      };
+      const artifact = {
+        schemaVersion: 1,
+        source: {
+          runId: 7,
+          runAttempt: 3,
+          repository: "base/repo",
+          workflow: "prek-autofix",
+          event: "pull_request",
+          pullRequestNumber: 4,
+          headSha: "a".repeat(40),
+        },
+        operations: [
+          {
+            path: "fixed.txt",
+            operation: "add",
+            mode: "100644",
+            content: "eA==",
+          },
+        ],
+      };
+      vi.mocked(core.getInput).mockImplementation((name) => {
+        if (name === "github-token") return "github-token";
+        if (name === "autofix-token") return autofixToken;
+        return "";
+      });
+      vi.mocked(github.getOctokit).mockReturnValue({ rest: {} } as never);
+      mocks.artifactClient.mockImplementation(function ArtifactClient() {
+        return artifactClient;
+      });
+      mocks.verifySourceJobs.mockResolvedValue(undefined);
+      mocks.stat.mockResolvedValue({ size: 100 });
+      mocks.readFile.mockResolvedValue(JSON.stringify(artifact));
+
+      await import("../../packages/apply/src/index.js");
+
+      await vi.waitFor(() =>
+        expect(mocks.applyArtifact).toHaveBeenCalledOnce(),
+      );
+      expect(core.getInput).toHaveBeenCalledWith("autofix-token");
+      expect(github.getOctokit).toHaveBeenNthCalledWith(1, "github-token");
+      expect(github.getOctokit).toHaveBeenNthCalledWith(
+        2,
+        expectedMutationToken,
+      );
+      expect(mocks.applyArtifact).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.any(Object),
+        expect.objectContaining({
+          artifact,
+          mutationTokenUsedGithubFallback: expectedFallback,
+        }),
+      );
+      expect(core.setFailed).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("apply artifact lookup behavior", () => {

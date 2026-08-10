@@ -1,12 +1,14 @@
 export interface MutationCredential {
   token: string;
-  isBuiltIn: boolean;
+  usedGithubTokenFallback: boolean;
 }
 
 export function selectMutationToken(
   configuredToken: string,
   githubToken: string,
 ): MutationCredential {
-  const token = configuredToken || githubToken;
-  return { token, isBuiltIn: token === githubToken };
+  if (configuredToken !== "") {
+    return { token: configuredToken, usedGithubTokenFallback: false };
+  }
+  return { token: githubToken, usedGithubTokenFallback: true };
 }

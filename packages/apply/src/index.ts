@@ -102,7 +102,7 @@ async function run(): Promise<void> {
     sourceRunUrl: `${github.context.serverUrl}/${baseRepository}/actions/runs/${runId}`,
     sourceWorkflow,
     commitMessage,
-    mutationTokenIsBuiltIn: mutationCredential.isBuiltIn,
+    mutationTokenUsedGithubFallback: mutationCredential.usedGithubTokenFallback,
   });
 }
 
