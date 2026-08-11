@@ -16,8 +16,18 @@ async function metadata(path: string): Promise<Record<string, any>> {
   return parse(await readFile(resolve(path), "utf8"));
 }
 
+function releaseUpdateScript(workflow: Record<string, any>): string {
+  const step = workflow.jobs["update-major"].steps.find(
+    (candidate: { run?: unknown }) =>
+      typeof candidate.run === "string" &&
+      candidate.run.includes("node <<'NODE'"),
+  );
+  expect(step, "release workflow is missing its update script").toBeDefined();
+  return step?.run ?? "";
+}
+
 function releaseDecisionScript(workflow: Record<string, any>): string {
-  const run = workflow.jobs["update-major"].steps[0].run as string;
+  const run = releaseUpdateScript(workflow);
   const match = run.match(/node <<'NODE'\n([\s\S]*?)\nNODE/);
   expect(
     match,
@@ -117,7 +127,7 @@ fi
 `,
   );
   chmodSync(ghPath, 0o755);
-  const run = workflow.jobs["update-major"].steps[0].run as string;
+  const run = releaseUpdateScript(workflow);
   try {
     execFileSync("bash", ["-eo", "pipefail", "-c", run], {
       encoding: "utf8",
@@ -265,10 +275,11 @@ describe("action metadata", () => {
 
   it("isolates release verification from repository write credentials", async () => {
     const workflow = await metadata(".github/workflows/release.yml");
-    expect(workflow.permissions).toEqual({ contents: "read" });
-    expect(workflow.jobs.verify.steps[0].with["persist-credentials"]).toBe(
-      false,
+    const checkout = workflow.jobs.verify.steps.find(
+      (step: { uses?: string }) => step.uses?.startsWith("actions/checkout@"),
     );
+    expect(workflow.permissions).toEqual({ contents: "read" });
+    expect(checkout?.with["persist-credentials"]).toBe(false);
     expect(workflow.jobs["update-major"].permissions).toEqual({
       contents: "write",
     });
