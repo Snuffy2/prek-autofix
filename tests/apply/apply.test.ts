@@ -78,6 +78,7 @@ const request = (artifact: ChangeArtifact) => ({
   sourceRunUrl: "https://example/run",
   sourceWorkflow: "prek-autofix",
   commitMessage: "fix",
+  mutationTokenUsedGithubFallback: false,
 });
 
 describe("applyArtifact", () => {
@@ -213,13 +214,21 @@ describe("applyArtifact", () => {
     const { artifact, read, mutation } = fixture();
     const baseline = (await read.listAssociatedPullRequests("x"))[0]!;
     vi.mocked(read.listAssociatedPullRequests).mockResolvedValue([
-      { ...baseline, headSha: "b".repeat(40) },
+      {
+        ...baseline,
+        headSha: "b".repeat(40),
+        headRepositoryOwnerType: "Organization",
+      },
     ]);
     await expect(
-      applyArtifact(read, mutation, request(artifact)),
+      applyArtifact(read, mutation, {
+        ...request(artifact),
+        mutationTokenUsedGithubFallback: true,
+      }),
     ).rejects.toThrow("head changed");
     expect(read.markCommentObsolete).toHaveBeenCalledWith(4);
     expect(read.upsertComment).not.toHaveBeenCalled();
+    expect(read.getMaintainerCanModify).not.toHaveBeenCalled();
     expect(mutation.createBlob).not.toHaveBeenCalled();
   });
 
@@ -250,9 +259,33 @@ describe("applyArtifact", () => {
       },
     ]);
     await expect(
-      applyArtifact(read, mutation, request(artifact)),
+      applyArtifact(read, mutation, {
+        ...request(artifact),
+        mutationTokenUsedGithubFallback: true,
+      }),
     ).resolves.toBeDefined();
     expect(read.getMaintainerCanModify).not.toHaveBeenCalled();
+  });
+
+  it("rejects the built-in token for a cross-repository update", async () => {
+    const { artifact, read, mutation } = fixture();
+    await expect(
+      applyArtifact(read, mutation, {
+        ...request(artifact),
+        mutationTokenUsedGithubFallback: true,
+      }),
+    ).rejects.toThrow("cross-repository updates require an autofix token");
+    expect(read.upsertComment).toHaveBeenCalledWith(
+      4,
+      expect.stringContaining(
+        "cross-repository updates require an autofix token",
+      ),
+    );
+    expect(read.getMaintainerCanModify).not.toHaveBeenCalled();
+    expect(mutation.createBlob).not.toHaveBeenCalled();
+    expect(mutation.createTree).not.toHaveBeenCalled();
+    expect(mutation.createCommit).not.toHaveBeenCalled();
+    expect(mutation.updateRef).not.toHaveBeenCalled();
   });
 
   it("rejects organization-owned forks with a persistent comment", async () => {

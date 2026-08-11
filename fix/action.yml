@@ -5,13 +5,14 @@ author: Snuffy2
 inputs:
   github-token:
     description:
-      Workflow token with read-only repository contents access and pull-request
-      comment write access, used to validate and download the artifact
+      Workflow token used to validate and download the artifact and manage
+      pull-request recovery comments
     required: false
     default: ${{ github.token }}
   autofix-token:
     description:
-      Classic PAT with repository write access used only for Git Data mutations
+      Required mutation-token input; a nonempty token is always used, while an
+      empty value falls back to github.token for same-repository pull requests
     required: true
   commit-message:
     description: Commit message for the generated fix commit

@@ -177,6 +177,7 @@ export interface ApplyRequest {
   sourceRunUrl: string;
   sourceWorkflow: string;
   commitMessage: string;
+  mutationTokenUsedGithubFallback: boolean;
 }
 
 export interface ApplyResult {
@@ -236,6 +237,20 @@ export async function applyArtifact(
     );
   }
   const sameRepository = pr.headRepository === request.baseRepository;
+  if (pr.headSha !== run.headSha) {
+    const reason = "the pull request head changed after collection";
+    await read.markCommentObsolete(pr.number);
+    throw new ApplyError(reason);
+  }
+  if (!sameRepository && request.mutationTokenUsedGithubFallback) {
+    const reason =
+      "cross-repository updates require an autofix token with access to the head repository";
+    await read.upsertComment(
+      pr.number,
+      recoveryComment(reason, request.artifactUrl, request.sourceRunUrl),
+    );
+    throw new ApplyError(reason);
+  }
   if (!sameRepository && pr.headRepositoryOwnerType !== "User") {
     const reason = "only user-owned forks are eligible";
     await read.upsertComment(
@@ -252,12 +267,6 @@ export async function applyArtifact(
     );
     throw new ApplyError(reason);
   }
-  if (pr.headSha !== run.headSha) {
-    const reason = "the pull request head changed after collection";
-    await read.markCommentObsolete(pr.number);
-    throw new ApplyError(reason);
-  }
-
   const baseTree = await read.getCommitTreeSha(
     request.baseRepository,
     run.headSha,

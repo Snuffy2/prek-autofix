@@ -51,7 +51,7 @@ describe("repository maintenance workflows", () => {
     );
     expect(fixWorkflow.permissions).toEqual({
       "actions": "read",
-      "contents": "read",
+      "contents": "write",
       "pull-requests": "write",
     });
     expect(steps[0]).toMatchObject({
