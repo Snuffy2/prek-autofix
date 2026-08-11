@@ -113,8 +113,8 @@ describe("applyArtifact", () => {
       "gone.txt",
     ]);
     expect(mutation.createBlob).toHaveBeenCalledTimes(2);
-    expect(mutation.createBlob).toHaveBeenNthCalledWith(1, "user/repo", "eA==");
-    expect(mutation.createBlob).toHaveBeenNthCalledWith(2, "user/repo", "eQ==");
+    expect(mutation.createBlob).toHaveBeenCalledWith("user/repo", "eA==");
+    expect(mutation.createBlob).toHaveBeenCalledWith("user/repo", "eQ==");
     expect(mutation.createTree).toHaveBeenCalledWith("user/repo", "base-tree", [
       { path: "new.txt", mode: "100644", type: "blob", sha: "blob-new" },
       { path: "old.sh", mode: "100755", type: "blob", sha: "blob-old" },

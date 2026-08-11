@@ -189,11 +189,11 @@ describe("action metadata", () => {
     expect(action.runs.steps).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          uses: expect.stringMatching(/^actions\/setup-node@/),
+          uses: expect.stringMatching(/^actions\/setup-node@v\d+$/),
         }),
         expect.objectContaining({
           id: "install",
-          uses: expect.stringMatching(/^j178\/prek-action@/),
+          uses: expect.stringMatching(/^j178\/prek-action@v\d+$/),
         }),
       ]),
     );
@@ -225,7 +225,7 @@ describe("action metadata", () => {
         "if-no-files-found": "error",
       },
     });
-    expect(upload.uses).toMatch(/^actions\/upload-artifact@/);
+    expect(upload.uses).toMatch(/^actions\/upload-artifact@v\d+$/);
     expect(propagate).toMatchObject({
       id: "propagate",
       if: "steps.review.outcome == 'failure'",

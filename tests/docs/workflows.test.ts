@@ -53,7 +53,7 @@ describe("public workflow documentation", () => {
       "cancel-in-progress": true,
     });
     expect(checkout).toMatchObject({
-      uses: expect.stringMatching(/^actions\/checkout@/),
+      uses: expect.stringMatching(/^actions\/checkout@v\d+$/),
       with: {
         "repository": "${{ github.event.pull_request.head.repo.full_name }}",
         "ref": "${{ github.event.pull_request.head.sha }}",

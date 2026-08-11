@@ -28,7 +28,7 @@ describe("repository maintenance workflows", () => {
     expect(review.name).toBe("prek-autofix");
     expect(review.permissions).toEqual({ contents: "read" });
     expect(checkout).toMatchObject({
-      uses: expect.stringMatching(/^actions\/checkout@/),
+      uses: expect.stringMatching(/^actions\/checkout@v\d+$/),
       with: {
         "repository": "${{ github.event.pull_request.head.repo.full_name }}",
         "ref": "${{ github.event.pull_request.head.sha }}",
@@ -67,7 +67,7 @@ describe("repository maintenance workflows", () => {
       "pull-requests": "write",
     });
     expect(checkout).toMatchObject({
-      uses: expect.stringMatching(/^actions\/checkout@/),
+      uses: expect.stringMatching(/^actions\/checkout@v\d+$/),
       with: {
         "ref": "main",
         "persist-credentials": false,
