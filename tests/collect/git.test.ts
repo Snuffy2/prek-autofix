@@ -58,7 +58,9 @@ function resultBuffer(stdout: string) {
 }
 
 function gitSubcommand(args: string[]): string | undefined {
-  return args[2];
+  let index = 0;
+  while (args[index] === "-c") index += 2;
+  return args[index];
 }
 
 async function git(root: string, ...args: string[]): Promise<void> {
@@ -392,16 +394,13 @@ describe("collectOperations", () => {
     const modeCall = vi
       .mocked(execute)
       .mock.calls.find(([, args]) => gitSubcommand(args) === "ls-tree");
-    expect(modeCall?.[1]).toEqual([
-      "-c",
-      "core.fsmonitor=false",
-      "ls-tree",
-      "-z",
-      "HEAD",
-      "--",
-      "delete.txt",
-    ]);
-    expect(modeCall?.[1]).not.toContain("-r");
+    expect(modeCall).toBeDefined();
+    const modeArgs = modeCall?.[1] ?? [];
+    expect(modeArgs).toEqual(expect.arrayContaining(["ls-tree", "-z", "HEAD"]));
+    const separatorIndex = modeArgs.indexOf("--");
+    expect(separatorIndex).toBeGreaterThanOrEqual(0);
+    expect(modeArgs.slice(separatorIndex + 1)).toEqual(["delete.txt"]);
+    expect(modeArgs).not.toContain("-r");
     expect(modeCall?.[2].captureLimitBytes).toBe(GIT_CAPTURE_LIMIT_BYTES);
   });
 
@@ -450,7 +449,8 @@ describe("collectOperations", () => {
     ).resolves.toEqual([]);
 
     for (const [, args, options] of vi.mocked(execute).mock.calls) {
-      if (args[2] !== "diff" && args[2] !== "ls-files") continue;
+      const subcommand = gitSubcommand(args);
+      if (subcommand !== "diff" && subcommand !== "ls-files") continue;
       expect(options).toMatchObject({
         superviseProcessTree: true,
         trustedPythonPath: trustedPython.canonicalPath,

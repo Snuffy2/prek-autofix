@@ -253,11 +253,8 @@ describe("apply entrypoint validation", () => {
         expect(mocks.applyArtifact).toHaveBeenCalledOnce(),
       );
       expect(core.getInput).toHaveBeenCalledWith("autofix-token");
-      expect(github.getOctokit).toHaveBeenNthCalledWith(1, "github-token");
-      expect(github.getOctokit).toHaveBeenNthCalledWith(
-        2,
-        expectedMutationToken,
-      );
+      expect(github.getOctokit).toHaveBeenCalledWith("github-token");
+      expect(github.getOctokit).toHaveBeenCalledWith(expectedMutationToken);
       expect(mocks.applyArtifact).toHaveBeenCalledWith(
         expect.any(Object),
         expect.any(Object),

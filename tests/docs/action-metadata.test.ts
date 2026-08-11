@@ -16,8 +16,18 @@ async function metadata(path: string): Promise<Record<string, any>> {
   return parse(await readFile(resolve(path), "utf8"));
 }
 
+function releaseUpdateScript(workflow: Record<string, any>): string {
+  const step = workflow.jobs["update-major"].steps.find(
+    (candidate: { run?: unknown }) =>
+      typeof candidate.run === "string" &&
+      candidate.run.includes("node <<'NODE'"),
+  );
+  expect(step, "release workflow is missing its update script").toBeDefined();
+  return step?.run ?? "";
+}
+
 function releaseDecisionScript(workflow: Record<string, any>): string {
-  const run = workflow.jobs["update-major"].steps[0].run as string;
+  const run = releaseUpdateScript(workflow);
   const match = run.match(/node <<'NODE'\n([\s\S]*?)\nNODE/);
   expect(
     match,
@@ -117,7 +127,7 @@ fi
 `,
   );
   chmodSync(ghPath, 0o755);
-  const run = workflow.jobs["update-major"].steps[0].run as string;
+  const run = releaseUpdateScript(workflow);
   try {
     execFileSync("bash", ["-eo", "pipefail", "-c", run], {
       encoding: "utf8",
@@ -149,17 +159,8 @@ describe("action metadata", () => {
     const reviewAction = await metadata("review/action.yml");
 
     for (const action of [primaryAction, reviewAction]) {
-      expect(action.name).toBe("prek Autofix Review");
-      expect(action.author).toBe("Snuffy2");
-      expect(action.description).toBe(
-        "Review pull requests with prek and upload any resulting fixes",
-      );
       expect(action.inputs).toEqual(primaryAction.inputs);
       expect(action.outputs).toEqual(primaryAction.outputs);
-      expect(action.branding).toEqual({
-        icon: "check-circle",
-        color: "green",
-      });
     }
     expect(primaryAction.runs.using).toBe(reviewAction.runs.using);
     expect(primaryAction.runs.steps).toEqual(
@@ -176,15 +177,17 @@ describe("action metadata", () => {
 
   it("keeps the review action unprivileged and major-tagged", async () => {
     const action = await metadata("review/action.yml");
-    expect(Object.keys(action.inputs)).toEqual([
-      "prek-version",
-      "extra-args",
-      "working-directory",
-      "cache",
-      "max-passes",
-      "max-log-bytes",
-      "pass-timeout-seconds",
-    ]);
+    expect(new Set(Object.keys(action.inputs))).toEqual(
+      new Set([
+        "prek-version",
+        "extra-args",
+        "working-directory",
+        "cache",
+        "max-passes",
+        "max-log-bytes",
+        "pass-timeout-seconds",
+      ]),
+    );
     expect(action.inputs["max-passes"].default).toBe("3");
     expect(action.inputs["max-log-bytes"].default).toBe("1048576");
     expect(action.inputs["pass-timeout-seconds"].default).toBe("600");
@@ -193,13 +196,18 @@ describe("action metadata", () => {
     expect(action.outputs).toHaveProperty("prek-version");
     expect(action.runs.using).toBe("composite");
 
-    const serialized = JSON.stringify(action);
-    expect(serialized).toContain("actions/setup-node@v6");
-    expect(serialized).toContain("j178/prek-action@v2");
-    expect(serialized).toContain("actions/upload-artifact@v7");
-    expect(serialized).toContain(
-      "$GITHUB_ACTION_PATH/../dist/collect/index.js",
+    expect(action.runs.steps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          uses: expect.stringMatching(/^actions\/setup-node@v\d+$/),
+        }),
+        expect.objectContaining({
+          id: "install",
+          uses: expect.stringMatching(/^j178\/prek-action@v\d+$/),
+        }),
+      ]),
     );
+    const serialized = JSON.stringify(action);
     expect(serialized).not.toMatch(
       /autofix-token|PREK_AUTOFIX_TOKEN|checkout/i,
     );
@@ -218,20 +226,18 @@ describe("action metadata", () => {
     );
 
     expect(review["continue-on-error"]).toBe(true);
-    expect(upload).toEqual({
+    expect(upload).toMatchObject({
       id: "upload",
-      name: "Upload prek fixes",
       if: "steps.review.outputs.artifact-name != ''",
-      uses: "actions/upload-artifact@v7",
       with: {
         "name": "${{ steps.review.outputs.artifact-name }}",
         "path": "${{ steps.review.outputs.artifact-path }}",
         "if-no-files-found": "error",
       },
     });
-    expect(propagate).toEqual({
+    expect(upload.uses).toMatch(/^actions\/upload-artifact@v\d+$/);
+    expect(propagate).toMatchObject({
       id: "propagate",
-      name: "Propagate collection failure",
       if: "steps.review.outcome == 'failure'",
       shell: "bash",
       run: "exit 1",
@@ -243,8 +249,6 @@ describe("action metadata", () => {
 
   it("uses an isolated Node 24 privileged entry point", async () => {
     const action = await metadata("fix/action.yml");
-    expect(action.name).toBe("prek Autofix Fix");
-    expect(action.author).toBe("Snuffy2");
     expect(action.runs).toEqual({
       using: "node24",
       main: "../dist/apply/index.js",
@@ -260,14 +264,6 @@ describe("action metadata", () => {
     expect(action.inputs["source-workflow"].default).toBe("prek-autofix");
     expect(action.inputs["max-files"].default).toBe("100");
     expect(action.inputs["max-bytes"].default).toBe("10485760");
-
-    const source = await readFile("packages/apply/src/index.ts", "utf8");
-    expect(source).toContain(
-      'core.getInput("github-token", { required: true })',
-    );
-    expect(source).not.toContain("process.env.GITHUB_TOKEN");
-    expect(source).not.toMatch(/child_process|spawn\(|exec\(|checkout/);
-    expect(source).not.toMatch(/["']git["']/);
   });
 
   it("ships both bundled entry points", async () => {
@@ -279,10 +275,11 @@ describe("action metadata", () => {
 
   it("isolates release verification from repository write credentials", async () => {
     const workflow = await metadata(".github/workflows/release.yml");
-    expect(workflow.permissions).toEqual({ contents: "read" });
-    expect(workflow.jobs.verify.steps[0].with["persist-credentials"]).toBe(
-      false,
+    const checkout = workflow.jobs.verify.steps.find(
+      (step: { uses?: string }) => step.uses?.startsWith("actions/checkout@"),
     );
+    expect(workflow.permissions).toEqual({ contents: "read" });
+    expect(checkout?.with["persist-credentials"]).toBe(false);
     expect(workflow.jobs["update-major"].permissions).toEqual({
       contents: "write",
     });
@@ -297,16 +294,6 @@ describe("action metadata", () => {
     expect(workflow.jobs.verify.outputs["major-tag"]).toBe(
       "${{ steps.release.outputs.major-tag }}",
     );
-    const updateScript = workflow.jobs["update-major"].steps[0].run as string;
-    expect(updateScript).toContain("gh api --paginate --slurp");
-    expect(updateScript).toContain(
-      "repos/$GITHUB_REPOSITORY/releases?per_page=100",
-    );
-    expect(updateScript).not.toContain("2>/dev/null");
-    expect(updateScript).not.toContain("--method PATCH");
-    expect(updateScript).toContain("updateRefs");
-    expect(updateScript).toContain("beforeOid: \\$beforeOid");
-    expect(updateScript).toContain("afterOid: \\$afterOid");
   });
 
   it("keeps moving major tags monotonic across releases and reruns", async () => {

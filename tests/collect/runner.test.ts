@@ -21,16 +21,23 @@ function result(exitCode = 0, stdout = "") {
   return { exitCode, stdout: Buffer.from(stdout), stderr: Buffer.alloc(0) };
 }
 
+function gitSubcommand(args: string[]): string | undefined {
+  let index = 0;
+  while (args[index] === "-c") index += 2;
+  return args[index];
+}
+
 function setup(prekResults: ReturnType<typeof result>[]) {
   let prek = 0;
   const execute: Execute = vi.fn(async (command, args, options) => {
     seenEnvironments.push(options.env);
     if (command === "prek") return prekResults[prek++] ?? result();
     if (command.includes("python3")) return result();
-    if (args[2] === "rev-parse") return result(0, `${SHA}\n`);
-    if (args[2] === "status") return result();
-    if (args[2] === "ls-tree") return result();
-    if (args[2] === "diff" || args[2] === "ls-files") return result();
+    const subcommand = gitSubcommand(args);
+    if (subcommand === "rev-parse") return result(0, `${SHA}\n`);
+    if (subcommand === "status") return result();
+    if (subcommand === "ls-tree") return result();
+    if (subcommand === "diff" || subcommand === "ls-files") return result();
     throw new Error(`unexpected command: ${command} ${args.join(" ")}`);
   });
   return execute;
@@ -62,7 +69,7 @@ async function invoke(
   directories.push(workspace);
   const wrapped: Execute = initialStatus
     ? async (command, args, options) =>
-        args[2] === "status"
+        gitSubcommand(args) === "status"
           ? result(0, " M dirty\0")
           : execute(command, args, options)
     : execute;
@@ -237,11 +244,12 @@ describe("runCollect", () => {
     const execute: Execute = vi.fn(async (command, args) => {
       if (command.includes("python3")) return result();
       if (command === "prek") return result();
-      if (args[2] === "rev-parse") {
+      const subcommand = gitSubcommand(args);
+      if (subcommand === "rev-parse") {
         headChecks += 1;
         return result(0, `${headChecks === 1 ? SHA : "b".repeat(40)}\n`);
       }
-      if (args[2] === "status") return result();
+      if (subcommand === "status") return result();
       throw new Error(`unexpected command: ${command} ${args.join(" ")}`);
     });
     const call = await invoke(execute, 3, false, [[]]);
@@ -265,8 +273,9 @@ describe("runCollect", () => {
         substituted = true;
         return result();
       }
-      if (args[2] === "rev-parse") return result(0, `${SHA}\n`);
-      if (args[2] === "status") return result();
+      const subcommand = gitSubcommand(args);
+      if (subcommand === "rev-parse") return result(0, `${SHA}\n`);
+      if (subcommand === "status") return result();
       throw new Error(`unexpected command: ${command} ${args.join(" ")}`);
     });
     const call = await invoke(execute);
