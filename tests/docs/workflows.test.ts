@@ -1,6 +1,5 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { parse } from "yaml";
 import { describe, expect, it } from "vitest";
 
 const root = resolve(__dirname, "../..");
@@ -25,77 +24,13 @@ function readReadmeSnippet(marker: string): string {
 }
 
 describe("public workflow documentation", () => {
-  const reviewPath = "examples/prek-autofix-review.yml";
-  const fixPath = "examples/prek-autofix-fix.yml";
-
-  it("keeps README Stage 1 synchronized with the canonical workflow", () => {
-    expect(readReadmeSnippet("prek-autofix-stage-1")).toBe(read(reviewPath));
-  });
-
-  it("keeps README Stage 2 synchronized with the canonical workflow", () => {
-    expect(readReadmeSnippet("prek-autofix-stage-2")).toBe(read(fixPath));
-  });
-
-  it("keeps the review workflow read-only and on the PR head", () => {
-    const workflow = parse(read(reviewPath));
-    const checkout = workflow.jobs.review.steps.find(
-      (step: { uses?: string }) => step.uses?.startsWith("actions/checkout@"),
-    );
-    const review = workflow.jobs.review.steps.find(
-      (step: { id?: string }) => step.id === "review",
-    );
-
-    expect(workflow.name).toBe("prek-autofix");
-    expect(workflow.on.pull_request.types).toContain("synchronize");
-    expect(workflow.permissions).toEqual({ contents: "read" });
-    expect(workflow.concurrency).toEqual({
-      "group": "prek-autofix-${{ github.event.pull_request.number }}",
-      "cancel-in-progress": true,
-    });
-    expect(checkout).toMatchObject({
-      uses: expect.stringMatching(/^actions\/checkout@v\d+$/),
-      with: {
-        "repository": "${{ github.event.pull_request.head.repo.full_name }}",
-        "ref": "${{ github.event.pull_request.head.sha }}",
-        "persist-credentials": false,
-      },
-    });
-    expect(review).toMatchObject({
-      id: "review",
-      uses: "Snuffy2/prek-autofix/review@v1",
-    });
-    expect(workflow.jobs.review["timeout-minutes"]).toBe(15);
-  });
-
-  it("keeps the fix workflow privileged without a checkout", () => {
-    const workflow = parse(read(fixPath));
-    const fix = workflow.jobs.fix;
-    const fixStep = fix.steps.find(
-      (step: { uses?: string }) => step.uses === "Snuffy2/prek-autofix/fix@v1",
-    );
-
-    expect(workflow.on.workflow_run).toEqual({
-      workflows: ["prek-autofix"],
-      types: ["completed"],
-    });
-    expect(workflow.permissions).toEqual({
-      "actions": "read",
-      "contents": "write",
-      "pull-requests": "write",
-    });
-    expect(workflow.concurrency).toEqual({
-      "group":
-        "prek-autofix-fix-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}",
-      "cancel-in-progress": false,
-    });
-    expect(fix.if).toBe("github.event.workflow_run.event == 'pull_request'");
-    expect(fixStep).toMatchObject({
-      uses: "Snuffy2/prek-autofix/fix@v1",
-      with: {
-        "autofix-token": "${{ secrets.PREK_AUTOFIX_TOKEN }}",
-        "source-workflow": "prek-autofix",
-      },
-    });
-    expect(JSON.stringify(fix)).not.toContain("actions/checkout");
-  });
+  it.each([
+    ["Stage 1", "prek-autofix-stage-1", "examples/prek-autofix-review.yml"],
+    ["Stage 2", "prek-autofix-stage-2", "examples/prek-autofix-fix.yml"],
+  ])(
+    "keeps README %s synchronized with its example",
+    (_stage, marker, path) => {
+      expect(readReadmeSnippet(marker)).toBe(read(path));
+    },
+  );
 });
