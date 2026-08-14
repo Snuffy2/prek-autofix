@@ -122,6 +122,27 @@ describe("fix result reporting", () => {
     expect(read.upsertComment).not.toHaveBeenCalled();
   });
 
+  it.each([
+    "the pull request is no longer eligible for autofix",
+    "the pull request source changed before autofix",
+    "the fork no longer allows maintainer edits",
+  ])("reports the controlled apply failure: %s", async (message) => {
+    const { read, reporter, source, status } = fixture();
+
+    await reporter.failure(new ApplyError(message));
+
+    expect(status.setCommitStatus).toHaveBeenCalledWith(
+      source.run.headSha,
+      "failure",
+      message,
+      "https://example/fix",
+    );
+    expect(read.upsertComment).toHaveBeenCalledWith(
+      4,
+      expect.stringContaining(`**${message}.**`),
+    );
+  });
+
   it("keeps status and comment publication best effort", async () => {
     const { read, reporter, status } = fixture();
     vi.mocked(status.setCommitStatus).mockRejectedValue(

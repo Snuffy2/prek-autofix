@@ -5,8 +5,8 @@ author: Snuffy2
 inputs:
   github-token:
     description:
-      Workflow token used to validate and download the artifact and manage
-      pull-request statuses and recovery comments
+      Workflow token used to validate the source run, download the artifact, and
+      manage pull-request statuses and recovery comments
     required: false
     default: ${{ github.token }}
   autofix-token:

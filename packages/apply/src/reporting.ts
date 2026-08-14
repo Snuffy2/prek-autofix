@@ -53,6 +53,9 @@ function publicFailure(error: unknown): PublicFailure {
         "cross-repository updates require an autofix token with access to the head repository" ||
       message === "only user-owned forks are eligible" ||
       message === "the fork does not allow maintainer edits" ||
+      message === "the pull request is no longer eligible for autofix" ||
+      message === "the pull request source changed before autofix" ||
+      message === "the fork no longer allows maintainer edits" ||
       message === "GitHub rejected the fix commit" ||
       message ===
         "GITHUB_TOKEN could not update the pull request branch; grant contents: write or configure PREK_AUTOFIX_TOKEN" ||

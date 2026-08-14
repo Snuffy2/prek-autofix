@@ -244,6 +244,54 @@ export async function resolveSourcePullRequest(
   return { run, pullRequest };
 }
 
+async function revalidateSourcePullRequest(
+  read: ReadClient,
+  request: ResolveSourceRequest,
+  expected: ResolvedSource,
+): Promise<void> {
+  let current: ResolvedSource;
+  try {
+    current = await resolveSourcePullRequest(read, request);
+  } catch {
+    throw new ApplyError("the pull request is no longer eligible for autofix");
+  }
+
+  const { run, pullRequest } = current;
+  const expectedRun = expected.run;
+  const expectedPullRequest = expected.pullRequest;
+  if (pullRequest.headSha !== expectedPullRequest.headSha) {
+    const reason = "the pull request head changed after collection";
+    await read.markCommentObsolete(expectedPullRequest.number);
+    throw new ApplyError(reason);
+  }
+  if (
+    run.id !== expectedRun.id ||
+    run.name !== expectedRun.name ||
+    run.event !== expectedRun.event ||
+    run.headSha !== expectedRun.headSha ||
+    run.headBranch !== expectedRun.headBranch ||
+    run.headRepository !== expectedRun.headRepository ||
+    pullRequest.number !== expectedPullRequest.number ||
+    pullRequest.state !== "open" ||
+    pullRequest.baseRepository !== expectedPullRequest.baseRepository ||
+    pullRequest.headRepository !== expectedPullRequest.headRepository ||
+    pullRequest.headRepositoryNodeId !==
+      expectedPullRequest.headRepositoryNodeId ||
+    pullRequest.headRepositoryOwnerType !==
+      expectedPullRequest.headRepositoryOwnerType ||
+    pullRequest.headRef !== expectedPullRequest.headRef
+  ) {
+    throw new ApplyError("the pull request source changed before autofix");
+  }
+
+  if (
+    pullRequest.headRepository !== request.baseRepository &&
+    !(await read.getMaintainerCanModify(pullRequest.number))
+  ) {
+    throw new ApplyError("the fork no longer allows maintainer edits");
+  }
+}
+
 export async function applyArtifact(
   read: ReadClient,
   mutation: MutationClient,
@@ -347,6 +395,15 @@ export async function applyArtifact(
       tree,
       run.headSha,
     );
+    await revalidateSourcePullRequest(
+      read,
+      {
+        baseRepository: request.baseRepository,
+        runId: request.runId,
+        sourceWorkflow: request.sourceWorkflow,
+      },
+      source,
+    );
     await mutation.updateRef(
       pr.headRepositoryNodeId,
       `refs/heads/${pr.headRef}`,
@@ -354,16 +411,24 @@ export async function applyArtifact(
       run.headSha,
     );
   } catch (error) {
+    if (
+      error instanceof ApplyError &&
+      error.message === "the pull request head changed after collection"
+    ) {
+      throw error;
+    }
     const status =
       typeof error === "object" && error !== null && "status" in error
         ? Number(error.status)
         : undefined;
     const reason =
-      status === 409 || status === 422
-        ? "the branch changed or GitHub rejected the non-forced update"
-        : status === 403 && request.mutationTokenUsedGithubFallback
-          ? "GITHUB_TOKEN could not update the pull request branch; grant contents: write or configure PREK_AUTOFIX_TOKEN"
-          : "GitHub rejected the fix commit";
+      error instanceof ApplyError
+        ? error.message
+        : status === 409 || status === 422
+          ? "the branch changed or GitHub rejected the non-forced update"
+          : status === 403 && request.mutationTokenUsedGithubFallback
+            ? "GITHUB_TOKEN could not update the pull request branch; grant contents: write or configure PREK_AUTOFIX_TOKEN"
+            : "GitHub rejected the fix commit";
     await read.upsertComment(
       pr.number,
       recoveryComment(reason, request.artifactUrl, request.sourceRunUrl),
