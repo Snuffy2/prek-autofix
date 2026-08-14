@@ -12,6 +12,8 @@ import {
 } from "./apply";
 
 const UNEXPECTED_FAILURE = "the fix action failed unexpectedly";
+const STALE_PULL_REQUEST_HEAD =
+  "the pull request head changed after collection";
 
 export interface FixReporter {
   pending(): Promise<void>;
@@ -43,7 +45,7 @@ function publicFailure(error: unknown): PublicFailure {
   }
   if (error instanceof ApplyError) {
     const message = error.message;
-    if (message === "the pull request head changed after collection") {
+    if (message === STALE_PULL_REQUEST_HEAD) {
       return { description: "Pull request head changed", reason: message };
     }
     if (
@@ -125,18 +127,23 @@ export function createFixReporter(
     },
     async failure(error) {
       const failure = publicFailure(error);
-      await Promise.all([
-        setStatus("failure", failure.description),
-        bestEffort("pull request recovery comment", () =>
-          read.upsertComment(
-            pullRequest.number,
-            `${COMMENT_MARKER}
+      const publications = [setStatus("failure", failure.description)];
+      if (!(
+        error instanceof ApplyError && error.message === STALE_PULL_REQUEST_HEAD
+      )) {
+        publications.push(
+          bestEffort("pull request recovery comment", () =>
+            read.upsertComment(
+              pullRequest.number,
+              `${COMMENT_MARKER}
 prek-autofix could not apply the generated changes: **${failure.reason}.**
 
 [Inspect the fix run](${request.fixRunUrl}), [download the generated artifact](${request.artifactUrl}), or [inspect the source run](${request.sourceRunUrl}). Apply the fixes locally, push them to the pull request branch, and rerun the checks.`,
+            ),
           ),
-        ),
-      ]);
+        );
+      }
+      await Promise.all(publications);
     },
   };
 }

@@ -4,6 +4,7 @@ import type {
   ResolvedSource,
   StatusClient,
 } from "../../packages/apply/src/apply";
+import { ApplyError } from "../../packages/apply/src/apply";
 import { createFixReporter } from "../../packages/apply/src/reporting";
 
 function fixture() {
@@ -103,6 +104,22 @@ describe("fix result reporting", () => {
       4,
       expect.not.stringContaining("ghp_do_not_leak"),
     );
+  });
+
+  it("reports a stale source head without replacing the obsolete comment", async () => {
+    const { read, reporter, source, status } = fixture();
+
+    await reporter.failure(
+      new ApplyError("the pull request head changed after collection"),
+    );
+
+    expect(status.setCommitStatus).toHaveBeenCalledWith(
+      source.run.headSha,
+      "failure",
+      "Pull request head changed",
+      "https://example/fix",
+    );
+    expect(read.upsertComment).not.toHaveBeenCalled();
   });
 
   it("keeps status and comment publication best effort", async () => {
