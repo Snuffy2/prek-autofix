@@ -8,6 +8,12 @@ const mocks = vi.hoisted(() => ({
   applyArtifact: vi.fn(),
   artifactClient: vi.fn(),
   readFile: vi.fn(),
+  reporter: {
+    failure: vi.fn(),
+    pending: vi.fn(),
+    success: vi.fn(),
+  },
+  resolveSourcePullRequest: vi.fn(),
   setFailed: vi.fn(),
   stat: vi.fn(),
   verifySourceJobs: vi.fn(),
@@ -24,6 +30,7 @@ const mocks = vi.hoisted(() => ({
       repo: "repo",
     },
     serverUrl: "https://github.example",
+    runId: 99,
   },
 }));
 
@@ -35,8 +42,16 @@ vi.mock("node:fs/promises", () => ({
 vi.mock("../../packages/apply/src/apply", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("../../packages/apply/src/apply")>();
-  return { ...actual, applyArtifact: mocks.applyArtifact };
+  return {
+    ...actual,
+    applyArtifact: mocks.applyArtifact,
+    resolveSourcePullRequest: mocks.resolveSourcePullRequest,
+  };
 });
+
+vi.mock("../../packages/apply/src/reporting", () => ({
+  createFixReporter: vi.fn(() => mocks.reporter),
+}));
 
 vi.mock("@actions/artifact", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@actions/artifact")>();
@@ -82,6 +97,26 @@ describe("apply entrypoint validation", () => {
     mocks.applyArtifact.mockResolvedValue({
       pullRequestNumber: 4,
       commitSha: "commit",
+    });
+    mocks.resolveSourcePullRequest.mockResolvedValue({
+      run: {
+        id: 7,
+        name: "prek-autofix",
+        event: "pull_request",
+        headSha: "a".repeat(40),
+        headBranch: "feature",
+        headRepository: "fork/repo",
+      },
+      pullRequest: {
+        number: 4,
+        state: "open",
+        baseRepository: "base/repo",
+        headRepository: "fork/repo",
+        headRepositoryNodeId: "R_fork",
+        headRepositoryOwnerType: "User",
+        headRef: "feature",
+        headSha: "a".repeat(40),
+      },
     });
   });
 
@@ -182,6 +217,10 @@ describe("apply entrypoint validation", () => {
     expect(artifactClient.downloadArtifact).toHaveBeenCalledWith(42, {
       findBy,
     });
+    expect(mocks.reporter.pending).toHaveBeenCalledOnce();
+    expect(mocks.reporter.failure).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "artifact download path is missing" }),
+    );
   });
 
   it.each([
@@ -261,8 +300,12 @@ describe("apply entrypoint validation", () => {
         expect.objectContaining({
           artifact,
           mutationTokenUsedGithubFallback: expectedFallback,
+          source: expect.any(Object),
         }),
       );
+      expect(mocks.reporter.pending).toHaveBeenCalledOnce();
+      expect(mocks.reporter.success).toHaveBeenCalledOnce();
+      expect(mocks.reporter.failure).not.toHaveBeenCalled();
       expect(core.setFailed).not.toHaveBeenCalled();
     },
   );

@@ -152,6 +152,7 @@ permissions:
   actions: read
   contents: write
   pull-requests: write
+  statuses: write
 
 concurrency:
   group:
@@ -175,12 +176,14 @@ jobs:
 Keep this workflow on the default branch. A `workflow_run` workflow uses the
 base repository's trusted workflow definition even when the pull request comes
 from a fork. Do not add `actions/checkout` or `git` commands to this workflow.
-Changing `contents: read` to `contents: write` is the only workflow migration
-needed for the fallback. The existing `autofix-token` line does not change. A
-configured PAT is always used; otherwise, `contents: write` lets the fallback
-`GITHUB_TOKEN` update a branch in the same repository. The built-in token cannot
-update a head branch in another repository, so that case requires
-`PREK_AUTOFIX_TOKEN`.
+The `statuses: write` permission lets Stage 2 publish `prek-autofix/fix` on the
+validated pull-request head. Failures also update one persistent pull-request
+comment with a safe reason and links to the fix, artifact, and source runs. Keep
+`contents: write` when same-repository pull requests may use the built-in token
+fallback. The existing `autofix-token` line does not change. A configured PAT is
+always used; otherwise, `contents: write` lets the fallback `GITHUB_TOKEN`
+update a branch in the same repository. The built-in token cannot update a head
+branch in another repository, so that case requires `PREK_AUTOFIX_TOKEN`.
 
 The complete, tested versions are also available as
 [`examples/prek-autofix-review.yml`](examples/prek-autofix-review.yml) and
@@ -201,6 +204,13 @@ snippets are tested against those canonical files.
 | Hook leaves stable fixes but other findings remain                                                | The Action applies the stable fixes. The generated commit's new review run reports the remaining findings after any required approval. |
 | Hooks do not converge within `max-passes`                                                         | No commit is created; resolve the interacting hooks or increase the limit deliberately.                                                |
 | Stale source SHA, closed PR, wrong event, unsafe path, symlink/submodule, or workflow-file change | Fix rejects the change without updating the branch.                                                                                    |
+
+When Stage 2 has a generated artifact and can identify exactly one source pull
+request, it publishes the `prek-autofix/fix` commit status on that pull
+request's validated head SHA. The status links to the trusted fix run and moves
+from pending to success or failure. A failed status uses a short sanitized
+description; the persistent PR comment provides recovery details without copying
+raw API exceptions or credentials.
 
 ## Configuration
 
@@ -236,7 +246,7 @@ For example, replace the `review` step in Stage 1 with:
 
 | Input             | Default                                | Meaning                                                                                                                                                      |
 | ----------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `github-token`    | `${{ github.token }}`                  | Built-in token used to validate the source run, download the artifact, and manage recovery comments                                                          |
+| `github-token`    | `${{ github.token }}`                  | Built-in token used to validate the source run, download the artifact, and manage PR statuses and recovery comments                                          |
 | `autofix-token`   | Required                               | Mutation-token input used only after validation; a nonempty value is always used, while an empty value falls back to `github.token` for a same-repository PR |
 | `commit-message`  | `[prek-autofix] apply automatic fixes` | Commit message for the generated commit                                                                                                                      |
 | `source-workflow` | `prek-autofix`                         | Expected review workflow name                                                                                                                                |
@@ -289,14 +299,15 @@ same-repository update.
 
 ## Troubleshooting and recovery
 
-| Symptom                                            | Check and recovery                                                                                                                                                                                                                                                                              |
-| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| No fix run or no artifact                          | Confirm both YAML files are on the default branch, the Stage 1 name is exactly `prek-autofix`, and the review log shows an artifact. Correct the configuration, then re-run Stage 1.                                                                                                            |
-| `Resource not accessible` or token failure         | For a same-repository PR, confirm Stage 2 grants `contents: write`. For a cross-repository PR, confirm the secret is named `PREK_AUTOFIX_TOKEN`, its account can update the head repository, and its classic scope is `public_repo` (public) or `repo` (private). Never add the PAT to Stage 1. |
-| Fork update denied                                 | Ask the contributor to enable **Allow edits from maintainers**. They can also download the linked artifact and apply the changes themselves.                                                                                                                                                    |
-| Branch protection blocks the update                | Apply the artifact manually. Do not weaken protection or force-push for autofixes.                                                                                                                                                                                                              |
-| First-time contributor workflow waits for approval | A maintainer must approve the initial `pull_request` workflow run in GitHub's Actions UI. No artifact exists until that read-only run is approved and completes.                                                                                                                                |
-| Check keeps failing after the fix commit           | Read the new Stage 1 log. Remaining findings without stable fixes, or non-converging hooks, need a normal fix.                                                                                                                                                                                  |
+| Symptom                                               | Check and recovery                                                                                                                                                                                                                                                                              |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No fix run or no artifact                             | Confirm both YAML files are on the default branch, the Stage 1 name is exactly `prek-autofix`, and the review log shows an artifact. Correct the configuration, then re-run Stage 1.                                                                                                            |
+| No `prek-autofix/fix` status on a PR with an artifact | Confirm Stage 2 grants `statuses: write` and `pull-requests: write`, then inspect the trusted fix run for reporting warnings.                                                                                                                                                                   |
+| `Resource not accessible` or token failure            | For a same-repository PR, confirm Stage 2 grants `contents: write`. For a cross-repository PR, confirm the secret is named `PREK_AUTOFIX_TOKEN`, its account can update the head repository, and its classic scope is `public_repo` (public) or `repo` (private). Never add the PAT to Stage 1. |
+| Fork update denied                                    | Ask the contributor to enable **Allow edits from maintainers**. They can also download the linked artifact and apply the changes themselves.                                                                                                                                                    |
+| Branch protection blocks the update                   | Apply the artifact manually. Do not weaken protection or force-push for autofixes.                                                                                                                                                                                                              |
+| First-time contributor workflow waits for approval    | A maintainer must approve the initial `pull_request` workflow run in GitHub's Actions UI. No artifact exists until that read-only run is approved and completes.                                                                                                                                |
+| Check keeps failing after the fix commit              | Read the new Stage 1 log. Remaining findings without stable fixes, or non-converging hooks, need a normal fix.                                                                                                                                                                                  |
 
 ## Pinning and upgrades
 

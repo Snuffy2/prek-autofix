@@ -6,7 +6,7 @@ inputs:
   github-token:
     description:
       Workflow token used to validate and download the artifact and manage
-      pull-request recovery comments
+      pull-request statuses and recovery comments
     required: false
     default: ${{ github.token }}
   autofix-token:

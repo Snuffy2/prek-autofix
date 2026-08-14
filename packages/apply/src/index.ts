@@ -10,8 +10,17 @@ import {
   parseChangeArtifact,
 } from "../../shared/src/artifact";
 import { getArtifactIfPresent } from "./artifact-lookup";
-import { applyArtifact, maximumRawArtifactBytes } from "./apply";
-import { createMutationClient, createReadClient } from "./github";
+import {
+  applyArtifact,
+  maximumRawArtifactBytes,
+  resolveSourcePullRequest,
+} from "./apply";
+import {
+  createMutationClient,
+  createReadClient,
+  createStatusClient,
+} from "./github";
+import { createFixReporter } from "./reporting";
 import { IneligibleSourceJobsError, verifySourceJobs } from "./source-jobs";
 import { selectMutationToken } from "./token";
 
@@ -66,44 +75,67 @@ async function run(): Promise<void> {
     core.info(`${error.message}; nothing to fix.`);
     return;
   }
-  const download = await artifactClient.downloadArtifact(lookup.artifact.id, {
-    findBy: {
-      token: githubToken,
-      workflowRunId: runId,
-      repositoryOwner: owner,
-      repositoryName: repo,
-    },
-  });
-  if (!download.downloadPath)
-    throw new Error("artifact download path is missing");
-  const artifactPath = join(download.downloadPath, "prek-autofix.json");
-  const rawLimit = maximumRawArtifactBytes(maxBytes, maxFiles);
-  const fileStat = await stat(artifactPath);
-  if (fileStat.size > rawLimit) throw new Error("artifact JSON is too large");
-  const raw = await readFile(artifactPath, "utf8");
-  if (Buffer.byteLength(raw) > rawLimit)
-    throw new Error("artifact JSON is too large");
-  const artifact = parseChangeArtifact(JSON.parse(raw), maxFiles, maxBytes);
-
-  const mutationCredential = selectMutationToken(
-    core.getInput("autofix-token"),
-    githubToken,
-  );
-  core.setSecret(mutationCredential.token);
-  const mutationOctokit = github.getOctokit(mutationCredential.token);
   const read = createReadClient(readOctokit, owner, repo);
-  const mutation = createMutationClient(mutationOctokit);
-  await applyArtifact(read, mutation, {
+  const source = await resolveSourcePullRequest(read, {
     baseRepository,
     runId,
-    runAttempt,
-    artifact,
-    artifactUrl: `${github.context.serverUrl}/${baseRepository}/actions/runs/${runId}/artifacts/${lookup.artifact.id}`,
-    sourceRunUrl: `${github.context.serverUrl}/${baseRepository}/actions/runs/${runId}`,
     sourceWorkflow,
-    commitMessage,
-    mutationTokenUsedGithubFallback: mutationCredential.usedGithubTokenFallback,
   });
+  const artifactUrl = `${github.context.serverUrl}/${baseRepository}/actions/runs/${runId}/artifacts/${lookup.artifact.id}`;
+  const sourceRunUrl = `${github.context.serverUrl}/${baseRepository}/actions/runs/${runId}`;
+  const fixRunUrl = `${github.context.serverUrl}/${baseRepository}/actions/runs/${github.context.runId}`;
+  const reporter = createFixReporter(
+    read,
+    createStatusClient(readOctokit, owner, repo),
+    { source, fixRunUrl, artifactUrl, sourceRunUrl },
+  );
+  await reporter.pending();
+
+  try {
+    const download = await artifactClient.downloadArtifact(lookup.artifact.id, {
+      findBy: {
+        token: githubToken,
+        workflowRunId: runId,
+        repositoryOwner: owner,
+        repositoryName: repo,
+      },
+    });
+    if (!download.downloadPath)
+      throw new Error("artifact download path is missing");
+    const artifactPath = join(download.downloadPath, "prek-autofix.json");
+    const rawLimit = maximumRawArtifactBytes(maxBytes, maxFiles);
+    const fileStat = await stat(artifactPath);
+    if (fileStat.size > rawLimit) throw new Error("artifact JSON is too large");
+    const raw = await readFile(artifactPath, "utf8");
+    if (Buffer.byteLength(raw) > rawLimit)
+      throw new Error("artifact JSON is too large");
+    const artifact = parseChangeArtifact(JSON.parse(raw), maxFiles, maxBytes);
+
+    const mutationCredential = selectMutationToken(
+      core.getInput("autofix-token"),
+      githubToken,
+    );
+    core.setSecret(mutationCredential.token);
+    const mutationOctokit = github.getOctokit(mutationCredential.token);
+    const mutation = createMutationClient(mutationOctokit);
+    await applyArtifact(read, mutation, {
+      baseRepository,
+      runId,
+      runAttempt,
+      artifact,
+      artifactUrl,
+      sourceRunUrl,
+      sourceWorkflow,
+      commitMessage,
+      mutationTokenUsedGithubFallback:
+        mutationCredential.usedGithubTokenFallback,
+      source,
+    });
+  } catch (error) {
+    await reporter.failure(error);
+    throw error;
+  }
+  await reporter.success();
 }
 
 void run().catch((error: unknown) => {

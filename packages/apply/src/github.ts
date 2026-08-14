@@ -8,6 +8,7 @@ import {
   type MutationClient,
   type PullRequest,
   type ReadClient,
+  type StatusClient,
   type TreeEntry,
   type WorkflowRun,
 } from "./apply";
@@ -30,6 +31,26 @@ function repositoryParts(repository: string): [string, string] {
     throw new Error("invalid repository");
   }
   return [owner, repo];
+}
+
+export function createStatusClient(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+): StatusClient {
+  return {
+    async setCommitStatus(sha, state, description, targetUrl) {
+      await octokit.rest.repos.createCommitStatus({
+        owner,
+        repo,
+        sha,
+        state,
+        context: "prek-autofix/fix",
+        description,
+        target_url: targetUrl,
+      });
+    },
+  };
 }
 
 export function createReadClient(

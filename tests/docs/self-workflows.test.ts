@@ -65,6 +65,7 @@ describe("repository maintenance workflows", () => {
       "actions": "read",
       "contents": "write",
       "pull-requests": "write",
+      "statuses": "write",
     });
     expect(checkout).toMatchObject({
       uses: expect.stringMatching(/^actions\/checkout@v\d+$/),

@@ -72,6 +72,17 @@ export interface MutationClient {
   ): Promise<void>;
 }
 
+export type CommitStatusState = "pending" | "success" | "failure";
+
+export interface StatusClient {
+  setCommitStatus(
+    sha: string,
+    state: CommitStatusState,
+    description: string,
+    targetUrl: string,
+  ): Promise<void>;
+}
+
 export interface MutationTreeEntry {
   path: string;
   mode: "100644" | "100755";
@@ -178,6 +189,7 @@ export interface ApplyRequest {
   sourceWorkflow: string;
   commitMessage: string;
   mutationTokenUsedGithubFallback: boolean;
+  source?: ResolvedSource;
 }
 
 export interface ApplyResult {
@@ -185,15 +197,23 @@ export interface ApplyResult {
   commitSha: string;
 }
 
-export async function applyArtifact(
+export interface ResolvedSource {
+  run: WorkflowRun;
+  pullRequest: PullRequest;
+}
+
+export interface ResolveSourceRequest {
+  baseRepository: string;
+  runId: number;
+  sourceWorkflow: string;
+}
+
+/** Resolve the trusted source run and its single associated open pull request. */
+export async function resolveSourcePullRequest(
   read: ReadClient,
-  mutation: MutationClient,
-  request: ApplyRequest,
-): Promise<ApplyResult> {
+  request: ResolveSourceRequest,
+): Promise<ResolvedSource> {
   repositoryParts(request.baseRepository);
-  if (request.artifact.operations.length === 0) {
-    throw new ApplyError("artifact contains no file operations");
-  }
   const run = await read.getWorkflowRun(request.runId);
   if (
     run.id !== request.runId ||
@@ -217,10 +237,30 @@ export async function applyArtifact(
       `expected exactly one associated open pull request; found ${candidates.length}`,
     );
   }
-  const pr = candidates[0]!;
-  if (pr.headRepositoryNodeId.length === 0) {
+  const pullRequest = candidates[0]!;
+  if (pullRequest.headRepositoryNodeId.length === 0) {
     throw new ApplyError("pull request head repository identity is missing");
   }
+  return { run, pullRequest };
+}
+
+export async function applyArtifact(
+  read: ReadClient,
+  mutation: MutationClient,
+  request: ApplyRequest,
+): Promise<ApplyResult> {
+  repositoryParts(request.baseRepository);
+  if (request.artifact.operations.length === 0) {
+    throw new ApplyError("artifact contains no file operations");
+  }
+  const source =
+    request.source ??
+    (await resolveSourcePullRequest(read, {
+      baseRepository: request.baseRepository,
+      runId: request.runId,
+      sourceWorkflow: request.sourceWorkflow,
+    }));
+  const { run, pullRequest: pr } = source;
 
   const claims = request.artifact.source;
   if (
@@ -321,7 +361,9 @@ export async function applyArtifact(
     const reason =
       status === 409 || status === 422
         ? "the branch changed or GitHub rejected the non-forced update"
-        : "GitHub rejected the fix commit";
+        : status === 403 && request.mutationTokenUsedGithubFallback
+          ? "GITHUB_TOKEN could not update the pull request branch; grant contents: write or configure PREK_AUTOFIX_TOKEN"
+          : "GitHub rejected the fix commit";
     await read.upsertComment(
       pr.number,
       recoveryComment(reason, request.artifactUrl, request.sourceRunUrl),

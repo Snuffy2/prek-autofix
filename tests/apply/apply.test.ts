@@ -4,6 +4,7 @@ import {
   ApplyError,
   applyArtifact,
   maximumRawArtifactBytes,
+  resolveSourcePullRequest,
   type MutationClient,
   type ReadClient,
 } from "../../packages/apply/src/apply";
@@ -82,6 +83,23 @@ const request = (artifact: ChangeArtifact) => ({
 });
 
 describe("applyArtifact", () => {
+  it("reuses a source resolved before artifact and token processing", async () => {
+    const { artifact, read, mutation } = fixture();
+    const source = await resolveSourcePullRequest(read, {
+      baseRepository: "base/repo",
+      runId: 7,
+      sourceWorkflow: "prek-autofix",
+    });
+    vi.mocked(read.getWorkflowRun).mockClear();
+    vi.mocked(read.listAssociatedPullRequests).mockClear();
+
+    await expect(
+      applyArtifact(read, mutation, { ...request(artifact), source }),
+    ).resolves.toEqual({ pullRequestNumber: 4, commitSha: "commit" });
+    expect(read.getWorkflowRun).not.toHaveBeenCalled();
+    expect(read.listAssociatedPullRequests).not.toHaveBeenCalled();
+  });
+
   it("rejects empty artifacts and unsafe raw-size arithmetic", async () => {
     const { artifact, read, mutation } = fixture();
     artifact.operations = [];
@@ -421,6 +439,41 @@ describe("applyArtifact", () => {
     expect(read.upsertComment).toHaveBeenCalled();
     expect(vi.mocked(read.upsertComment).mock.calls[0]?.[1]).not.toContain(
       "ghp_secret",
+    );
+  });
+
+  it("explains a denied GITHUB_TOKEN fallback without exposing API details", async () => {
+    const { artifact, read, mutation } = fixture();
+    const run = await read.getWorkflowRun(7);
+    vi.mocked(read.getWorkflowRun).mockResolvedValue({
+      ...run,
+      headRepository: "base/repo",
+    });
+    const pullRequest = (await read.listAssociatedPullRequests("x"))[0]!;
+    vi.mocked(read.listAssociatedPullRequests).mockResolvedValue([
+      {
+        ...pullRequest,
+        baseRepository: "base/repo",
+        headRepository: "base/repo",
+      },
+    ]);
+    vi.mocked(mutation.createBlob).mockReset().mockRejectedValue({
+      status: 403,
+      message: "remote included ghp_do_not_leak",
+    });
+
+    await expect(
+      applyArtifact(read, mutation, {
+        ...request(artifact),
+        mutationTokenUsedGithubFallback: true,
+      }),
+    ).rejects.toThrow("GITHUB_TOKEN could not update");
+    expect(read.upsertComment).toHaveBeenCalledWith(
+      4,
+      expect.stringContaining("grant contents: write"),
+    );
+    expect(vi.mocked(read.upsertComment).mock.calls[0]?.[1]).not.toContain(
+      "ghp_do_not_leak",
     );
   });
 });

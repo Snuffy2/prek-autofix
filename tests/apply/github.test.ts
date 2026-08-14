@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createMutationClient,
   createReadClient,
+  createStatusClient,
 } from "../../packages/apply/src/github";
 import { MAX_TOTAL_PATH_COMPONENTS } from "../../packages/shared/src/artifact";
 
@@ -10,7 +11,10 @@ function octokitFixture() {
   const octokit = {
     rest: {
       actions: { getWorkflowRun: vi.fn() },
-      repos: { listPullRequestsAssociatedWithCommit: vi.fn() },
+      repos: {
+        createCommitStatus: vi.fn(),
+        listPullRequestsAssociatedWithCommit: vi.fn(),
+      },
       pulls: { get: vi.fn() },
       git: {
         getCommit: vi.fn(),
@@ -33,6 +37,28 @@ function octokitFixture() {
 }
 
 describe("GitHub apply adapters", () => {
+  it("publishes a named status on the source pull request head", async () => {
+    const { octokit } = octokitFixture();
+    const status = createStatusClient(octokit as never, "base", "repo");
+
+    await status.setCommitStatus(
+      "head",
+      "failure",
+      "Fix action failed",
+      "https://example/fix",
+    );
+
+    expect(octokit.rest.repos.createCommitStatus).toHaveBeenCalledWith({
+      owner: "base",
+      repo: "repo",
+      sha: "head",
+      state: "failure",
+      context: "prek-autofix/fix",
+      description: "Fix action failed",
+      target_url: "https://example/fix",
+    });
+  });
+
   it("maps lightweight workflow and fork PR reads through the base repository", async () => {
     const { octokit } = octokitFixture();
     octokit.rest.actions.getWorkflowRun.mockResolvedValue({
