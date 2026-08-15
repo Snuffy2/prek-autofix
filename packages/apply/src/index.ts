@@ -81,13 +81,12 @@ async function run(): Promise<void> {
     runId,
     sourceWorkflow,
   });
-  const artifactUrl = `${github.context.serverUrl}/${baseRepository}/actions/runs/${runId}/artifacts/${lookup.artifact.id}`;
   const sourceRunUrl = `${github.context.serverUrl}/${baseRepository}/actions/runs/${runId}`;
   const fixRunUrl = `${github.context.serverUrl}/${baseRepository}/actions/runs/${github.context.runId}`;
   const reporter = createFixReporter(
     read,
     createStatusClient(readOctokit, owner, repo),
-    { source, fixRunUrl, artifactUrl, sourceRunUrl },
+    { source, fixRunUrl, sourceRunUrl },
   );
   await reporter.pending();
 
@@ -123,7 +122,6 @@ async function run(): Promise<void> {
       runId,
       runAttempt,
       artifact,
-      artifactUrl,
       sourceRunUrl,
       sourceWorkflow,
       commitMessage,

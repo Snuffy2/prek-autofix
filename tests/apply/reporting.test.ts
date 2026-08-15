@@ -37,7 +37,6 @@ function fixture() {
   const reporter = createFixReporter(read, status, {
     source,
     fixRunUrl: "https://example/fix",
-    artifactUrl: "https://example/artifact",
     sourceRunUrl: "https://example/source",
   });
   return { read, reporter, source, status };
@@ -86,7 +85,7 @@ describe("fix result reporting", () => {
     expect(read.upsertComment).toHaveBeenCalledWith(
       4,
       expect.stringMatching(
-        /PREK_AUTOFIX_TOKEN.*Inspect the fix run.*download the generated artifact/s,
+        /PREK_AUTOFIX_TOKEN.*Inspect the fix run.*inspect the source run/s,
       ),
     );
   });
@@ -105,7 +104,7 @@ describe("fix result reporting", () => {
     expect(read.upsertComment).toHaveBeenCalledWith(
       4,
       expect.stringContaining(
-        "run `prek run -a` locally, address any remaining issues, and push the changes",
+        "run the repository's configured prek command (normally `prek run -a`), address any remaining issues, and push the changes",
       ),
     );
   });

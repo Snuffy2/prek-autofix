@@ -26,7 +26,6 @@ export interface FixReporter {
 export interface FixReporterRequest {
   source: ResolvedSource;
   fixRunUrl: string;
-  artifactUrl: string;
   sourceRunUrl: string;
 }
 
@@ -147,7 +146,7 @@ export function createFixReporter(
               `${COMMENT_MARKER}
 prek-autofix could not apply the generated changes: **${failure.reason}.**
 
-[Inspect the fix run](${request.fixRunUrl}), [download the generated artifact](${request.artifactUrl}), or [inspect the source run](${request.sourceRunUrl}). Apply the fixes locally, push them to the pull request branch, and rerun the checks.`,
+[Inspect the fix run](${request.fixRunUrl}) or [inspect the source run](${request.sourceRunUrl}). To recover locally, run the repository's configured prek command (normally \`prek run -a\`), address any remaining issues, and push the changes.`,
             ),
           ),
         );

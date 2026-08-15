@@ -75,7 +75,6 @@ const request = (artifact: ChangeArtifact) => ({
   runId: 7,
   runAttempt: 2,
   artifact,
-  artifactUrl: "https://example/artifact",
   sourceRunUrl: "https://example/run",
   sourceWorkflow: "prek-autofix",
   commitMessage: "fix",
@@ -374,7 +373,7 @@ describe("applyArtifact", () => {
     expect(read.upsertComment).toHaveBeenCalledWith(
       4,
       expect.stringContaining(
-        "run `prek run -a` locally, address any remaining issues, and push the changes",
+        "run the repository's configured prek command (normally `prek run -a`), address any remaining issues, and push the changes",
       ),
     );
     expect(read.getMaintainerCanModify).not.toHaveBeenCalled();
@@ -489,7 +488,7 @@ describe("applyArtifact", () => {
     expect(mutation.updateRef).toHaveBeenCalledTimes(1);
     expect(read.upsertComment).toHaveBeenCalledWith(
       4,
-      expect.stringContaining("Download the generated artifact"),
+      expect.stringContaining("Inspect the source run"),
     );
   });
 
