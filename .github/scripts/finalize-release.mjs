@@ -73,8 +73,9 @@ function main() {
   const releaseTag = required("RELEASE_TAG");
   const sourceSha = required("SOURCE_SHA");
   const token = required("GH_TOKEN");
-  const match = SEMVER_PATTERN.exec(releaseTag);
-  if (!match) throw new Error("Release tag must have vMAJOR.MINOR.PATCH form");
+  if (!SEMVER_PATTERN.test(releaseTag)) {
+    throw new Error("Release tag must have vMAJOR.MINOR.PATCH form");
+  }
   if (!/^[0-9a-f]{40}$/.test(sourceSha)) {
     throw new Error("Release source SHA is invalid");
   }

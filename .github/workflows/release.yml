@@ -18,7 +18,6 @@ jobs:
     outputs:
       major-tag: ${{ steps.release.outputs.major-tag }}
       source-sha: ${{ steps.release.outputs.source-sha }}
-      version: ${{ steps.release.outputs.version }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out published release source

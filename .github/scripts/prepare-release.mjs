@@ -65,7 +65,7 @@ function main() {
   }
   appendFileSync(
     outputPath,
-    `major-tag=v${match[1]}\nsource-sha=${sourceSha}\nversion=${version}\n`,
+    `major-tag=v${match[1]}\nsource-sha=${sourceSha}\n`,
   );
 }
 

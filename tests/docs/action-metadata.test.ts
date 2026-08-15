@@ -353,7 +353,7 @@ describe("action metadata", () => {
     const prepared = prepareRelease("v1.0.8", "1.0.7");
 
     expect(prepared.output).toMatch(
-      /^major-tag=v1\nsource-sha=[0-9a-f]{40}\nversion=1\.0\.8\n$/,
+      /^major-tag=v1\nsource-sha=[0-9a-f]{40}\n$/,
     );
     expect(prepared.packageJson.version).toBe("1.0.8");
     expect(prepared.packageLock.version).toBe("1.0.8");
