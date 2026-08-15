@@ -50,8 +50,11 @@ function decideRelease(
   const directory = mkdtempSync(join(tmpdir(), "prek-autofix-release-"));
   const tagsFile = join(directory, "tags.json");
   const releasesFile = join(directory, "releases.json");
-  writeFileSync(tagsFile, JSON.stringify([tags]));
-  writeFileSync(releasesFile, JSON.stringify([releases]));
+  writeFileSync(tagsFile, JSON.stringify([tags.slice(0, 1), tags.slice(1)]));
+  writeFileSync(
+    releasesFile,
+    JSON.stringify([releases.slice(0, 1), releases.slice(1)]),
+  );
   try {
     return execFileSync(process.execPath, [script], {
       encoding: "utf8",
@@ -143,11 +146,16 @@ function runReleaseUpdate(
   const ghPath = join(directory, "gh");
   const sleepPath = join(directory, "sleep");
   const callsPath = join(directory, "calls");
+  const releaseMatch =
+    /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.exec(releaseTag);
+  if (!releaseMatch) {
+    throw new Error("release update fixture requires a valid release tag");
+  }
+  const majorTag = `v${releaseMatch[1]}`;
   const tagsJson = JSON.stringify([tags]);
   const releasesJson = JSON.stringify([releases]);
   const movingTagCommitSha =
-    tags.find((tag) => tag.name === `v${releaseTag.split(".")[0]!.slice(1)}`)
-      ?.commit.sha ?? "";
+    tags.find((tag) => tag.name === majorTag)?.commit.sha ?? "";
   const observedDirectRefOid = directRefOid ?? movingTagCommitSha;
   writeFileSync(
     ghPath,
@@ -160,7 +168,7 @@ elif [[ "$*" == *"releases?per_page=100"* ]]; then
   printf '%s' "$RELEASES_JSON"
 elif [[ "$*" == "api repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG --jq .object | [.sha, .type] | @tsv" ]]; then
   printf '%s\tcommit\n' "$POINT_REF_OID"
-elif [[ "$*" == "api repos/$GITHUB_REPOSITORY/git/ref/tags/v1 --jq .object | [.sha, .type] | @tsv" ]]; then
+elif [[ "$*" == "api repos/$GITHUB_REPOSITORY/git/ref/tags/$MAJOR_TAG --jq .object | [.sha, .type] | @tsv" ]]; then
   printf '%s\\t%s\\n' "$DIRECT_REF_OID" "$DIRECT_REF_TYPE"
 elif [[ "$*" == "api repos/$GITHUB_REPOSITORY/git/tags/$DIRECT_REF_OID --jq .object | [.sha, .type] | @tsv" ]]; then
   printf '%s\\tcommit\\n' "$MOVING_TAG_COMMIT_SHA"
@@ -171,7 +179,7 @@ elif [[ "$*" == api\\ graphql* ]]; then
   printf '%s\\n' '{"data":{"updateRefs":{"clientMutationId":null}}}'
 elif [[ "$*" == api\\ --method\\ POST* ]]; then
   [[ "$FAILURE" != "create-race" ]] || exit 1
-  printf '%s\\n' '{"ref":"refs/tags/v1"}'
+  printf '{"ref":"refs/tags/%s"}\\n' "$MAJOR_TAG"
 else
   printf 'unexpected gh call: %s\\n' "$*" >&2
   exit 2
@@ -195,6 +203,7 @@ fi
           RELEASES_JSON: releasesJson,
           DIRECT_REF_OID: observedDirectRefOid,
           DIRECT_REF_TYPE: directRefOid === undefined ? "commit" : "tag",
+          MAJOR_TAG: majorTag,
           MOVING_TAG_COMMIT_SHA: movingTagCommitSha,
           POINT_REF_OID: pointRefOid,
           FAILURE: failure,
@@ -357,7 +366,9 @@ describe("action metadata", () => {
       (step: { id?: string }) => step.id === "release",
     );
 
-    expect(preparation?.run).toBe("bash .github/scripts/prepare-release.sh");
+    expect(preparation?.run).toBe(
+      "bash tooling/.github/scripts/prepare-release.sh",
+    );
     expect(finalization?.run).toBe(
       "node tooling/.github/scripts/finalize-release.mjs",
     );
@@ -386,7 +397,7 @@ describe("action metadata", () => {
 
   it("isolates release preparation from repository write credentials", async () => {
     const workflow = await metadata(".github/workflows/release.yml");
-    const checkout = workflow.jobs.prepare.steps.find(
+    const prepareCheckouts = workflow.jobs.prepare.steps.filter(
       (step: { uses?: string }) => step.uses?.startsWith("actions/checkout@"),
     );
     const finalCheckouts = workflow.jobs.finalize.steps.filter(
@@ -396,7 +407,19 @@ describe("action metadata", () => {
       (step: { uses?: string }) => step.uses?.startsWith("actions/checkout@"),
     );
     expect(workflow.permissions).toEqual({ contents: "read" });
-    expect(checkout?.with["persist-credentials"]).toBe(false);
+    expect(prepareCheckouts).toHaveLength(2);
+    expect(prepareCheckouts[0]?.with).toMatchObject({
+      "ref": "${{ github.event.release.tag_name }}",
+      "fetch-depth": 0,
+      "persist-credentials": false,
+    });
+    expect(prepareCheckouts[0]?.with.path).toBeUndefined();
+    expect(prepareCheckouts[1]?.with).toMatchObject({
+      "ref": "${{ github.workflow_sha }}",
+      "path": "tooling",
+      "sparse-checkout": ".github/scripts",
+      "persist-credentials": false,
+    });
     expect(workflow.concurrency).toEqual({
       "group": "release-${{ github.repository }}",
       "cancel-in-progress": false,
