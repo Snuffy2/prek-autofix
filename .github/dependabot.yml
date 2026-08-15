@@ -16,6 +16,8 @@ updates:
       - dependency-name: "typescript"
         versions:
           - ">=7.0.0"
+    cooldown:
+      default-days: 7
   - package-ecosystem: "github-actions"
     directories:
       - "/"
@@ -35,3 +37,5 @@ updates:
         group-by: "dependency-name"
         update-types:
           - "major"
+    cooldown:
+      default-days: 7
