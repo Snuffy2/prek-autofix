@@ -127,6 +127,51 @@ function prepareRelease(
   }
 }
 
+function runPrepareReleaseShell(failingCommand: string): void {
+  const directory = mkdtempSync(join(tmpdir(), "prek-autofix-prepare-shell-"));
+  const gitPath = join(directory, "git");
+  for (const command of ["node", "npm"]) {
+    const path = join(directory, command);
+    writeFileSync(path, "#!/usr/bin/env bash\nexit 0\n");
+    chmodSync(path, 0o755);
+  }
+  writeFileSync(
+    gitPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == "$FAILING_COMMAND" ]]; then
+  exit 1
+fi
+case "$*" in
+"status --porcelain"|"diff --check"|"diff --name-only"|"ls-files --others --exclude-standard"|"add -- dist/apply/index.js dist/collect/index.js package-lock.json package.json")
+  exit 0
+  ;;
+esac
+printf 'unexpected git call: %s\n' "$*" >&2
+exit 2
+`,
+  );
+  chmodSync(gitPath, 0o755);
+  try {
+    execFileSync("bash", [resolve(".github/scripts/prepare-release.sh")], {
+      cwd: resolve("."),
+      env: {
+        ...process.env,
+        FAILING_COMMAND: failingCommand,
+        PATH: `${directory}:${process.env.PATH}`,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (error) {
+    const stderr = (error as { stderr?: Buffer | string }).stderr;
+    throw new Error(stderr?.toString().trim() || "release preparation failed", {
+      cause: error,
+    });
+  } finally {
+    rmSync(directory, { recursive: true });
+  }
+}
+
 function runReleaseUpdate(
   workflow: Record<string, any>,
   releaseTag: string,
@@ -141,6 +186,7 @@ function runReleaseUpdate(
   failure: "none" | "external-move" | "create-race" = "none",
   directRefOid?: string,
   pointRefOid = targetSha,
+  tagCycle: "none" | "point" | "major" = "none",
 ): string {
   const directory = mkdtempSync(join(tmpdir(), "prek-autofix-release-write-"));
   const ghPath = join(directory, "gh");
@@ -167,9 +213,22 @@ if [[ "$*" == *"tags?per_page=100"* ]]; then
 elif [[ "$*" == *"releases?per_page=100"* ]]; then
   printf '%s' "$RELEASES_JSON"
 elif [[ "$*" == "api repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG --jq .object | [.sha, .type] | @tsv" ]]; then
-  printf '%s\tcommit\n' "$POINT_REF_OID"
+  if [[ "$TAG_CYCLE" == "point" ]]; then
+    printf '%s\ttag\n' "$POINT_REF_OID"
+  else
+    printf '%s\tcommit\n' "$POINT_REF_OID"
+  fi
 elif [[ "$*" == "api repos/$GITHUB_REPOSITORY/git/ref/tags/$MAJOR_TAG --jq .object | [.sha, .type] | @tsv" ]]; then
   printf '%s\\t%s\\n' "$DIRECT_REF_OID" "$DIRECT_REF_TYPE"
+elif [[ "$TAG_CYCLE" == "point" && "$*" == "api repos/$GITHUB_REPOSITORY/git/tags/$POINT_REF_OID --jq .object | [.sha, .type] | @tsv" ]]; then
+  peel_calls="$(grep -c '/git/tags/' "$CALLS_PATH")"
+  [[ "$peel_calls" -le 16 ]] || exit 3
+  printf '%s\\ttag\\n' "$POINT_REF_OID"
+elif [[ "$TAG_CYCLE" == "major" && "$*" == api\\ repos/$GITHUB_REPOSITORY/git/tags/* ]]; then
+  peel_calls="$(grep -c '/git/tags/' "$CALLS_PATH")"
+  [[ "$peel_calls" -le 16 ]] || exit 3
+  object_oid="\${2##*/}"
+  printf '%s\\ttag\\n' "$object_oid"
 elif [[ "$*" == "api repos/$GITHUB_REPOSITORY/git/tags/$DIRECT_REF_OID --jq .object | [.sha, .type] | @tsv" ]]; then
   printf '%s\\tcommit\\n' "$MOVING_TAG_COMMIT_SHA"
 elif [[ "$*" == "api repos/$GITHUB_REPOSITORY --jq .node_id" ]]; then
@@ -206,6 +265,7 @@ fi
           MAJOR_TAG: majorTag,
           MOVING_TAG_COMMIT_SHA: movingTagCommitSha,
           POINT_REF_OID: pointRefOid,
+          TAG_CYCLE: tagCycle,
           FAILURE: failure,
           GITHUB_REPOSITORY: "owner/repository",
           GITHUB_WORKSPACE: resolve("."),
@@ -395,6 +455,15 @@ describe("action metadata", () => {
     );
   });
 
+  it("fails closed when release path collection commands fail", () => {
+    expect(() => runPrepareReleaseShell("diff --name-only")).toThrow(
+      "Unable to collect changed release paths",
+    );
+    expect(() =>
+      runPrepareReleaseShell("ls-files --others --exclude-standard"),
+    ).toThrow("Unable to collect untracked release paths");
+  });
+
   it("isolates release preparation from repository write credentials", async () => {
     const workflow = await metadata(".github/workflows/release.yml");
     const prepareCheckouts = workflow.jobs.prepare.steps.filter(
@@ -463,6 +532,14 @@ describe("action metadata", () => {
     );
     expect(workflow.jobs.finalize.outputs["release-sha"]).toBe(
       "${{ steps.release.outputs.sha }}",
+    );
+    const releaseNodeSetup = workflow.jobs.prepare.steps.find(
+      (step: { uses?: string }) => step.uses?.startsWith("actions/setup-node@"),
+    );
+    expect(releaseNodeSetup?.with).toMatchObject({ "node-version": 24 });
+    expect([undefined, false]).toContain(releaseNodeSetup?.with?.cache);
+    expect([undefined, false]).toContain(
+      releaseNodeSetup?.with?.["package-manager-cache"],
     );
   });
 
@@ -620,9 +697,59 @@ describe("action metadata", () => {
       ],
     );
 
-    expect(calls.indexOf("git/ref/tags/v1.10.0")).toBeLessThan(
-      calls.indexOf("tags?per_page=100"),
-    );
+    const exactRefCall = calls.indexOf("git/ref/tags/v1.10.0");
+    const tagListCall = calls.indexOf("tags?per_page=100");
+    expect(exactRefCall).toBeGreaterThanOrEqual(0);
+    expect(tagListCall).toBeGreaterThanOrEqual(0);
+    expect(exactRefCall).toBeLessThan(tagListCall);
+  });
+
+  it("bounds annotated release-tag peeling", async () => {
+    const workflow = await metadata(".github/workflows/release.yml");
+    const targetSha = "2".repeat(40);
+
+    expect(() =>
+      runReleaseUpdate(
+        workflow,
+        "v1.10.0",
+        targetSha,
+        [{ name: "v1.10.0", commit: { sha: targetSha } }],
+        [],
+        "none",
+        undefined,
+        "a".repeat(40),
+        "point",
+      ),
+    ).toThrow("Annotated release tag exceeds maximum peel depth of 16");
+  });
+
+  it("bounds annotated moving-tag peeling", async () => {
+    const workflow = await metadata(".github/workflows/release.yml");
+    const oldSha = "1".repeat(40);
+    const targetSha = "2".repeat(40);
+
+    expect(() =>
+      runReleaseUpdate(
+        workflow,
+        "v1.10.0",
+        targetSha,
+        [
+          { name: "v1", commit: { sha: oldSha } },
+          { name: "v1.9.9", commit: { sha: oldSha } },
+          { name: "v1.10.0", commit: { sha: targetSha } },
+        ],
+        ["v1.9.9", "v1.10.0"].map((tagName) => ({
+          tag_name: tagName,
+          draft: false,
+          prerelease: false,
+          published_at: "2026-01-01T00:00:00Z",
+        })),
+        "none",
+        "a".repeat(40),
+        targetSha,
+        "major",
+      ),
+    ).toThrow("Annotated major tag exceeds maximum peel depth of 16");
   });
 
   it("fails closed when the exact immutable release ref does not match", async () => {
@@ -706,11 +833,17 @@ describe("action metadata", () => {
         { name: "v2.10.12", commit: { sha: targetSha } },
       ]),
     ).toThrow(/known immutable stable release/);
-    expect(() =>
+  });
+
+  it("trusts the exact release ref over a stale paginated tag SHA", () => {
+    const script = RELEASE_DECISION_SCRIPT;
+    const targetSha = "2".repeat(40);
+
+    expect(
       decideRelease(script, "v2.10.12", targetSha, [
         { name: "v2.10.12", commit: { sha: "e".repeat(40) } },
       ]),
-    ).toThrow(/does not match its immutable tag/);
+    ).toBe(`create\t${targetSha}`);
   });
 
   it("ignores tags without a successfully published stable release", () => {

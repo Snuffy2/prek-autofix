@@ -22,8 +22,16 @@ allowed_paths=(
   "package-lock.json"
   "package.json"
 )
-mapfile -t changed_paths < <(git diff --name-only)
-mapfile -t untracked_paths < <(git ls-files --others --exclude-standard)
+if ! changed_paths_output="$(git diff --name-only)"; then
+  echo "Unable to collect changed release paths" >&2
+  exit 1
+fi
+if ! untracked_paths_output="$(git ls-files --others --exclude-standard)"; then
+  echo "Unable to collect untracked release paths" >&2
+  exit 1
+fi
+mapfile -t changed_paths <<< "$changed_paths_output"
+mapfile -t untracked_paths <<< "$untracked_paths_output"
 for path in "${changed_paths[@]}" "${untracked_paths[@]}"; do
   [[ -z "$path" ]] && continue
   allowed=false
