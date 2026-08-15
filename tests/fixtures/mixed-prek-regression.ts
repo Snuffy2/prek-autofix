@@ -1,1 +1,1 @@
-export const mixedPrekRegression:number="unfixable type error"
+export const mixedPrekRegression: number = "unfixable type error";
