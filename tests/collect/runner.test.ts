@@ -601,14 +601,17 @@ with open(${JSON.stringify(observation)}, "w", encoding="ascii") as output:
       const descendantMutation = join(directory, "descendant-mutation");
       const command = [
         'const {spawn}=require("node:child_process")',
-        `const child=spawn(process.execPath,["-e",${JSON.stringify(`setTimeout(()=>require("node:fs").writeFileSync(${JSON.stringify(descendantMutation)},"escaped"),500);setInterval(()=>{},1000)`)}])`,
+        'const child=spawn(process.execPath,["-e","setTimeout(()=>require(\\"node:fs\\").writeFileSync(process.env.DESCENDANT_MUTATION,\\"escaped\\"),500);setInterval(()=>{},1000)"])',
         "setInterval(()=>{},1000)",
       ].join(";");
 
       await expect(
         executeCommand(process.execPath, ["-e", command], {
           cwd: process.cwd(),
-          env: process.env,
+          env: {
+            ...process.env,
+            DESCENDANT_MUTATION: descendantMutation,
+          },
           timeoutMs: 100,
           superviseProcessTree: true,
           trustedPythonPath: "/usr/bin/python3",
