@@ -381,7 +381,7 @@ describe("runCollect", () => {
         UV_LOCKED: "1",
         UV_NO_CONFIG: "1",
         UV_OFFLINE: "1",
-        UV_INDEX_URL: "https://token@example.invalid/simple",
+        UV_INDEX_URL: "<redacted-noncredential-sentinel>",
         GITHUB_TOKEN: "token",
         GH_TOKEN: "token",
         ACTIONS_RUNTIME_TOKEN: "token",
