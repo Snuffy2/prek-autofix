@@ -203,6 +203,13 @@ describe("action metadata", () => {
     expect(action.runs.steps).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
+          id: "review",
+          env: expect.objectContaining({
+            PREK_AUTOFIX_MAX_FILES: "${{ inputs.max-files }}",
+            PREK_AUTOFIX_MAX_BYTES: "${{ inputs.max-bytes }}",
+          }),
+        }),
+        expect.objectContaining({
           uses: expect.stringMatching(/^actions\/setup-node@v\d+$/),
         }),
         expect.objectContaining({
