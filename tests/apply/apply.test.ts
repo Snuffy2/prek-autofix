@@ -373,7 +373,7 @@ describe("applyArtifact", () => {
     expect(read.upsertComment).toHaveBeenCalledWith(
       4,
       expect.stringContaining(
-        "https://github.com/Snuffy2/prek-autofix#1-create-the-cross-repository-token-when-needed",
+        "[See instructions here](https://github.com/Snuffy2/prek-autofix#1-create-the-cross-repository-token-when-needed)",
       ),
     );
     expect(read.getMaintainerCanModify).not.toHaveBeenCalled();
