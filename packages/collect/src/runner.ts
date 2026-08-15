@@ -92,6 +92,7 @@ const SAFE_CHILD_ENVIRONMENT = new Set([
   "TEMP",
   "TMP",
   "TMPDIR",
+  "UV_CACHE_DIR",
   "UV_FROZEN",
   "UV_LOCKED",
   "UV_NO_CONFIG",

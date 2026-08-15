@@ -137,16 +137,19 @@ For a uv-managed Python project, set up uv before `review`:
         with:
           python-version: "3.14"
           enable-cache: true
+          ignore-nothing-to-cache: true
           cache-dependency-glob: uv.lock
 ```
 <!-- prettier-ignore-end -->
 
 `review` installs and caches `prek`; it does not install project dependencies.
 Use your project's corresponding setup and locked install command for other
-languages. Hooks receive the noncredential uv policy variables `UV_FROZEN`,
-`UV_LOCKED`, `UV_NO_CONFIG`, and `UV_OFFLINE`, so CI can require a committed
-lockfile without maintaining a separate hook configuration. Credential-bearing
-uv settings such as `UV_INDEX_URL` remain excluded from the hook environment.
+languages. Hooks receive `UV_CACHE_DIR` when `setup-uv` enables caching, along
+with the noncredential uv policy variables `UV_FROZEN`, `UV_LOCKED`,
+`UV_NO_CONFIG`, and `UV_OFFLINE`. This lets cache cleanup find the hook cache
+and lets CI require a committed lockfile without maintaining a separate hook
+configuration. Credential-bearing uv settings such as `UV_INDEX_URL` remain
+excluded from the hook environment.
 
 ### 3. Add the fix workflow
 
