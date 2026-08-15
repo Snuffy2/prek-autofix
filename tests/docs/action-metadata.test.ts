@@ -172,7 +172,7 @@ function runReleaseUpdate(
     prerelease: boolean;
     published_at: string | null;
   }>,
-  failure: "none" | "external-move" | "create-race" = "none",
+  failure: "none" | "release-tag-move" | "create-race" = "none",
   directRefOid?: string,
   pointRefOid = targetSha,
   tagCycle: "none" | "point" | "major" = "none",
@@ -223,11 +223,8 @@ elif [[ "$*" == "api repos/$GITHUB_REPOSITORY/git/tags/$DIRECT_REF_OID --jq .obj
 elif [[ "$*" == "api repos/$GITHUB_REPOSITORY --jq .node_id" ]]; then
   printf '%s\\n' 'R_repo_node'
 elif [[ "$*" == api\\ graphql* ]]; then
-  [[ "$FAILURE" != "external-move" ]] || exit 1
+  [[ "$FAILURE" != "release-tag-move" && "$FAILURE" != "create-race" ]] || exit 1
   printf '%s\\n' '{"data":{"updateRefs":{"clientMutationId":null}}}'
-elif [[ "$*" == api\\ --method\\ POST* ]]; then
-  [[ "$FAILURE" != "create-race" ]] || exit 1
-  printf '{"ref":"refs/tags/%s"}\\n' "$MAJOR_TAG"
 else
   printf 'unexpected gh call: %s\\n' "$*" >&2
   exit 2
@@ -558,9 +555,12 @@ describe("action metadata", () => {
       annotatedTagOid,
     );
 
-    expect(calls).toContain(`-f beforeOid=${annotatedTagOid}`);
-    expect(calls).not.toContain(`-f beforeOid=${oldSha}`);
-    expect(calls).toContain(`-f afterOid=${targetSha}`);
+    expect(calls).toContain(`-f releaseOid=${targetSha}`);
+    expect(calls).toContain("beforeOid: $releaseOid");
+    expect(calls).toContain("afterOid: $releaseOid");
+    expect(calls).toContain(`-f majorBeforeOid=${annotatedTagOid}`);
+    expect(calls).not.toContain(`-f majorBeforeOid=${oldSha}`);
+    expect(calls).toContain(`-f majorAfterOid=${targetSha}`);
   });
 
   it("bounds annotated release-tag peeling", () => {
@@ -623,7 +623,7 @@ describe("action metadata", () => {
     ).toThrow(/does not match its exact immutable tag ref/u);
   });
 
-  it("fails closed when the moving tag changes after observation", () => {
+  it("atomically rejects release-tag movement before updating the major tag", () => {
     const oldSha = "1".repeat(40);
     const targetSha = "2".repeat(40);
     const releases = ["v1.9.9", "v1.10.0"].map((tagName) => ({
@@ -643,12 +643,12 @@ describe("action metadata", () => {
           { name: "v1.10.0", commit: { sha: targetSha } },
         ],
         releases,
-        "external-move",
+        "release-tag-move",
       ),
     ).toThrow();
   });
 
-  it("fails closed when another run wins an absent-tag creation race", () => {
+  it("uses absence CAS and rejects a competing major-tag creation", () => {
     const targetSha = "2".repeat(40);
     const releases = [
       {
@@ -658,6 +658,17 @@ describe("action metadata", () => {
         published_at: "2026-01-01T00:00:00Z",
       },
     ];
+
+    const calls = runReleaseUpdate(
+      "v1.10.0",
+      targetSha,
+      [{ name: "v1.10.0", commit: { sha: targetSha } }],
+      releases,
+    );
+    expect(calls).toContain(
+      'beforeOid: "0000000000000000000000000000000000000000"',
+    );
+    expect(calls).toContain(`-f releaseOid=${targetSha}`);
 
     expect(() =>
       runReleaseUpdate(
