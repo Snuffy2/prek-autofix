@@ -368,12 +368,12 @@ describe("applyArtifact", () => {
         mutationTokenUsedGithubFallback: true,
       }),
     ).rejects.toThrow(
-      "Cannot apply fixes to this fork because PREK_AUTOFIX_TOKEN is not configured",
+      "Cannot apply fixes to this fork because the GitHub PAT token PREK_AUTOFIX_TOKEN is not configured",
     );
     expect(read.upsertComment).toHaveBeenCalledWith(
       4,
       expect.stringContaining(
-        "run the repository's configured prek command (normally `prek run -a`), address any remaining issues, and push the changes",
+        "https://github.com/Snuffy2/prek-autofix#1-create-the-cross-repository-token-when-needed",
       ),
     );
     expect(read.getMaintainerCanModify).not.toHaveBeenCalled();

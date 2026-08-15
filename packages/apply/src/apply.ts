@@ -98,7 +98,7 @@ export class ApplyError extends Error {
 }
 
 export const FORK_AUTOFIX_TOKEN_REQUIRED =
-  "Cannot apply fixes to this fork because PREK_AUTOFIX_TOKEN is not configured. Add a token that can update the pull request branch";
+  "Cannot apply fixes to this fork because the GitHub PAT token PREK_AUTOFIX_TOKEN is not configured. The repo owner needs add that token before autofix will work. See [https://github.com/Snuffy2/prek-autofix#1-create-the-cross-repository-token-when-needed](https://github.com/Snuffy2/prek-autofix#1-create-the-cross-repository-token-when-needed)";
 
 export const SAFE_BRANCH_UPDATE_REJECTED =
   "GitHub could not update the pull request branch because it changed or the update was not allowed";

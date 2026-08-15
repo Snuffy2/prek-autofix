@@ -104,7 +104,13 @@ describe("fix result reporting", () => {
     expect(read.upsertComment).toHaveBeenCalledWith(
       4,
       expect.stringContaining(
-        "run the repository's configured prek command (normally `prek run -a`), address any remaining issues, and push the changes",
+        "The repo owner needs add that token before autofix will work",
+      ),
+    );
+    expect(read.upsertComment).toHaveBeenCalledWith(
+      4,
+      expect.stringContaining(
+        "[https://github.com/Snuffy2/prek-autofix#1-create-the-cross-repository-token-when-needed](https://github.com/Snuffy2/prek-autofix#1-create-the-cross-repository-token-when-needed)",
       ),
     );
   });
