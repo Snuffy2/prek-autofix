@@ -172,7 +172,14 @@ function runReleaseUpdate(
     prerelease: boolean;
     published_at: string | null;
   }>,
-  failure: "none" | "release-tag-move" | "create-race" = "none",
+  failure:
+    | "none"
+    | "release-tag-move"
+    | "create-race"
+    | "major-ref-read"
+    | "malformed-major-ref"
+    | "major-peel-read"
+    | "malformed-major-peel" = "none",
   directRefOid?: string,
   pointRefOid = targetSha,
   tagCycle: "none" | "point" | "major" = "none",
@@ -208,7 +215,12 @@ elif [[ "$*" == "api repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG --jq .ob
     printf '%s\tcommit\n' "$POINT_REF_OID"
   fi
 elif [[ "$*" == "api repos/$GITHUB_REPOSITORY/git/ref/tags/$MAJOR_TAG --jq .object | [.sha, .type] | @tsv" ]]; then
-  printf '%s\\t%s\\n' "$DIRECT_REF_OID" "$DIRECT_REF_TYPE"
+  [[ "$FAILURE" != "major-ref-read" ]] || exit 1
+  if [[ "$FAILURE" == "malformed-major-ref" ]]; then
+    printf 'incomplete\\n'
+  else
+    printf '%s\\t%s\\n' "$DIRECT_REF_OID" "$DIRECT_REF_TYPE"
+  fi
 elif [[ "$TAG_CYCLE" == "point" && "$*" == "api repos/$GITHUB_REPOSITORY/git/tags/$POINT_REF_OID --jq .object | [.sha, .type] | @tsv" ]]; then
   peel_calls="$(grep -c '/git/tags/' "$CALLS_PATH")"
   [[ "$peel_calls" -le 16 ]] || exit 3
@@ -219,7 +231,12 @@ elif [[ "$TAG_CYCLE" == "major" && "$*" == api\\ repos/$GITHUB_REPOSITORY/git/ta
   object_oid="\${2##*/}"
   printf '%s\\ttag\\n' "$object_oid"
 elif [[ "$*" == "api repos/$GITHUB_REPOSITORY/git/tags/$DIRECT_REF_OID --jq .object | [.sha, .type] | @tsv" ]]; then
-  printf '%s\\tcommit\\n' "$MOVING_TAG_COMMIT_SHA"
+  [[ "$FAILURE" != "major-peel-read" ]] || exit 1
+  if [[ "$FAILURE" == "malformed-major-peel" ]]; then
+    printf '%s\\n' "$MOVING_TAG_COMMIT_SHA"
+  else
+    printf '%s\\tcommit\\n' "$MOVING_TAG_COMMIT_SHA"
+  fi
 elif [[ "$*" == "api repos/$GITHUB_REPOSITORY --jq .node_id" ]]; then
   printf '%s\\n' 'R_repo_node'
 elif [[ "$*" == api\\ graphql* ]]; then
@@ -387,6 +404,9 @@ describe("action metadata", () => {
     });
     expect(workflow.jobs["update-major"].permissions).toEqual({
       contents: "write",
+    });
+    expect(workflow.jobs.prepare.permissions ?? workflow.permissions).toEqual({
+      contents: "read",
     });
     expect(checkouts.length).toBeGreaterThan(0);
     for (const checkout of checkouts) {
@@ -605,6 +625,38 @@ describe("action metadata", () => {
         "major",
       ),
     ).toThrow(/maximum peel depth/u);
+  });
+
+  it.each([
+    ["major-ref-read", /Unable to read major tag ref v1 from GitHub/u],
+    ["malformed-major-ref", /invalid major tag ref v1/u],
+    ["major-peel-read", /Unable to read annotated major tag object/u],
+    ["malformed-major-peel", /invalid annotated major tag object/u],
+  ] as const)("fails closed for %s failures", (failure, diagnostic) => {
+    const oldSha = "1".repeat(40);
+    const targetSha = "2".repeat(40);
+    const annotatedTagOid = "a".repeat(40);
+    const releases = ["v1.9.9", "v1.10.0"].map((tagName) => ({
+      tag_name: tagName,
+      draft: false,
+      prerelease: false,
+      published_at: "2026-01-01T00:00:00Z",
+    }));
+
+    expect(() =>
+      runReleaseUpdate(
+        "v1.10.0",
+        targetSha,
+        [
+          { name: "v1", commit: { sha: oldSha } },
+          { name: "v1.9.9", commit: { sha: oldSha } },
+          { name: "v1.10.0", commit: { sha: targetSha } },
+        ],
+        releases,
+        failure,
+        annotatedTagOid,
+      ),
+    ).toThrow(diagnostic);
   });
 
   it("fails closed when the exact finalized release ref does not match", () => {
