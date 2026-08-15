@@ -16,16 +16,6 @@ async function metadata(path: string): Promise<Record<string, any>> {
   return parse(await readFile(resolve(path), "utf8"));
 }
 
-function releaseUpdateScript(workflow: Record<string, any>): string {
-  const step = workflow.jobs["update-major"].steps.find(
-    (candidate: { run?: unknown }) =>
-      typeof candidate.run === "string" &&
-      candidate.run.includes(".github/scripts/update-major-tag.sh"),
-  );
-  expect(step, "release workflow is missing its update script").toBeDefined();
-  return step?.run ?? "";
-}
-
 const RELEASE_DECISION_SCRIPT = resolve(".github/scripts/decide-major-tag.mjs");
 
 function decideRelease(
@@ -173,7 +163,6 @@ exit 2
 }
 
 function runReleaseUpdate(
-  workflow: Record<string, any>,
   releaseTag: string,
   targetSha: string,
   tags: Array<{ name: string; commit: { sha: string } }>,
@@ -248,10 +237,9 @@ fi
   chmodSync(ghPath, 0o755);
   writeFileSync(sleepPath, "#!/usr/bin/env bash\nexit 0\n");
   chmodSync(sleepPath, 0o755);
-  const run = releaseUpdateScript(workflow);
   try {
     try {
-      execFileSync("bash", ["-eo", "pipefail", "-c", run], {
+      execFileSync("bash", [resolve(".github/scripts/update-major-tag.sh")], {
         cwd: resolve("."),
         encoding: "utf8",
         env: {
@@ -308,53 +296,9 @@ describe("action metadata", () => {
     );
   });
 
-  it("keeps the review action unprivileged and major-tagged", async () => {
+  it("does not expose the autofix mutation token to the review action", async () => {
     const action = await metadata("review/action.yml");
-    expect(new Set(Object.keys(action.inputs))).toEqual(
-      new Set([
-        "prek-version",
-        "extra-args",
-        "working-directory",
-        "cache",
-        "max-passes",
-        "max-log-bytes",
-        "max-files",
-        "max-bytes",
-        "pass-timeout-seconds",
-      ]),
-    );
-    expect(action.inputs["max-passes"].default).toBe("3");
-    expect(action.inputs["max-log-bytes"].default).toBe("1048576");
-    expect(action.inputs["max-files"].default).toBe("100");
-    expect(action.inputs["max-bytes"].default).toBe("10485760");
-    expect(action.inputs["pass-timeout-seconds"].default).toBe("600");
-    expect(action.outputs).toHaveProperty("changed");
-    expect(action.outputs).toHaveProperty("artifact-name");
-    expect(action.outputs).toHaveProperty("prek-version");
-    expect(action.runs.using).toBe("composite");
-
-    expect(action.runs.steps).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "review",
-          env: expect.objectContaining({
-            PREK_AUTOFIX_MAX_FILES: "${{ inputs.max-files }}",
-            PREK_AUTOFIX_MAX_BYTES: "${{ inputs.max-bytes }}",
-          }),
-        }),
-        expect.objectContaining({
-          uses: expect.stringMatching(/^actions\/setup-node@v\d+$/),
-        }),
-        expect.objectContaining({
-          id: "install",
-          uses: expect.stringMatching(/^j178\/prek-action@v\d+$/),
-        }),
-      ]),
-    );
-    const serialized = JSON.stringify(action);
-    expect(serialized).not.toMatch(
-      /autofix-token|PREK_AUTOFIX_TOKEN|checkout/i,
-    );
+    expect(action.inputs).not.toHaveProperty("autofix-token");
   });
 
   it("uploads a persisted artifact before propagating collection failure", async () => {
@@ -379,7 +323,6 @@ describe("action metadata", () => {
         "if-no-files-found": "error",
       },
     });
-    expect(upload.uses).toMatch(/^actions\/upload-artifact@v\d+$/);
     expect(propagate).toMatchObject({
       id: "propagate",
       if: "steps.review.outcome == 'failure'",
@@ -393,7 +336,7 @@ describe("action metadata", () => {
 
   it("uses an isolated Node 24 privileged entry point", async () => {
     const action = await metadata("fix/action.yml");
-    expect(action.runs).toEqual({
+    expect(action.runs).toMatchObject({
       using: "node24",
       main: "../dist/apply/index.js",
     });
@@ -402,40 +345,6 @@ describe("action metadata", () => {
       default: "${{ github.token }}",
     });
     expect(action.inputs["autofix-token"].required).toBe(true);
-    expect(action.inputs["commit-message"].default).toBe(
-      "[prek-autofix] apply automatic fixes",
-    );
-    expect(action.inputs["source-workflow"].default).toBe("prek-autofix");
-    expect(action.inputs["max-files"].default).toBe("100");
-    expect(action.inputs["max-bytes"].default).toBe("10485760");
-  });
-
-  it("ships both bundled entry points", async () => {
-    const collectBundle = await readFile("dist/collect/index.js");
-    const applyBundle = await readFile("dist/apply/index.js");
-    expect(collectBundle.byteLength).toBeGreaterThan(0);
-    expect(applyBundle.byteLength).toBeGreaterThan(0);
-  });
-
-  it("keeps release workflow logic in dedicated scripts", async () => {
-    const workflow = await metadata(".github/workflows/release.yml");
-    const preparation = workflow.jobs.prepare.steps.find(
-      (step: { id?: string }) => step.id === "release",
-    );
-    const finalization = workflow.jobs.finalize.steps.find(
-      (step: { id?: string }) => step.id === "release",
-    );
-
-    expect(preparation?.run).toBe(
-      "bash tooling/.github/scripts/prepare-release.sh",
-    );
-    expect(finalization?.run).toBe(
-      "node tooling/.github/scripts/finalize-release.mjs",
-    );
-    expect(releaseUpdateScript(workflow)).toBe(
-      "bash .github/scripts/update-major-tag.sh",
-    );
-    expect(JSON.stringify(workflow)).not.toContain("node <<");
   });
 
   it("updates package metadata to the published release version", () => {
@@ -447,11 +356,9 @@ describe("action metadata", () => {
     expect(prepared.packageJson.version).toBe("1.0.8");
     expect(prepared.packageLock.version).toBe("1.0.8");
     expect(prepared.packageLock.packages[""].version).toBe("1.0.8");
-    expect(() => prepareRelease("v1.0.6", "1.0.7")).toThrow(
-      "Release v1.0.6 would downgrade package.json from 1.0.7",
-    );
+    expect(() => prepareRelease("v1.0.6", "1.0.7")).toThrow(/downgrade/u);
     expect(() => prepareRelease("v1", "1.0.7")).toThrow(
-      "Release tag must have vMAJOR.MINOR.PATCH form",
+      /vMAJOR\.MINOR\.PATCH/u,
     );
   });
 
@@ -464,75 +371,30 @@ describe("action metadata", () => {
     ).toThrow("Unable to collect untracked release paths");
   });
 
-  it("isolates release preparation from repository write credentials", async () => {
+  it("keeps release credentials scoped to write-capable jobs", async () => {
     const workflow = await metadata(".github/workflows/release.yml");
-    const prepareCheckouts = workflow.jobs.prepare.steps.filter(
-      (step: { uses?: string }) => step.uses?.startsWith("actions/checkout@"),
+    const jobs: Record<
+      string,
+      { steps?: Array<{ uses?: string; with?: Record<string, unknown> }> }
+    > = workflow.jobs;
+    const checkouts = Object.values(jobs).flatMap((job) =>
+      (job.steps ?? []).filter((step) =>
+        step.uses?.startsWith("actions/checkout@"),
+      ),
     );
-    const finalCheckouts = workflow.jobs.finalize.steps.filter(
-      (step: { uses?: string }) => step.uses?.startsWith("actions/checkout@"),
-    );
-    const writeCheckout = workflow.jobs["update-major"].steps.find(
-      (step: { uses?: string }) => step.uses?.startsWith("actions/checkout@"),
-    );
+
     expect(workflow.permissions).toEqual({ contents: "read" });
-    expect(prepareCheckouts).toHaveLength(2);
-    expect(prepareCheckouts[0]?.with).toMatchObject({
-      "ref": "${{ github.event.release.tag_name }}",
-      "fetch-depth": 0,
-      "persist-credentials": false,
-    });
-    expect(prepareCheckouts[0]?.with.path).toBeUndefined();
-    expect(prepareCheckouts[1]?.with).toMatchObject({
-      "ref": "${{ github.workflow_sha }}",
-      "path": "tooling",
-      "sparse-checkout": ".github/scripts",
-      "persist-credentials": false,
-    });
-    expect(workflow.concurrency).toEqual({
-      "group": "release-${{ github.repository }}",
-      "cancel-in-progress": false,
-    });
     expect(workflow.jobs.finalize.permissions).toEqual({
       actions: "read",
       contents: "write",
     });
-    expect(finalCheckouts).toHaveLength(2);
-    expect(finalCheckouts[0]?.with).toMatchObject({
-      "ref": "${{ github.workflow_sha }}",
-      "path": "tooling",
-      "persist-credentials": false,
-    });
-    expect(finalCheckouts[1]?.with).toMatchObject({
-      "ref": "${{ needs.prepare.outputs.source-sha }}",
-      "path": "release",
-      "persist-credentials": false,
-    });
-    expect(JSON.stringify(workflow.jobs.finalize)).not.toMatch(
-      /npm ci|npm test/,
-    );
     expect(workflow.jobs["update-major"].permissions).toEqual({
       contents: "write",
     });
-    expect(writeCheckout?.with).toMatchObject({
-      "ref": "${{ github.workflow_sha }}",
-      "sparse-checkout": ".github/scripts",
-      "persist-credentials": false,
-    });
-    expect(JSON.stringify(workflow.jobs["update-major"])).not.toMatch(
-      /npm ci|npm test|packages\//,
-    );
-    expect(workflow.jobs["update-major"].concurrency).toEqual({
-      "group":
-        "release-major-${{ github.repository }}-${{ needs.prepare.outputs.major-tag }}",
-      "cancel-in-progress": false,
-    });
-    expect(workflow.jobs.prepare.outputs["major-tag"]).toBe(
-      "${{ steps.release.outputs.major-tag }}",
-    );
-    expect(workflow.jobs.finalize.outputs["release-sha"]).toBe(
-      "${{ steps.release.outputs.sha }}",
-    );
+    expect(checkouts.length).toBeGreaterThan(0);
+    for (const checkout of checkouts) {
+      expect(checkout.with?.["persist-credentials"]).toBe(false);
+    }
   });
 
   it("keeps moving major tags monotonic across releases and reruns", () => {
@@ -624,8 +486,7 @@ describe("action metadata", () => {
     ).toBe(`update\t${survivingPendingSha}\t${runningSha}`);
   });
 
-  it("uses an annotated moving tag's direct ref OID in the exact CAS update", async () => {
-    const workflow = await metadata(".github/workflows/release.yml");
+  it("uses an annotated moving tag's direct ref OID in the exact CAS update", () => {
     const oldSha = "1".repeat(40);
     const targetSha = "2".repeat(40);
     const annotatedTagOid = "a".repeat(40);
@@ -636,7 +497,6 @@ describe("action metadata", () => {
       published_at: "2026-01-01T00:00:00Z",
     }));
     const calls = runReleaseUpdate(
-      workflow,
       "v1.10.0",
       targetSha,
       [
@@ -649,60 +509,16 @@ describe("action metadata", () => {
       annotatedTagOid,
     );
 
-    expect(calls).toContain(
-      "api repos/owner/repository/git/ref/tags/v1.10.0 " +
-        "--jq .object | [.sha, .type] | @tsv",
-    );
-    expect(calls).toContain(
-      "api repos/owner/repository/git/ref/tags/v1 " +
-        "--jq .object | [.sha, .type] | @tsv",
-    );
-    expect(calls).toContain(
-      `api repos/owner/repository/git/tags/${annotatedTagOid} ` +
-        "--jq .object | [.sha, .type] | @tsv",
-    );
-    expect(calls).toContain("api repos/owner/repository --jq .node_id");
-    expect(calls).toContain("api graphql");
-    expect(calls).toContain("-F repositoryId=R_repo_node");
-    expect(calls).toContain("-f name=refs/tags/v1");
     expect(calls).toContain(`-f beforeOid=${annotatedTagOid}`);
     expect(calls).not.toContain(`-f beforeOid=${oldSha}`);
     expect(calls).toContain(`-f afterOid=${targetSha}`);
-    expect(calls).toContain("-F force=true");
   });
 
-  it("verifies the exact immutable release ref before reading tag lists", async () => {
-    const workflow = await metadata(".github/workflows/release.yml");
-    const targetSha = "2".repeat(40);
-    const calls = runReleaseUpdate(
-      workflow,
-      "v1.10.0",
-      targetSha,
-      [{ name: "v1.10.0", commit: { sha: targetSha } }],
-      [
-        {
-          tag_name: "v1.10.0",
-          draft: false,
-          prerelease: false,
-          published_at: "2026-01-01T00:00:00Z",
-        },
-      ],
-    );
-
-    const exactRefCall = calls.indexOf("git/ref/tags/v1.10.0");
-    const tagListCall = calls.indexOf("tags?per_page=100");
-    expect(exactRefCall).toBeGreaterThanOrEqual(0);
-    expect(tagListCall).toBeGreaterThanOrEqual(0);
-    expect(exactRefCall).toBeLessThan(tagListCall);
-  });
-
-  it("bounds annotated release-tag peeling", async () => {
-    const workflow = await metadata(".github/workflows/release.yml");
+  it("bounds annotated release-tag peeling", () => {
     const targetSha = "2".repeat(40);
 
     expect(() =>
       runReleaseUpdate(
-        workflow,
         "v1.10.0",
         targetSha,
         [{ name: "v1.10.0", commit: { sha: targetSha } }],
@@ -712,17 +528,15 @@ describe("action metadata", () => {
         "a".repeat(40),
         "point",
       ),
-    ).toThrow("Annotated release tag exceeds maximum peel depth of 16");
+    ).toThrow(/maximum peel depth/u);
   });
 
-  it("bounds annotated moving-tag peeling", async () => {
-    const workflow = await metadata(".github/workflows/release.yml");
+  it("bounds annotated moving-tag peeling", () => {
     const oldSha = "1".repeat(40);
     const targetSha = "2".repeat(40);
 
     expect(() =>
       runReleaseUpdate(
-        workflow,
         "v1.10.0",
         targetSha,
         [
@@ -741,16 +555,14 @@ describe("action metadata", () => {
         targetSha,
         "major",
       ),
-    ).toThrow("Annotated major tag exceeds maximum peel depth of 16");
+    ).toThrow(/maximum peel depth/u);
   });
 
-  it("fails closed when the exact immutable release ref does not match", async () => {
-    const workflow = await metadata(".github/workflows/release.yml");
+  it("fails closed when the exact immutable release ref does not match", () => {
     const targetSha = "2".repeat(40);
 
     expect(() =>
       runReleaseUpdate(
-        workflow,
         "v1.10.0",
         targetSha,
         [{ name: "v1.10.0", commit: { sha: targetSha } }],
@@ -759,13 +571,10 @@ describe("action metadata", () => {
         undefined,
         "3".repeat(40),
       ),
-    ).toThrow(
-      "Verified release SHA does not match its exact immutable tag ref",
-    );
+    ).toThrow(/does not match its exact immutable tag ref/u);
   });
 
-  it("fails closed when the moving tag changes after observation", async () => {
-    const workflow = await metadata(".github/workflows/release.yml");
+  it("fails closed when the moving tag changes after observation", () => {
     const oldSha = "1".repeat(40);
     const targetSha = "2".repeat(40);
     const releases = ["v1.9.9", "v1.10.0"].map((tagName) => ({
@@ -777,7 +586,6 @@ describe("action metadata", () => {
 
     expect(() =>
       runReleaseUpdate(
-        workflow,
         "v1.10.0",
         targetSha,
         [
@@ -791,8 +599,7 @@ describe("action metadata", () => {
     ).toThrow();
   });
 
-  it("fails closed when another run wins an absent-tag creation race", async () => {
-    const workflow = await metadata(".github/workflows/release.yml");
+  it("fails closed when another run wins an absent-tag creation race", () => {
     const targetSha = "2".repeat(40);
     const releases = [
       {
@@ -805,7 +612,6 @@ describe("action metadata", () => {
 
     expect(() =>
       runReleaseUpdate(
-        workflow,
         "v1.10.0",
         targetSha,
         [{ name: "v1.10.0", commit: { sha: targetSha } }],

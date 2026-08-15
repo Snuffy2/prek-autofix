@@ -71,6 +71,33 @@ bundle with the source change.
 - Add or update focused Vitest coverage for every behavior change.
 - Do not weaken a check merely to make a test pass.
 
+## Test design guardrails
+
+- Never add tests that freeze incidental implementation or configuration
+  details. Prohibited examples include exact dependency or Action versions,
+  cache settings, step counts, cosmetic metadata, private helper structure,
+  source-text or AST scans, and whole workflow/job snapshots.
+- Do not turn a reviewer, linter, or security-tool preference into a test unless
+  it is an explicit product requirement with an observable failure mode. In
+  particular, never assert whether `actions/setup-node` caching is enabled or
+  disabled unless cache behavior itself becomes part of the documented product
+  contract.
+- Assert observable behavior and durable security boundaries. Test ordering
+  only when changing the order changes behavior, such as uploading a completed
+  artifact before propagating a collection failure or performing a guarded
+  compare-and-swap mutation.
+- When an exact artifact is the supported contract, test only the smallest
+  stable semantic property. Canonical-file equivalence checks are allowed when
+  two published files must remain identical; do not duplicate the artifact's
+  contents as a second policy mirror in test code.
+- If a routine refactor, dependency update, Action update, or harmless workflow
+  setting change breaks a test without changing product behavior, remove or
+  replace the brittle test. Do not update its incidental literal and preserve
+  the same coupling.
+- Before adding a metadata or documentation test, state the user-visible or
+  security failure it catches and why existing behavioral coverage is
+  insufficient. If there is no concrete failure, do not add the test.
+
 ## Security invariants
 
 Treat these rules as part of the product contract:
