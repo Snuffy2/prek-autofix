@@ -1,6 +1,6 @@
 {
   "name": "prek-autofix",
-  "version": "0.1.0",
+  "version": "1.0.7",
   "private": true,
   "description": "Safely apply prek fixes to pull request branches",
   "license": "MIT",
@@ -37,6 +37,11 @@
   },
   "overrides": {
     "brace-expansion": "^5.0.9",
+    "glob": "^13.0.6",
     "undici": "^6.27.0"
+  },
+  "allowScripts": {
+    "fsevents": true,
+    "esbuild": true
   }
 }

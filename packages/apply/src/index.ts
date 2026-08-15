@@ -9,6 +9,7 @@ import {
   DEFAULT_MAX_FILES,
   parseChangeArtifact,
 } from "../../shared/src/artifact";
+import { versionBanner } from "../../shared/src/version";
 import { getArtifactIfPresent } from "./artifact-lookup";
 import {
   applyArtifact,
@@ -34,6 +35,7 @@ function nonnegativeInput(name: string, fallback: number): number {
 }
 
 async function run(): Promise<void> {
+  core.info(versionBanner());
   if (github.context.eventName !== "workflow_run") {
     throw new Error("fix action may only run for workflow_run");
   }
