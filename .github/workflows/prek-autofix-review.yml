@@ -1,4 +1,4 @@
-name: prek-autofix
+name: prek-autofix   
 
 on:
   pull_request:
