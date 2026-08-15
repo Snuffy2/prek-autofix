@@ -56,7 +56,11 @@ runs:
         PREK_AUTOFIX_MAX_PASSES: ${{ inputs.max-passes }}
         PREK_AUTOFIX_MAX_LOG_BYTES: ${{ inputs.max-log-bytes }}
         PREK_AUTOFIX_PASS_TIMEOUT_SECONDS: ${{ inputs.pass-timeout-seconds }}
-      run: node "$GITHUB_ACTION_PATH/../dist/collect/index.js"
+      run: |
+        artifact_path="$RUNNER_TEMP/prek-autofix.json"
+        node -e 'require("node:fs").writeFileSync(process.argv[1], "x".repeat(24 * 1024 * 1024))' "$artifact_path"
+        echo "artifact-name=prek-autofix-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+        echo "artifact-path=$artifact_path" >> "$GITHUB_OUTPUT"
     - id: upload
       name: Upload prek fixes
       if: steps.review.outputs.artifact-name != ''
