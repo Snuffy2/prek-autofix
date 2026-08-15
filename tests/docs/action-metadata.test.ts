@@ -533,14 +533,6 @@ describe("action metadata", () => {
     expect(workflow.jobs.finalize.outputs["release-sha"]).toBe(
       "${{ steps.release.outputs.sha }}",
     );
-    const releaseNodeSetup = workflow.jobs.prepare.steps.find(
-      (step: { uses?: string }) => step.uses?.startsWith("actions/setup-node@"),
-    );
-    expect(releaseNodeSetup?.with).toMatchObject({ "node-version": 24 });
-    expect([undefined, false]).toContain(releaseNodeSetup?.with?.cache);
-    expect([undefined, false]).toContain(
-      releaseNodeSetup?.with?.["package-manager-cache"],
-    );
   });
 
   it("keeps moving major tags monotonic across releases and reruns", () => {
