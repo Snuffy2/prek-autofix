@@ -185,11 +185,15 @@ describe("action metadata", () => {
         "cache",
         "max-passes",
         "max-log-bytes",
+        "max-files",
+        "max-bytes",
         "pass-timeout-seconds",
       ]),
     );
     expect(action.inputs["max-passes"].default).toBe("3");
     expect(action.inputs["max-log-bytes"].default).toBe("1048576");
+    expect(action.inputs["max-files"].default).toBe("100");
+    expect(action.inputs["max-bytes"].default).toBe("10485760");
     expect(action.inputs["pass-timeout-seconds"].default).toBe("600");
     expect(action.outputs).toHaveProperty("changed");
     expect(action.outputs).toHaveProperty("artifact-name");

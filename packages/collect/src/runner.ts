@@ -42,6 +42,8 @@ export interface CollectInputs {
   workingDirectory: string;
   maxPasses: number;
   maxLogBytes: number;
+  maxFiles: number;
+  maxBytes: number;
   passTimeoutSeconds: number;
 }
 
@@ -54,6 +56,8 @@ export interface CollectDeps {
     execute: Execute,
     env: NodeJS.ProcessEnv,
     expectedRoot: RootIdentity,
+    maxFiles: number,
+    maxBytes: number,
   ) => Promise<FileOperation[]>;
   persistArtifact?: typeof writeArtifact;
   platform?: NodeJS.Platform;
@@ -88,6 +92,10 @@ const SAFE_CHILD_ENVIRONMENT = new Set([
   "TEMP",
   "TMP",
   "TMPDIR",
+  "UV_FROZEN",
+  "UV_LOCKED",
+  "UV_NO_CONFIG",
+  "UV_OFFLINE",
   "XDG_CACHE_HOME",
 ]);
 
@@ -416,6 +424,12 @@ export async function runCollect(
       "max-log-bytes must be an integer between 1024 and 10485760",
     );
   }
+  if (!Number.isSafeInteger(inputs.maxFiles) || inputs.maxFiles < 0) {
+    throw new Error("max-files must be a nonnegative safe integer");
+  }
+  if (!Number.isSafeInteger(inputs.maxBytes) || inputs.maxBytes < 0) {
+    throw new Error("max-bytes must be a nonnegative safe integer");
+  }
   if (
     !Number.isSafeInteger(inputs.passTimeoutSeconds) ||
     inputs.passTimeoutSeconds < 1 ||
@@ -498,13 +512,15 @@ export async function runCollect(
           deps.execute,
           childEnv,
           workspaceIdentity,
+          inputs.maxFiles,
+          inputs.maxBytes,
         )
       : await collectOperations(
           canonicalWorkspace,
           deps.execute,
           childEnv,
-          undefined,
-          undefined,
+          inputs.maxFiles,
+          inputs.maxBytes,
           0,
           workspaceIdentity,
           trustedPython,
@@ -542,19 +558,23 @@ export async function runCollect(
       childEnv,
     );
     validatePathComponentBudget(operations.map(({ path }) => path));
-    const artifact = parseChangeArtifact({
-      schemaVersion: ARTIFACT_SCHEMA_VERSION,
-      source: {
-        runId: context.runId,
-        runAttempt: context.runAttempt,
-        repository: context.repository,
-        workflow: context.workflow,
-        event: "pull_request",
-        pullRequestNumber: context.pullRequestNumber,
-        headSha: context.headSha,
+    const artifact = parseChangeArtifact(
+      {
+        schemaVersion: ARTIFACT_SCHEMA_VERSION,
+        source: {
+          runId: context.runId,
+          runAttempt: context.runAttempt,
+          repository: context.repository,
+          workflow: context.workflow,
+          event: "pull_request",
+          pullRequestNumber: context.pullRequestNumber,
+          headSha: context.headSha,
+        },
+        operations,
       },
-      operations,
-    });
+      inputs.maxFiles,
+      inputs.maxBytes,
+    );
     const file = await (deps.persistArtifact ?? writeArtifact)(
       context.artifactDirectory,
       artifact,

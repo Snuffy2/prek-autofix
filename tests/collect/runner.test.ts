@@ -11,6 +11,7 @@ import {
   sanitizedEnvironment,
   streamUntrustedOutput,
 } from "../../packages/collect/src/runner";
+import type { CollectInputs } from "../../packages/collect/src/runner";
 import type { Execute } from "../../packages/collect/src/git";
 
 const SHA = "a".repeat(40);
@@ -64,6 +65,7 @@ async function invoke(
   changes: string[][] = [[]],
   platform: NodeJS.Platform = "linux",
   runAttempt = 3,
+  inputOverrides: Partial<CollectInputs> = {},
 ) {
   const workspace = await mkdtemp(join(tmpdir(), "collect-runner-"));
   directories.push(workspace);
@@ -100,7 +102,10 @@ async function invoke(
       workingDirectory: ".",
       maxPasses,
       maxLogBytes: 1048576,
+      maxFiles: 100,
+      maxBytes: 10485760,
       passTimeoutSeconds: 600,
+      ...inputOverrides,
     },
     {
       execute: wrapped,
@@ -155,6 +160,28 @@ describe("runCollect", () => {
     );
     expect(execute).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["maxFiles", -1, "max-files must be a nonnegative safe integer"],
+    ["maxFiles", 1.5, "max-files must be a nonnegative safe integer"],
+    ["maxBytes", -1, "max-bytes must be a nonnegative safe integer"],
+    [
+      "maxBytes",
+      Number.MAX_SAFE_INTEGER + 1,
+      "max-bytes must be a nonnegative safe integer",
+    ],
+  ] as const)(
+    "rejects invalid %s value %s before executing commands",
+    async (name, value, message) => {
+      const execute = setup([result(0)]);
+      const call = await invoke(execute, 3, false, [[]], "linux", 3, {
+        [name]: value,
+      });
+
+      await expect(call.promise).rejects.toThrow(message);
+      expect(execute).not.toHaveBeenCalled();
+    },
+  );
 
   it("passes a clean result without an artifact", async () => {
     const execute = setup([result(0)]);
@@ -225,6 +252,24 @@ describe("runCollect", () => {
     expect(call.outputs.get("artifact-path")).toMatch(
       /prek-autofix-[^/]+\/prek-autofix\.json$/,
     );
+  });
+
+  it("applies configured artifact limits during each collection pass", async () => {
+    const call = await invoke(
+      setup([result(0), result(0)]),
+      3,
+      false,
+      [["uv.lock"], ["uv.lock"]],
+      "linux",
+      3,
+      { maxFiles: 1, maxBytes: 1024 },
+    );
+
+    await expect(call.promise).resolves.toBeUndefined();
+    expect(call.collectChanges).toHaveBeenCalledTimes(2);
+    for (const invocation of call.collectChanges.mock.calls) {
+      expect(invocation.slice(-2)).toEqual([1, 1024]);
+    }
   });
 
   it("rejects ever-changing successful fix snapshots", async () => {
@@ -332,6 +377,11 @@ describe("runCollect", () => {
         PREK_HOME: "/cache/prek",
         PRE_COMMIT_HOME: "/cache/pre-commit",
         XDG_CACHE_HOME: "/cache",
+        UV_FROZEN: "1",
+        UV_LOCKED: "1",
+        UV_NO_CONFIG: "1",
+        UV_OFFLINE: "1",
+        UV_INDEX_URL: "https://token@example.invalid/simple",
         GITHUB_TOKEN: "token",
         GH_TOKEN: "token",
         ACTIONS_RUNTIME_TOKEN: "token",
@@ -364,6 +414,10 @@ describe("runCollect", () => {
       PREK_HOME: "/cache/prek",
       PRE_COMMIT_HOME: "/cache/pre-commit",
       XDG_CACHE_HOME: "/cache",
+      UV_FROZEN: "1",
+      UV_LOCKED: "1",
+      UV_NO_CONFIG: "1",
+      UV_OFFLINE: "1",
     });
   });
 });

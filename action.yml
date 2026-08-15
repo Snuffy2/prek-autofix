@@ -20,6 +20,12 @@ inputs:
   max-log-bytes:
     description: Maximum bytes streamed from each of stdout and stderr per pass
     default: "1048576"
+  max-files:
+    description: Maximum number of changed files to collect
+    default: "100"
+  max-bytes:
+    description: Maximum total changed-file content bytes to collect
+    default: "10485760"
   pass-timeout-seconds:
     description: Timeout for each convergence pass, from 1 through 3600 seconds
     default: "600"
@@ -55,6 +61,8 @@ runs:
         PREK_AUTOFIX_WORKING_DIRECTORY: ${{ inputs.working-directory }}
         PREK_AUTOFIX_MAX_PASSES: ${{ inputs.max-passes }}
         PREK_AUTOFIX_MAX_LOG_BYTES: ${{ inputs.max-log-bytes }}
+        PREK_AUTOFIX_MAX_FILES: ${{ inputs.max-files }}
+        PREK_AUTOFIX_MAX_BYTES: ${{ inputs.max-bytes }}
         PREK_AUTOFIX_PASS_TIMEOUT_SECONDS: ${{ inputs.pass-timeout-seconds }}
       run: node "$GITHUB_ACTION_PATH/dist/collect/index.js"
     - id: upload

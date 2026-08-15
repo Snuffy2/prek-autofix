@@ -129,9 +129,24 @@ before `review`:
 ```
 <!-- prettier-ignore-end -->
 
+For a uv-managed Python project, set up uv before `review`:
+
+<!-- prettier-ignore-start -->
+```yaml
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+```
+<!-- prettier-ignore-end -->
+
 `review` installs and caches `prek`; it does not install project dependencies.
 Use your project's corresponding setup and locked install command for other
-languages.
+languages. Hooks receive the noncredential uv policy variables `UV_FROZEN`,
+`UV_LOCKED`, `UV_NO_CONFIG`, and `UV_OFFLINE`, so CI can require a committed
+lockfile without maintaining a separate hook configuration. Credential-bearing
+uv settings such as `UV_INDEX_URL` remain excluded from the hook environment.
 
 ### 3. Add the fix workflow
 
@@ -224,6 +239,8 @@ raw API exceptions or credentials.
 | `cache`                | `true`        | Enable the official prek environment cache                                           |
 | `max-passes`           | `3`           | Maximum convergence passes                                                           |
 | `max-log-bytes`        | `1048576`     | Maximum bytes streamed from each of stdout and stderr per pass (1024–10485760)       |
+| `max-files`            | `100`         | Maximum changed files collected into the untrusted review artifact                   |
+| `max-bytes`            | `10485760`    | Maximum total changed-file content bytes collected into the review artifact          |
 | `pass-timeout-seconds` | `600`         | Timeout for each pass (1–3600 seconds); the hook process tree is terminated on Linux |
 
 For example, replace the `review` step in Stage 1 with:
@@ -238,6 +255,8 @@ For example, replace the `review` step in Stage 1 with:
           cache: true
           max-passes: 2
           max-log-bytes: 1048576
+          max-files: 25
+          max-bytes: 1048576
           pass-timeout-seconds: 600
 ```
 <!-- prettier-ignore-end -->
@@ -267,7 +286,10 @@ To use a different commit message or tighter limits, extend the Stage 2 step:
 <!-- prettier-ignore-end -->
 
 Quote YAML values with spaces or special characters. Start with the defaults
-unless you have a measured need for smaller limits.
+unless you have a measured need for smaller limits. Keep `review` and `fix`
+`max-files` and `max-bytes` values synchronized. Stage 2 validates the artifact
+again against its independently configured limits and fails closed if they are
+exceeded.
 
 ## Safety model
 
