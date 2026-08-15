@@ -26,10 +26,7 @@ function releaseUpdateScript(workflow: Record<string, any>): string {
   return step?.run ?? "";
 }
 
-function releaseDecisionScript(workflow: Record<string, any>): string {
-  releaseUpdateScript(workflow);
-  return resolve(".github/scripts/decide-major-tag.mjs");
-}
+const RELEASE_DECISION_SCRIPT = resolve(".github/scripts/decide-major-tag.mjs");
 
 function decideRelease(
   script: string,
@@ -420,9 +417,8 @@ describe("action metadata", () => {
     );
   });
 
-  it("keeps moving major tags monotonic across releases and reruns", async () => {
-    const workflow = await metadata(".github/workflows/release.yml");
-    const script = releaseDecisionScript(workflow);
+  it("keeps moving major tags monotonic across releases and reruns", () => {
+    const script = RELEASE_DECISION_SCRIPT;
     const oldSha = "1".repeat(40);
     const targetSha = "2".repeat(40);
     const newerSha = "3".repeat(40);
@@ -462,9 +458,8 @@ describe("action metadata", () => {
     ).toBe("skip\t");
   });
 
-  it("promotes only the triggering release verified by the read-only job", async () => {
-    const workflow = await metadata(".github/workflows/release.yml");
-    const script = releaseDecisionScript(workflow);
+  it("promotes only the triggering release verified by the read-only job", () => {
+    const script = RELEASE_DECISION_SCRIPT;
     const oldSha = "1".repeat(40);
     const triggeringSha = "2".repeat(40);
     const unverifiedNewerSha = "3".repeat(40);
@@ -480,9 +475,8 @@ describe("action metadata", () => {
     );
   });
 
-  it("allows a surviving verified pending job to advance after replacement", async () => {
-    const workflow = await metadata(".github/workflows/release.yml");
-    const script = releaseDecisionScript(workflow);
+  it("allows a surviving verified pending job to advance after replacement", () => {
+    const script = RELEASE_DECISION_SCRIPT;
     const oldSha = "1".repeat(40);
     const runningSha = "2".repeat(40);
     const replacedPendingSha = "3".repeat(40);
@@ -606,9 +600,8 @@ describe("action metadata", () => {
     ).toThrow();
   });
 
-  it("fails closed when moving-tag monotonicity cannot be proven", async () => {
-    const workflow = await metadata(".github/workflows/release.yml");
-    const script = releaseDecisionScript(workflow);
+  it("fails closed when moving-tag monotonicity cannot be proven", () => {
+    const script = RELEASE_DECISION_SCRIPT;
     const targetSha = "2".repeat(40);
 
     expect(() =>
@@ -624,9 +617,8 @@ describe("action metadata", () => {
     ).toThrow(/does not match its immutable tag/);
   });
 
-  it("ignores tags without a successfully published stable release", async () => {
-    const workflow = await metadata(".github/workflows/release.yml");
-    const script = releaseDecisionScript(workflow);
+  it("ignores tags without a successfully published stable release", () => {
+    const script = RELEASE_DECISION_SCRIPT;
     const targetSha = "2".repeat(40);
     const futureSha = "3".repeat(40);
     const tags = [
@@ -661,9 +653,8 @@ describe("action metadata", () => {
     );
   });
 
-  it("requires the triggering release and every eligible release to match a tag", async () => {
-    const workflow = await metadata(".github/workflows/release.yml");
-    const script = releaseDecisionScript(workflow);
+  it("requires the triggering release and every eligible release to match a tag", () => {
+    const script = RELEASE_DECISION_SCRIPT;
     const targetSha = "2".repeat(40);
     const published = (tagName: string) => ({
       tag_name: tagName,
