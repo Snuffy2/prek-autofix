@@ -97,6 +97,12 @@ export class ApplyError extends Error {
   }
 }
 
+export const FORK_AUTOFIX_TOKEN_REQUIRED =
+  "Cannot apply fixes to this fork because PREK_AUTOFIX_TOKEN is not configured. Add a token that can update the pull request branch, or run `prek run -a` locally, address any remaining issues, and push the changes";
+
+export const SAFE_BRANCH_UPDATE_REJECTED =
+  "GitHub could not update the pull request branch because it changed or the update was not allowed";
+
 export function ownMarkerCommentIds(comments: ExistingComment[]): number[] {
   return comments
     .filter(
@@ -331,8 +337,7 @@ export async function applyArtifact(
     throw new ApplyError(reason);
   }
   if (!sameRepository && request.mutationTokenUsedGithubFallback) {
-    const reason =
-      "cross-repository updates require an autofix token with access to the head repository";
+    const reason = FORK_AUTOFIX_TOKEN_REQUIRED;
     await read.upsertComment(
       pr.number,
       recoveryComment(reason, request.artifactUrl, request.sourceRunUrl),
@@ -425,7 +430,7 @@ export async function applyArtifact(
       error instanceof ApplyError
         ? error.message
         : status === 409 || status === 422
-          ? "the branch changed or GitHub rejected the non-forced update"
+          ? SAFE_BRANCH_UPDATE_REJECTED
           : status === 403 && request.mutationTokenUsedGithubFallback
             ? "GITHUB_TOKEN could not update the pull request branch; grant contents: write or configure PREK_AUTOFIX_TOKEN"
             : "GitHub rejected the fix commit";

@@ -368,11 +368,13 @@ describe("applyArtifact", () => {
         ...request(artifact),
         mutationTokenUsedGithubFallback: true,
       }),
-    ).rejects.toThrow("cross-repository updates require an autofix token");
+    ).rejects.toThrow(
+      "Cannot apply fixes to this fork because PREK_AUTOFIX_TOKEN is not configured",
+    );
     expect(read.upsertComment).toHaveBeenCalledWith(
       4,
       expect.stringContaining(
-        "cross-repository updates require an autofix token",
+        "run `prek run -a` locally, address any remaining issues, and push the changes",
       ),
     );
     expect(read.getMaintainerCanModify).not.toHaveBeenCalled();
@@ -481,7 +483,9 @@ describe("applyArtifact", () => {
     vi.mocked(mutation.updateRef).mockRejectedValue({ status: 422 });
     await expect(
       applyArtifact(read, mutation, request(artifact)),
-    ).rejects.toThrow("branch changed");
+    ).rejects.toThrow(
+      "GitHub could not update the pull request branch because it changed or the update was not allowed",
+    );
     expect(mutation.updateRef).toHaveBeenCalledTimes(1);
     expect(read.upsertComment).toHaveBeenCalledWith(
       4,

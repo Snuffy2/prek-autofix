@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type {
-  ReadClient,
-  ResolvedSource,
-  StatusClient,
+import {
+  ApplyError,
+  FORK_AUTOFIX_TOKEN_REQUIRED,
+  SAFE_BRANCH_UPDATE_REJECTED,
+  type ReadClient,
+  type ResolvedSource,
+  type StatusClient,
 } from "../../packages/apply/src/apply";
-import { ApplyError } from "../../packages/apply/src/apply";
 import { createFixReporter } from "../../packages/apply/src/reporting";
 
 function fixture() {
@@ -89,6 +91,25 @@ describe("fix result reporting", () => {
     );
   });
 
+  it("explains how to recover when a fork token is not configured", async () => {
+    const { read, reporter, source, status } = fixture();
+
+    await reporter.failure(new ApplyError(FORK_AUTOFIX_TOKEN_REQUIRED));
+
+    expect(status.setCommitStatus).toHaveBeenCalledWith(
+      source.run.headSha,
+      "failure",
+      "Cannot update fork: PREK_AUTOFIX_TOKEN is not configured",
+      "https://example/fix",
+    );
+    expect(read.upsertComment).toHaveBeenCalledWith(
+      4,
+      expect.stringContaining(
+        "run `prek run -a` locally, address any remaining issues, and push the changes",
+      ),
+    );
+  });
+
   it("does not expose an unexpected exception in the pull request", async () => {
     const { read, reporter, status } = fixture();
 
@@ -126,6 +147,7 @@ describe("fix result reporting", () => {
     "the pull request is no longer eligible for autofix",
     "the pull request source changed before autofix",
     "the fork no longer allows maintainer edits",
+    SAFE_BRANCH_UPDATE_REJECTED,
   ])("reports the controlled apply failure: %s", async (message) => {
     const { read, reporter, source, status } = fixture();
 
