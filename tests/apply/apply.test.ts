@@ -75,7 +75,6 @@ const request = (artifact: ChangeArtifact) => ({
   runId: 7,
   runAttempt: 2,
   artifact,
-  artifactUrl: "https://example/artifact",
   sourceRunUrl: "https://example/run",
   sourceWorkflow: "prek-autofix",
   commitMessage: "fix",
@@ -368,11 +367,13 @@ describe("applyArtifact", () => {
         ...request(artifact),
         mutationTokenUsedGithubFallback: true,
       }),
-    ).rejects.toThrow("cross-repository updates require an autofix token");
+    ).rejects.toThrow(
+      "Cannot apply fixes to this fork because the GitHub PAT token PREK_AUTOFIX_TOKEN is not configured",
+    );
     expect(read.upsertComment).toHaveBeenCalledWith(
       4,
       expect.stringContaining(
-        "cross-repository updates require an autofix token",
+        "[See instructions here](https://github.com/Snuffy2/prek-autofix#1-create-the-cross-repository-token-when-needed)",
       ),
     );
     expect(read.getMaintainerCanModify).not.toHaveBeenCalled();
@@ -481,11 +482,13 @@ describe("applyArtifact", () => {
     vi.mocked(mutation.updateRef).mockRejectedValue({ status: 422 });
     await expect(
       applyArtifact(read, mutation, request(artifact)),
-    ).rejects.toThrow("branch changed");
+    ).rejects.toThrow(
+      "GitHub could not update the pull request branch because it changed or the update was not allowed",
+    );
     expect(mutation.updateRef).toHaveBeenCalledTimes(1);
     expect(read.upsertComment).toHaveBeenCalledWith(
       4,
-      expect.stringContaining("Download the generated artifact"),
+      expect.stringContaining("Inspect the source run"),
     );
   });
 

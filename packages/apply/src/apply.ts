@@ -97,6 +97,12 @@ export class ApplyError extends Error {
   }
 }
 
+export const FORK_AUTOFIX_TOKEN_REQUIRED =
+  "Cannot apply fixes to this fork because the GitHub PAT token PREK_AUTOFIX_TOKEN is not configured. The repo owner needs add that token before autofix will work. [See instructions here](https://github.com/Snuffy2/prek-autofix#1-create-the-cross-repository-token-when-needed)";
+
+export const SAFE_BRANCH_UPDATE_REJECTED =
+  "GitHub could not update the pull request branch because it changed or the update was not allowed";
+
 export function ownMarkerCommentIds(comments: ExistingComment[]): number[] {
   return comments
     .filter(
@@ -168,15 +174,11 @@ function validateOperationAgainstTree(
   }
 }
 
-function recoveryComment(
-  reason: string,
-  artifactUrl: string,
-  sourceRunUrl: string,
-): string {
+function recoveryComment(reason: string, sourceRunUrl: string): string {
   return `${COMMENT_MARKER}
 prek-autofix could not apply the generated changes: **${reason}**
 
-[Download the generated artifact](${artifactUrl}) or [inspect the source run](${sourceRunUrl}). Apply the fixes locally, push them to the pull request branch, and rerun the checks.`;
+[Inspect the source run](${sourceRunUrl}). To recover locally, run the repository's configured prek command (normally \`prek run -a\`), address any remaining issues, and push the changes.`;
 }
 
 export interface ApplyRequest {
@@ -184,7 +186,6 @@ export interface ApplyRequest {
   runId: number;
   runAttempt: number;
   artifact: ChangeArtifact;
-  artifactUrl: string;
   sourceRunUrl: string;
   sourceWorkflow: string;
   commitMessage: string;
@@ -331,11 +332,10 @@ export async function applyArtifact(
     throw new ApplyError(reason);
   }
   if (!sameRepository && request.mutationTokenUsedGithubFallback) {
-    const reason =
-      "cross-repository updates require an autofix token with access to the head repository";
+    const reason = FORK_AUTOFIX_TOKEN_REQUIRED;
     await read.upsertComment(
       pr.number,
-      recoveryComment(reason, request.artifactUrl, request.sourceRunUrl),
+      recoveryComment(reason, request.sourceRunUrl),
     );
     throw new ApplyError(reason);
   }
@@ -343,7 +343,7 @@ export async function applyArtifact(
     const reason = "only user-owned forks are eligible";
     await read.upsertComment(
       pr.number,
-      recoveryComment(reason, request.artifactUrl, request.sourceRunUrl),
+      recoveryComment(reason, request.sourceRunUrl),
     );
     throw new ApplyError(reason);
   }
@@ -351,7 +351,7 @@ export async function applyArtifact(
     const reason = "the fork does not allow maintainer edits";
     await read.upsertComment(
       pr.number,
-      recoveryComment(reason, request.artifactUrl, request.sourceRunUrl),
+      recoveryComment(reason, request.sourceRunUrl),
     );
     throw new ApplyError(reason);
   }
@@ -425,13 +425,13 @@ export async function applyArtifact(
       error instanceof ApplyError
         ? error.message
         : status === 409 || status === 422
-          ? "the branch changed or GitHub rejected the non-forced update"
+          ? SAFE_BRANCH_UPDATE_REJECTED
           : status === 403 && request.mutationTokenUsedGithubFallback
             ? "GITHUB_TOKEN could not update the pull request branch; grant contents: write or configure PREK_AUTOFIX_TOKEN"
             : "GitHub rejected the fix commit";
     await read.upsertComment(
       pr.number,
-      recoveryComment(reason, request.artifactUrl, request.sourceRunUrl),
+      recoveryComment(reason, request.sourceRunUrl),
     );
     throw new ApplyError(reason);
   }

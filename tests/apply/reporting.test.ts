@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type {
-  ReadClient,
-  ResolvedSource,
-  StatusClient,
+import {
+  ApplyError,
+  FORK_AUTOFIX_TOKEN_REQUIRED,
+  SAFE_BRANCH_UPDATE_REJECTED,
+  type ReadClient,
+  type ResolvedSource,
+  type StatusClient,
 } from "../../packages/apply/src/apply";
-import { ApplyError } from "../../packages/apply/src/apply";
 import { createFixReporter } from "../../packages/apply/src/reporting";
 
 function fixture() {
@@ -35,7 +37,6 @@ function fixture() {
   const reporter = createFixReporter(read, status, {
     source,
     fixRunUrl: "https://example/fix",
-    artifactUrl: "https://example/artifact",
     sourceRunUrl: "https://example/source",
   });
   return { read, reporter, source, status };
@@ -84,7 +85,32 @@ describe("fix result reporting", () => {
     expect(read.upsertComment).toHaveBeenCalledWith(
       4,
       expect.stringMatching(
-        /PREK_AUTOFIX_TOKEN.*Inspect the fix run.*download the generated artifact/s,
+        /PREK_AUTOFIX_TOKEN.*Inspect the fix run.*inspect the source run/s,
+      ),
+    );
+  });
+
+  it("explains how to recover when a fork token is not configured", async () => {
+    const { read, reporter, source, status } = fixture();
+
+    await reporter.failure(new ApplyError(FORK_AUTOFIX_TOKEN_REQUIRED));
+
+    expect(status.setCommitStatus).toHaveBeenCalledWith(
+      source.run.headSha,
+      "failure",
+      "Cannot update fork: PREK_AUTOFIX_TOKEN is not configured",
+      "https://example/fix",
+    );
+    expect(read.upsertComment).toHaveBeenCalledWith(
+      4,
+      expect.stringContaining(
+        "The repo owner needs add that token before autofix will work",
+      ),
+    );
+    expect(read.upsertComment).toHaveBeenCalledWith(
+      4,
+      expect.stringContaining(
+        "[See instructions here](https://github.com/Snuffy2/prek-autofix#1-create-the-cross-repository-token-when-needed)",
       ),
     );
   });
@@ -126,6 +152,7 @@ describe("fix result reporting", () => {
     "the pull request is no longer eligible for autofix",
     "the pull request source changed before autofix",
     "the fork no longer allows maintainer edits",
+    SAFE_BRANCH_UPDATE_REJECTED,
   ])("reports the controlled apply failure: %s", async (message) => {
     const { read, reporter, source, status } = fixture();
 

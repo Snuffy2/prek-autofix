@@ -5,6 +5,8 @@ import {
 } from "../../shared/src/artifact";
 import {
   ApplyError,
+  FORK_AUTOFIX_TOKEN_REQUIRED,
+  SAFE_BRANCH_UPDATE_REJECTED,
   type CommitStatusState,
   type ReadClient,
   type ResolvedSource,
@@ -24,7 +26,6 @@ export interface FixReporter {
 export interface FixReporterRequest {
   source: ResolvedSource;
   fixRunUrl: string;
-  artifactUrl: string;
   sourceRunUrl: string;
 }
 
@@ -48,9 +49,13 @@ function publicFailure(error: unknown): PublicFailure {
     if (message === STALE_PULL_REQUEST_HEAD) {
       return { description: "Pull request head changed", reason: message };
     }
+    if (message === FORK_AUTOFIX_TOKEN_REQUIRED) {
+      return {
+        description: "Cannot update fork: PREK_AUTOFIX_TOKEN is not configured",
+        reason: message,
+      };
+    }
     if (
-      message ===
-        "cross-repository updates require an autofix token with access to the head repository" ||
       message === "only user-owned forks are eligible" ||
       message === "the fork does not allow maintainer edits" ||
       message === "the pull request is no longer eligible for autofix" ||
@@ -59,7 +64,7 @@ function publicFailure(error: unknown): PublicFailure {
       message === "GitHub rejected the fix commit" ||
       message ===
         "GITHUB_TOKEN could not update the pull request branch; grant contents: write or configure PREK_AUTOFIX_TOKEN" ||
-      message === "the branch changed or GitHub rejected the non-forced update"
+      message === SAFE_BRANCH_UPDATE_REJECTED
     ) {
       return { description: message.slice(0, 140), reason: message };
     }
@@ -141,7 +146,7 @@ export function createFixReporter(
               `${COMMENT_MARKER}
 prek-autofix could not apply the generated changes: **${failure.reason}.**
 
-[Inspect the fix run](${request.fixRunUrl}), [download the generated artifact](${request.artifactUrl}), or [inspect the source run](${request.sourceRunUrl}). Apply the fixes locally, push them to the pull request branch, and rerun the checks.`,
+[Inspect the fix run](${request.fixRunUrl}) or [inspect the source run](${request.sourceRunUrl}). To recover locally, run the repository's configured prek command (normally \`prek run -a\`), address any remaining issues, and push the changes.`,
             ),
           ),
         );
