@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@actions/core", () => ({
   getInput: vi.fn().mockReturnValue(""),
-  info: vi.fn(() => mocks.events.push("banner")),
+  info: vi.fn((message: string) => mocks.events.push(`info:${message}`)),
   setFailed: vi.fn(),
   setOutput: vi.fn(),
 }));
@@ -49,6 +49,9 @@ describe("collect entrypoint", () => {
 
     await vi.waitFor(() => expect(mocks.runCollect).toHaveBeenCalledOnce());
     expect(core.info).toHaveBeenCalledWith(versionBanner());
-    expect(mocks.events).toEqual(["banner", "collect"]);
+    expect(mocks.events[0]).toBe(`info:${versionBanner()}`);
+    expect(mocks.events.indexOf(`info:${versionBanner()}`)).toBeLessThan(
+      mocks.events.indexOf("collect"),
+    );
   });
 });

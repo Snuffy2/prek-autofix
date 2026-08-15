@@ -67,7 +67,7 @@ vi.mock("@actions/artifact", async (importOriginal) => {
 
 vi.mock("@actions/core", () => ({
   getInput: vi.fn(),
-  info: vi.fn(() => mocks.events.push("banner")),
+  info: vi.fn((message: string) => mocks.events.push(`info:${message}`)),
   setFailed: mocks.setFailed,
   setSecret: vi.fn(),
 }));
@@ -300,7 +300,10 @@ describe("apply entrypoint validation", () => {
         expect(mocks.applyArtifact).toHaveBeenCalledOnce(),
       );
       expect(core.info).toHaveBeenCalledWith(versionBanner());
-      expect(mocks.events).toEqual(["banner", "apply"]);
+      expect(mocks.events[0]).toBe(`info:${versionBanner()}`);
+      expect(mocks.events.indexOf(`info:${versionBanner()}`)).toBeLessThan(
+        mocks.events.indexOf("apply"),
+      );
       expect(core.getInput).toHaveBeenCalledWith("autofix-token");
       expect(github.getOctokit).toHaveBeenCalledWith("github-token");
       expect(github.getOctokit).toHaveBeenCalledWith(expectedMutationToken);
