@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { parse } from "yaml";
 import { describe, expect, it } from "vitest";
 
 const root = resolve(__dirname, "../..");
@@ -33,4 +34,12 @@ describe("public workflow documentation", () => {
       expect(readReadmeSnippet(marker)).toBe(read(path));
     },
   );
+
+  it("grants Stage 2 the reporting permissions used for PR visibility", () => {
+    const workflow = parse(read("examples/prek-autofix-fix.yml"));
+    expect(workflow.permissions).toMatchObject({
+      "pull-requests": "write",
+      "statuses": "write",
+    });
+  });
 });

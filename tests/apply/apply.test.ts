@@ -4,6 +4,7 @@ import {
   ApplyError,
   applyArtifact,
   maximumRawArtifactBytes,
+  resolveSourcePullRequest,
   type MutationClient,
   type ReadClient,
 } from "../../packages/apply/src/apply";
@@ -82,6 +83,25 @@ const request = (artifact: ChangeArtifact) => ({
 });
 
 describe("applyArtifact", () => {
+  it("revalidates a source resolved before artifact and token processing", async () => {
+    const { artifact, read, mutation } = fixture();
+    const source = await resolveSourcePullRequest(read, {
+      baseRepository: "base/repo",
+      runId: 7,
+      sourceWorkflow: "prek-autofix",
+    });
+    vi.mocked(read.getWorkflowRun).mockClear();
+    vi.mocked(read.listAssociatedPullRequests).mockClear();
+
+    await expect(
+      applyArtifact(read, mutation, { ...request(artifact), source }),
+    ).resolves.toEqual({ pullRequestNumber: 4, commitSha: "commit" });
+    expect(read.getWorkflowRun).toHaveBeenCalledExactlyOnceWith(7);
+    expect(read.listAssociatedPullRequests).toHaveBeenCalledExactlyOnceWith(
+      "a".repeat(40),
+    );
+  });
+
   it("rejects empty artifacts and unsafe raw-size arithmetic", async () => {
     const { artifact, read, mutation } = fixture();
     artifact.operations = [];
@@ -102,7 +122,9 @@ describe("applyArtifact", () => {
       pullRequestNumber: 4,
       commitSha: "commit",
     });
-    expect(read.getMaintainerCanModify).toHaveBeenCalledExactlyOnceWith(4);
+    expect(read.getMaintainerCanModify).toHaveBeenCalledTimes(2);
+    expect(read.getMaintainerCanModify).toHaveBeenNthCalledWith(1, 4);
+    expect(read.getMaintainerCanModify).toHaveBeenNthCalledWith(2, 4);
     expect(read.getCommitTreeSha).toHaveBeenCalledWith(
       "base/repo",
       "a".repeat(40),
@@ -267,6 +289,78 @@ describe("applyArtifact", () => {
     expect(read.getMaintainerCanModify).not.toHaveBeenCalled();
   });
 
+  it("does not update a pull request that closes after initial validation", async () => {
+    const { artifact, read, mutation } = fixture();
+    const source = await resolveSourcePullRequest(read, {
+      baseRepository: "base/repo",
+      runId: 7,
+      sourceWorkflow: "prek-autofix",
+    });
+    vi.mocked(read.listAssociatedPullRequests).mockResolvedValue([
+      { ...source.pullRequest, state: "closed" },
+    ]);
+
+    await expect(
+      applyArtifact(read, mutation, { ...request(artifact), source }),
+    ).rejects.toThrow("no longer eligible");
+    expect(mutation.createCommit).toHaveBeenCalledOnce();
+    expect(mutation.updateRef).not.toHaveBeenCalled();
+    expect(read.upsertComment).toHaveBeenCalledWith(
+      4,
+      expect.stringContaining("no longer eligible"),
+    );
+  });
+
+  it("treats a head change during final revalidation as obsolete", async () => {
+    const { artifact, read, mutation } = fixture();
+    const source = await resolveSourcePullRequest(read, {
+      baseRepository: "base/repo",
+      runId: 7,
+      sourceWorkflow: "prek-autofix",
+    });
+    vi.mocked(read.listAssociatedPullRequests).mockResolvedValue([
+      { ...source.pullRequest, headSha: "b".repeat(40) },
+    ]);
+
+    await expect(
+      applyArtifact(read, mutation, { ...request(artifact), source }),
+    ).rejects.toThrow("the pull request head changed after collection");
+    expect(read.markCommentObsolete).toHaveBeenCalledWith(4);
+    expect(read.upsertComment).not.toHaveBeenCalled();
+    expect(mutation.updateRef).not.toHaveBeenCalled();
+  });
+
+  it("revalidates that a fork remains user-owned", async () => {
+    const { artifact, read, mutation } = fixture();
+    const source = await resolveSourcePullRequest(read, {
+      baseRepository: "base/repo",
+      runId: 7,
+      sourceWorkflow: "prek-autofix",
+    });
+    vi.mocked(read.listAssociatedPullRequests).mockResolvedValue([
+      { ...source.pullRequest, headRepositoryOwnerType: "Organization" },
+    ]);
+
+    await expect(
+      applyArtifact(read, mutation, { ...request(artifact), source }),
+    ).rejects.toThrow("source changed before autofix");
+    expect(mutation.updateRef).not.toHaveBeenCalled();
+  });
+
+  it("does not update a fork after maintainer edits are revoked", async () => {
+    const { artifact, read, mutation } = fixture();
+    vi.mocked(read.getMaintainerCanModify)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+
+    await expect(
+      applyArtifact(read, mutation, request(artifact)),
+    ).rejects.toThrow("no longer allows maintainer edits");
+    expect(read.getMaintainerCanModify).toHaveBeenCalledTimes(2);
+    expect(mutation.createCommit).toHaveBeenCalledOnce();
+    expect(mutation.updateRef).not.toHaveBeenCalled();
+  });
+
   it("rejects the built-in token for a cross-repository update", async () => {
     const { artifact, read, mutation } = fixture();
     await expect(
@@ -421,6 +515,41 @@ describe("applyArtifact", () => {
     expect(read.upsertComment).toHaveBeenCalled();
     expect(vi.mocked(read.upsertComment).mock.calls[0]?.[1]).not.toContain(
       "ghp_secret",
+    );
+  });
+
+  it("explains a denied GITHUB_TOKEN fallback without exposing API details", async () => {
+    const { artifact, read, mutation } = fixture();
+    const run = await read.getWorkflowRun(7);
+    vi.mocked(read.getWorkflowRun).mockResolvedValue({
+      ...run,
+      headRepository: "base/repo",
+    });
+    const pullRequest = (await read.listAssociatedPullRequests("x"))[0]!;
+    vi.mocked(read.listAssociatedPullRequests).mockResolvedValue([
+      {
+        ...pullRequest,
+        baseRepository: "base/repo",
+        headRepository: "base/repo",
+      },
+    ]);
+    vi.mocked(mutation.createBlob).mockReset().mockRejectedValue({
+      status: 403,
+      message: "remote included ghp_do_not_leak",
+    });
+
+    await expect(
+      applyArtifact(read, mutation, {
+        ...request(artifact),
+        mutationTokenUsedGithubFallback: true,
+      }),
+    ).rejects.toThrow("GITHUB_TOKEN could not update");
+    expect(read.upsertComment).toHaveBeenCalledWith(
+      4,
+      expect.stringContaining("grant contents: write"),
+    );
+    expect(vi.mocked(read.upsertComment).mock.calls[0]?.[1]).not.toContain(
+      "ghp_do_not_leak",
     );
   });
 });

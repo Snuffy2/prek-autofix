@@ -72,6 +72,17 @@ export interface MutationClient {
   ): Promise<void>;
 }
 
+export type CommitStatusState = "pending" | "success" | "failure";
+
+export interface StatusClient {
+  setCommitStatus(
+    sha: string,
+    state: CommitStatusState,
+    description: string,
+    targetUrl: string,
+  ): Promise<void>;
+}
+
 export interface MutationTreeEntry {
   path: string;
   mode: "100644" | "100755";
@@ -178,6 +189,7 @@ export interface ApplyRequest {
   sourceWorkflow: string;
   commitMessage: string;
   mutationTokenUsedGithubFallback: boolean;
+  source?: ResolvedSource;
 }
 
 export interface ApplyResult {
@@ -185,15 +197,23 @@ export interface ApplyResult {
   commitSha: string;
 }
 
-export async function applyArtifact(
+export interface ResolvedSource {
+  run: WorkflowRun;
+  pullRequest: PullRequest;
+}
+
+export interface ResolveSourceRequest {
+  baseRepository: string;
+  runId: number;
+  sourceWorkflow: string;
+}
+
+/** Resolve the trusted source run and its single associated open pull request. */
+export async function resolveSourcePullRequest(
   read: ReadClient,
-  mutation: MutationClient,
-  request: ApplyRequest,
-): Promise<ApplyResult> {
+  request: ResolveSourceRequest,
+): Promise<ResolvedSource> {
   repositoryParts(request.baseRepository);
-  if (request.artifact.operations.length === 0) {
-    throw new ApplyError("artifact contains no file operations");
-  }
   const run = await read.getWorkflowRun(request.runId);
   if (
     run.id !== request.runId ||
@@ -217,10 +237,78 @@ export async function applyArtifact(
       `expected exactly one associated open pull request; found ${candidates.length}`,
     );
   }
-  const pr = candidates[0]!;
-  if (pr.headRepositoryNodeId.length === 0) {
+  const pullRequest = candidates[0]!;
+  if (pullRequest.headRepositoryNodeId.length === 0) {
     throw new ApplyError("pull request head repository identity is missing");
   }
+  return { run, pullRequest };
+}
+
+async function revalidateSourcePullRequest(
+  read: ReadClient,
+  request: ResolveSourceRequest,
+  expected: ResolvedSource,
+): Promise<void> {
+  let current: ResolvedSource;
+  try {
+    current = await resolveSourcePullRequest(read, request);
+  } catch {
+    throw new ApplyError("the pull request is no longer eligible for autofix");
+  }
+
+  const { run, pullRequest } = current;
+  const expectedRun = expected.run;
+  const expectedPullRequest = expected.pullRequest;
+  if (pullRequest.headSha !== expectedPullRequest.headSha) {
+    const reason = "the pull request head changed after collection";
+    await read.markCommentObsolete(expectedPullRequest.number);
+    throw new ApplyError(reason);
+  }
+  if (
+    run.id !== expectedRun.id ||
+    run.name !== expectedRun.name ||
+    run.event !== expectedRun.event ||
+    run.headSha !== expectedRun.headSha ||
+    run.headBranch !== expectedRun.headBranch ||
+    run.headRepository !== expectedRun.headRepository ||
+    pullRequest.number !== expectedPullRequest.number ||
+    pullRequest.state !== "open" ||
+    pullRequest.baseRepository !== expectedPullRequest.baseRepository ||
+    pullRequest.headRepository !== expectedPullRequest.headRepository ||
+    pullRequest.headRepositoryNodeId !==
+      expectedPullRequest.headRepositoryNodeId ||
+    pullRequest.headRepositoryOwnerType !==
+      expectedPullRequest.headRepositoryOwnerType ||
+    pullRequest.headRef !== expectedPullRequest.headRef
+  ) {
+    throw new ApplyError("the pull request source changed before autofix");
+  }
+
+  if (
+    pullRequest.headRepository !== request.baseRepository &&
+    !(await read.getMaintainerCanModify(pullRequest.number))
+  ) {
+    throw new ApplyError("the fork no longer allows maintainer edits");
+  }
+}
+
+export async function applyArtifact(
+  read: ReadClient,
+  mutation: MutationClient,
+  request: ApplyRequest,
+): Promise<ApplyResult> {
+  repositoryParts(request.baseRepository);
+  if (request.artifact.operations.length === 0) {
+    throw new ApplyError("artifact contains no file operations");
+  }
+  const source =
+    request.source ??
+    (await resolveSourcePullRequest(read, {
+      baseRepository: request.baseRepository,
+      runId: request.runId,
+      sourceWorkflow: request.sourceWorkflow,
+    }));
+  const { run, pullRequest: pr } = source;
 
   const claims = request.artifact.source;
   if (
@@ -307,6 +395,15 @@ export async function applyArtifact(
       tree,
       run.headSha,
     );
+    await revalidateSourcePullRequest(
+      read,
+      {
+        baseRepository: request.baseRepository,
+        runId: request.runId,
+        sourceWorkflow: request.sourceWorkflow,
+      },
+      source,
+    );
     await mutation.updateRef(
       pr.headRepositoryNodeId,
       `refs/heads/${pr.headRef}`,
@@ -314,14 +411,24 @@ export async function applyArtifact(
       run.headSha,
     );
   } catch (error) {
+    if (
+      error instanceof ApplyError &&
+      error.message === "the pull request head changed after collection"
+    ) {
+      throw error;
+    }
     const status =
       typeof error === "object" && error !== null && "status" in error
         ? Number(error.status)
         : undefined;
     const reason =
-      status === 409 || status === 422
-        ? "the branch changed or GitHub rejected the non-forced update"
-        : "GitHub rejected the fix commit";
+      error instanceof ApplyError
+        ? error.message
+        : status === 409 || status === 422
+          ? "the branch changed or GitHub rejected the non-forced update"
+          : status === 403 && request.mutationTokenUsedGithubFallback
+            ? "GITHUB_TOKEN could not update the pull request branch; grant contents: write or configure PREK_AUTOFIX_TOKEN"
+            : "GitHub rejected the fix commit";
     await read.upsertComment(
       pr.number,
       recoveryComment(reason, request.artifactUrl, request.sourceRunUrl),
