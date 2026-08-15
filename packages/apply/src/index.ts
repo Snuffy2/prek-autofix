@@ -35,6 +35,7 @@ function nonnegativeInput(name: string, fallback: number): number {
 }
 
 async function run(): Promise<void> {
+  core.info(versionBanner());
   if (github.context.eventName !== "workflow_run") {
     throw new Error("fix action may only run for workflow_run");
   }
@@ -46,7 +47,6 @@ async function run(): Promise<void> {
   if (!Number.isSafeInteger(runAttempt) || runAttempt <= 0) {
     throw new Error("workflow_run.run_attempt is required");
   }
-  core.info(versionBanner());
   const [owner, repo] = github.context.repo.owner
     ? [github.context.repo.owner, github.context.repo.repo]
     : ["", ""];

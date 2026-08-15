@@ -3,12 +3,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { versionBanner } from "../../packages/shared/src/version";
 
 const mocks = vi.hoisted(() => ({
-  runCollect: vi.fn().mockResolvedValue(undefined),
+  events: [] as string[],
+  runCollect: vi.fn().mockImplementation(async () => {
+    mocks.events.push("collect");
+  }),
 }));
 
 vi.mock("@actions/core", () => ({
   getInput: vi.fn().mockReturnValue(""),
-  info: vi.fn(),
+  info: vi.fn(() => mocks.events.push("banner")),
   setFailed: vi.fn(),
   setOutput: vi.fn(),
 }));
@@ -38,6 +41,7 @@ describe("collect entrypoint", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
+    mocks.events.length = 0;
   });
 
   it("logs the prek-autofix version before collecting", async () => {
@@ -45,5 +49,6 @@ describe("collect entrypoint", () => {
 
     await vi.waitFor(() => expect(mocks.runCollect).toHaveBeenCalledOnce());
     expect(core.info).toHaveBeenCalledWith(versionBanner());
+    expect(mocks.events).toEqual(["banner", "collect"]);
   });
 });

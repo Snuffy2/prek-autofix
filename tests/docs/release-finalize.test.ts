@@ -5,6 +5,8 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
+  truncateSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -41,7 +43,14 @@ function writeReleaseFiles(
   }
 }
 
-function runFinalizer(branchSha = SOURCE_SHA): {
+interface FinalizerOptions {
+  branchSha?: string;
+  changedPaths?: string[];
+  noChanges?: boolean;
+  mutatePrepared?: (directory: string) => void;
+}
+
+function runFinalizer(options: FinalizerOptions = {}): {
   calls: string;
   output: string;
 } {
@@ -54,6 +63,7 @@ function runFinalizer(branchSha = SOURCE_SHA): {
   mkdirSync(binDirectory, { recursive: true });
   writeReleaseFiles(releaseDirectory, "1.0.7", "old");
   writeReleaseFiles(preparedDirectory, "1.0.8", "new");
+  options.mutatePrepared?.(preparedDirectory);
   const gitPath = join(binDirectory, "git");
   writeFileSync(
     gitPath,
@@ -66,10 +76,13 @@ status)
   ;;
 diff)
   if [[ "$2" == "--name-only" ]]; then
-    printf '%s\n' ${RELEASE_FILES.map((path) => `'${path}'`).join(" ")}
+    printf '%s\n' "$CHANGED_PATHS"
     exit 0
   fi
-  [[ "$2" == "--cached" && "$3" == "--quiet" ]] && exit 1
+  if [[ "$2" == "--cached" && "$3" == "--quiet" ]]; then
+    [[ "$NO_CHANGES" == "true" ]] && exit 0
+    exit 1
+  fi
   ;;
 ls-remote)
   printf '%s\trefs/heads/main\n' "$BRANCH_SHA"
@@ -83,8 +96,12 @@ rev-parse)
   printf '%s\n' "$RELEASE_SHA"
   exit 0
   ;;
--c)
-  [[ "$3" == "push" ]] || exit 2
+push)
+  expected_auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64)"
+  [[ "\${GIT_CONFIG_COUNT:-}" == "1" ]] || exit 2
+  [[ "\${GIT_CONFIG_KEY_0:-}" == "http.extraheader" ]] || exit 2
+  [[ "\${GIT_CONFIG_VALUE_0:-}" == "$expected_auth" ]] || exit 2
+  printf 'push-env count=1 key=http.extraheader value-valid=true\n' >> "$CALLS_PATH"
   exit 0
   ;;
 esac
@@ -94,28 +111,38 @@ exit 2
   );
   chmodSync(gitPath, 0o755);
   try {
-    execFileSync(
-      process.execPath,
-      [resolve(".github/scripts/finalize-release.mjs")],
-      {
-        cwd: resolve("."),
-        env: {
-          ...process.env,
-          BRANCH_SHA: branchSha,
-          CALLS_PATH: callsPath,
-          DEFAULT_BRANCH: "main",
-          GH_TOKEN: "token-sentinel",
-          GITHUB_OUTPUT: outputPath,
-          PATH: `${binDirectory}:${process.env.PATH}`,
-          PREPARED_DIRECTORY: preparedDirectory,
-          RELEASE_DIRECTORY: releaseDirectory,
-          RELEASE_SHA,
-          RELEASE_TAG: "v1.0.8",
-          SOURCE_SHA,
+    try {
+      execFileSync(
+        process.execPath,
+        [resolve(".github/scripts/finalize-release.mjs")],
+        {
+          cwd: resolve("."),
+          env: {
+            ...process.env,
+            BRANCH_SHA: options.branchSha ?? SOURCE_SHA,
+            CALLS_PATH: callsPath,
+            CHANGED_PATHS: (options.changedPaths ?? RELEASE_FILES).join("\n"),
+            DEFAULT_BRANCH: "main",
+            GH_TOKEN: "token-sentinel",
+            GITHUB_OUTPUT: outputPath,
+            PATH: `${binDirectory}:${process.env.PATH}`,
+            PREPARED_DIRECTORY: preparedDirectory,
+            RELEASE_DIRECTORY: releaseDirectory,
+            RELEASE_SHA,
+            RELEASE_TAG: "v1.0.8",
+            NO_CHANGES: String(options.noChanges ?? false),
+            SOURCE_SHA,
+          },
+          stdio: ["ignore", "pipe", "pipe"],
         },
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
+      );
+    } catch (error) {
+      const stderr = (error as { stderr?: Buffer | string }).stderr;
+      throw new Error(
+        stderr?.toString().trim() || "release finalization failed",
+        { cause: error },
+      );
+    }
     return {
       calls: readFileSync(callsPath, "utf8"),
       output: readFileSync(outputPath, "utf8"),
@@ -143,9 +170,68 @@ describe("release finalization", () => {
     expect(result.calls).toContain("HEAD:refs/heads/main");
     expect(result.calls).toContain("+HEAD:refs/tags/v1.0.8");
     expect(result.calls).not.toContain("token-sentinel");
+    expect(result.calls).not.toContain(
+      Buffer.from("x-access-token:token-sentinel").toString("base64"),
+    );
+    expect(result.calls).toContain(
+      "push-env count=1 key=http.extraheader value-valid=true",
+    );
   });
 
   it("fails if the default branch advances during preparation", () => {
-    expect(() => runFinalizer("3".repeat(40))).toThrow();
+    expect(() => runFinalizer({ branchSha: "3".repeat(40) })).toThrow(
+      "Default branch or release tag advanced during preparation",
+    );
+  });
+
+  it("writes the source SHA without pushing when prepared files are unchanged", () => {
+    const result = runFinalizer({ noChanges: true });
+
+    expect(result.output).toBe(`sha=${SOURCE_SHA}\n`);
+    expect(result.calls).not.toContain("push --atomic");
+  });
+
+  it("rejects a prepared symlink", () => {
+    expect(() =>
+      runFinalizer({
+        mutatePrepared: (directory) => {
+          const path = join(directory, "package.json");
+          rmSync(path);
+          symlinkSync("package-lock.json", path);
+        },
+      }),
+    ).toThrow("Prepared release path is not a regular file: package.json");
+  });
+
+  it("rejects a prepared file larger than 10 MiB", () => {
+    expect(() =>
+      runFinalizer({
+        mutatePrepared: (directory) => {
+          truncateSync(
+            join(directory, "dist/apply/index.js"),
+            10 * 1024 * 1024 + 1,
+          );
+        },
+      }),
+    ).toThrow("Prepared release path is too large: dist/apply/index.js");
+  });
+
+  it("rejects an unexpected changed path", () => {
+    expect(() =>
+      runFinalizer({ changedPaths: [...RELEASE_FILES, "unexpected.txt"] }),
+    ).toThrow("Unexpected prepared path: unexpected.txt");
+  });
+
+  it("rejects package and lock versions that disagree with the release tag", () => {
+    expect(() =>
+      runFinalizer({
+        mutatePrepared: (directory) => {
+          writeFileSync(
+            join(directory, "package-lock.json"),
+            `${JSON.stringify({ version: "1.0.7", packages: { "": { version: "1.0.7" } } })}\n`,
+          );
+        },
+      }),
+    ).toThrow("Prepared package versions do not match the release tag");
   });
 });

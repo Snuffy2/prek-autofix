@@ -15,6 +15,38 @@ script_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 tags_file="$(mktemp)"
 releases_file="$(mktemp)"
 trap 'rm -f "$tags_file" "$releases_file"' EXIT
+
+verify_point_tag() {
+  local attempt direct_ref object_oid object_type
+  for attempt in 1 2 3 4 5; do
+    if direct_ref="$(
+      gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" \
+        --jq '.object | [.sha, .type] | @tsv' 2>/dev/null
+    )"; then
+      IFS=$'\t' read -r object_oid object_type <<< "$direct_ref"
+      while [[ "$object_type" == "tag" ]]; do
+        if ! direct_ref="$(
+          gh api "repos/$GITHUB_REPOSITORY/git/tags/$object_oid" \
+            --jq '.object | [.sha, .type] | @tsv' 2>/dev/null
+        )"; then
+          object_type=""
+          break
+        fi
+        IFS=$'\t' read -r object_oid object_type <<< "$direct_ref"
+      done
+      if [[ "$object_type" == "commit" && "$object_oid" == "$TARGET_SHA" ]]; then
+        return
+      fi
+    fi
+    if (( attempt < 5 )); then
+      sleep "$attempt"
+    fi
+  done
+  echo "Verified release SHA does not match its exact immutable tag ref" >&2
+  exit 1
+}
+
+verify_point_tag
 gh api --paginate --slurp \
   "repos/$GITHUB_REPOSITORY/tags?per_page=100" > "$tags_file"
 gh api --paginate --slurp \

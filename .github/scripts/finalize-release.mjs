@@ -11,10 +11,12 @@ const RELEASE_FILES = [
 ];
 
 function git(args, options = {}) {
+  const { env, ...execOptions } = options;
   const result = execFileSync("git", args, {
     cwd: process.env.RELEASE_DIRECTORY,
     encoding: "utf8",
-    ...options,
+    ...execOptions,
+    env: { ...process.env, ...env },
   });
   return typeof result === "string" ? result.trim() : "";
 }
@@ -146,8 +148,6 @@ function main() {
   try {
     git(
       [
-        "-c",
-        `http.extraheader=AUTHORIZATION: basic ${authorization}`,
         "push",
         "--atomic",
         `--force-with-lease=refs/heads/${defaultBranch}:${refs.branchOid}`,
@@ -156,7 +156,14 @@ function main() {
         `HEAD:refs/heads/${defaultBranch}`,
         `+HEAD:refs/tags/${releaseTag}`,
       ],
-      { stdio: "inherit" },
+      {
+        env: {
+          GIT_CONFIG_COUNT: "1",
+          GIT_CONFIG_KEY_0: "http.extraheader",
+          GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${authorization}`,
+        },
+        stdio: "inherit",
+      },
     );
   } catch {
     throw new Error("Atomic release branch and tag update failed");

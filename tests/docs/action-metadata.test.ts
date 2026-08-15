@@ -91,21 +91,29 @@ function prepareRelease(
     }),
   );
   try {
-    execFileSync(
-      process.execPath,
-      [resolve(".github/scripts/prepare-release.mjs")],
-      {
-        cwd: resolve("."),
-        env: {
-          ...process.env,
-          GITHUB_OUTPUT: outputPath,
-          PACKAGE_JSON_PATH: packagePath,
-          PACKAGE_LOCK_PATH: lockPath,
-          RELEASE_TAG: releaseTag,
+    try {
+      execFileSync(
+        process.execPath,
+        [resolve(".github/scripts/prepare-release.mjs")],
+        {
+          cwd: resolve("."),
+          env: {
+            ...process.env,
+            GITHUB_OUTPUT: outputPath,
+            PACKAGE_JSON_PATH: packagePath,
+            PACKAGE_LOCK_PATH: lockPath,
+            RELEASE_TAG: releaseTag,
+          },
+          stdio: ["ignore", "pipe", "pipe"],
         },
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
+      );
+    } catch (error) {
+      const stderr = (error as { stderr?: Buffer | string }).stderr;
+      throw new Error(
+        stderr?.toString().trim() || "release preparation failed",
+        { cause: error },
+      );
+    }
     return {
       output: readFileSync(outputPath, "utf8"),
       packageJson: JSON.parse(readFileSync(packagePath, "utf8")),
@@ -129,9 +137,11 @@ function runReleaseUpdate(
   }>,
   failure: "none" | "external-move" | "create-race" = "none",
   directRefOid?: string,
+  pointRefOid = targetSha,
 ): string {
   const directory = mkdtempSync(join(tmpdir(), "prek-autofix-release-write-"));
   const ghPath = join(directory, "gh");
+  const sleepPath = join(directory, "sleep");
   const callsPath = join(directory, "calls");
   const tagsJson = JSON.stringify([tags]);
   const releasesJson = JSON.stringify([releases]);
@@ -148,6 +158,8 @@ if [[ "$*" == *"tags?per_page=100"* ]]; then
   printf '%s' "$TAGS_JSON"
 elif [[ "$*" == *"releases?per_page=100"* ]]; then
   printf '%s' "$RELEASES_JSON"
+elif [[ "$*" == "api repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG --jq .object | [.sha, .type] | @tsv" ]]; then
+  printf '%s\tcommit\n' "$POINT_REF_OID"
 elif [[ "$*" == "api repos/$GITHUB_REPOSITORY/git/ref/tags/v1 --jq .object | [.sha, .type] | @tsv" ]]; then
   printf '%s\\t%s\\n' "$DIRECT_REF_OID" "$DIRECT_REF_TYPE"
 elif [[ "$*" == "api repos/$GITHUB_REPOSITORY/git/tags/$DIRECT_REF_OID --jq .object | [.sha, .type] | @tsv" ]]; then
@@ -167,28 +179,38 @@ fi
 `,
   );
   chmodSync(ghPath, 0o755);
+  writeFileSync(sleepPath, "#!/usr/bin/env bash\nexit 0\n");
+  chmodSync(sleepPath, 0o755);
   const run = releaseUpdateScript(workflow);
   try {
-    execFileSync("bash", ["-eo", "pipefail", "-c", run], {
-      cwd: resolve("."),
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        PATH: `${directory}:${process.env.PATH}`,
-        CALLS_PATH: callsPath,
-        TAGS_JSON: tagsJson,
-        RELEASES_JSON: releasesJson,
-        DIRECT_REF_OID: observedDirectRefOid,
-        DIRECT_REF_TYPE: directRefOid === undefined ? "commit" : "tag",
-        MOVING_TAG_COMMIT_SHA: movingTagCommitSha,
-        FAILURE: failure,
-        GITHUB_REPOSITORY: "owner/repository",
-        GITHUB_WORKSPACE: resolve("."),
-        RELEASE_TAG: releaseTag,
-        TARGET_SHA: targetSha,
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    try {
+      execFileSync("bash", ["-eo", "pipefail", "-c", run], {
+        cwd: resolve("."),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${directory}:${process.env.PATH}`,
+          CALLS_PATH: callsPath,
+          TAGS_JSON: tagsJson,
+          RELEASES_JSON: releasesJson,
+          DIRECT_REF_OID: observedDirectRefOid,
+          DIRECT_REF_TYPE: directRefOid === undefined ? "commit" : "tag",
+          MOVING_TAG_COMMIT_SHA: movingTagCommitSha,
+          POINT_REF_OID: pointRefOid,
+          FAILURE: failure,
+          GITHUB_REPOSITORY: "owner/repository",
+          GITHUB_WORKSPACE: resolve("."),
+          RELEASE_TAG: releaseTag,
+          TARGET_SHA: targetSha,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (error) {
+      const stderr = (error as { stderr?: Buffer | string }).stderr;
+      throw new Error(stderr?.toString().trim() || "release update failed", {
+        cause: error,
+      });
+    }
     return readFileSync(callsPath, "utf8");
   } finally {
     rmSync(directory, { recursive: true });
@@ -354,8 +376,12 @@ describe("action metadata", () => {
     expect(prepared.packageJson.version).toBe("1.0.8");
     expect(prepared.packageLock.version).toBe("1.0.8");
     expect(prepared.packageLock.packages[""].version).toBe("1.0.8");
-    expect(() => prepareRelease("v1.0.6", "1.0.7")).toThrow();
-    expect(() => prepareRelease("v1", "1.0.7")).toThrow();
+    expect(() => prepareRelease("v1.0.6", "1.0.7")).toThrow(
+      "Release v1.0.6 would downgrade package.json from 1.0.7",
+    );
+    expect(() => prepareRelease("v1", "1.0.7")).toThrow(
+      "Release tag must have vMAJOR.MINOR.PATCH form",
+    );
   });
 
   it("isolates release preparation from repository write credentials", async () => {
@@ -532,6 +558,10 @@ describe("action metadata", () => {
     );
 
     expect(calls).toContain(
+      "api repos/owner/repository/git/ref/tags/v1.10.0 " +
+        "--jq .object | [.sha, .type] | @tsv",
+    );
+    expect(calls).toContain(
       "api repos/owner/repository/git/ref/tags/v1 " +
         "--jq .object | [.sha, .type] | @tsv",
     );
@@ -547,6 +577,49 @@ describe("action metadata", () => {
     expect(calls).not.toContain(`-f beforeOid=${oldSha}`);
     expect(calls).toContain(`-f afterOid=${targetSha}`);
     expect(calls).toContain("-F force=true");
+  });
+
+  it("verifies the exact immutable release ref before reading tag lists", async () => {
+    const workflow = await metadata(".github/workflows/release.yml");
+    const targetSha = "2".repeat(40);
+    const calls = runReleaseUpdate(
+      workflow,
+      "v1.10.0",
+      targetSha,
+      [{ name: "v1.10.0", commit: { sha: targetSha } }],
+      [
+        {
+          tag_name: "v1.10.0",
+          draft: false,
+          prerelease: false,
+          published_at: "2026-01-01T00:00:00Z",
+        },
+      ],
+    );
+
+    expect(calls.indexOf("git/ref/tags/v1.10.0")).toBeLessThan(
+      calls.indexOf("tags?per_page=100"),
+    );
+  });
+
+  it("fails closed when the exact immutable release ref does not match", async () => {
+    const workflow = await metadata(".github/workflows/release.yml");
+    const targetSha = "2".repeat(40);
+
+    expect(() =>
+      runReleaseUpdate(
+        workflow,
+        "v1.10.0",
+        targetSha,
+        [{ name: "v1.10.0", commit: { sha: targetSha } }],
+        [],
+        "none",
+        undefined,
+        "3".repeat(40),
+      ),
+    ).toThrow(
+      "Verified release SHA does not match its exact immutable tag ref",
+    );
   });
 
   it("fails closed when the moving tag changes after observation", async () => {

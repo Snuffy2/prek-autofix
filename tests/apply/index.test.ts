@@ -6,7 +6,10 @@ import { getArtifactIfPresent } from "../../packages/apply/src/artifact-lookup";
 import { versionBanner } from "../../packages/shared/src/version";
 
 const mocks = vi.hoisted(() => ({
-  applyArtifact: vi.fn(),
+  events: [] as string[],
+  applyArtifact: vi.fn().mockImplementation(async () => {
+    mocks.events.push("apply");
+  }),
   artifactClient: vi.fn(),
   readFile: vi.fn(),
   reporter: {
@@ -64,7 +67,7 @@ vi.mock("@actions/artifact", async (importOriginal) => {
 
 vi.mock("@actions/core", () => ({
   getInput: vi.fn(),
-  info: vi.fn(),
+  info: vi.fn(() => mocks.events.push("banner")),
   setFailed: mocks.setFailed,
   setSecret: vi.fn(),
 }));
@@ -89,15 +92,19 @@ describe("apply entrypoint validation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
+    mocks.events.length = 0;
     mocks.context.eventName = "workflow_run";
     mocks.context.payload.workflow_run = {
       id: 7,
       run_attempt: 3,
     };
     vi.mocked(core.getInput).mockReturnValue("");
-    mocks.applyArtifact.mockResolvedValue({
-      pullRequestNumber: 4,
-      commitSha: "commit",
+    mocks.applyArtifact.mockImplementation(async () => {
+      mocks.events.push("apply");
+      return {
+        pullRequestNumber: 4,
+        commitSha: "commit",
+      };
     });
     mocks.resolveSourcePullRequest.mockResolvedValue({
       run: {
@@ -293,6 +300,7 @@ describe("apply entrypoint validation", () => {
         expect(mocks.applyArtifact).toHaveBeenCalledOnce(),
       );
       expect(core.info).toHaveBeenCalledWith(versionBanner());
+      expect(mocks.events).toEqual(["banner", "apply"]);
       expect(core.getInput).toHaveBeenCalledWith("autofix-token");
       expect(github.getOctokit).toHaveBeenCalledWith("github-token");
       expect(github.getOctokit).toHaveBeenCalledWith(expectedMutationToken);

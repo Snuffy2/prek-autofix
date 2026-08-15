@@ -55,6 +55,7 @@ jobs:
 
   finalize:
     needs: prepare
+    # Read the prepared artifact, then rewrite the default branch and release tag.
     permissions:
       actions: read
       contents: write
@@ -97,6 +98,7 @@ jobs:
 
   update-major:
     needs: [prepare, finalize]
+    # Move or create the verified major tag; no other repository writes are needed.
     permissions:
       contents: write
     concurrency:
