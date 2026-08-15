@@ -334,6 +334,20 @@ same-repository update.
 | First-time contributor workflow waits for approval    | A maintainer must approve the initial `pull_request` workflow run in GitHub's Actions UI. No artifact exists until that read-only run is approved and completes.                                                                                                                                |
 | Check keeps failing after the fix commit              | Read the new Stage 1 log. Remaining findings without stable fixes, or non-converging hooks, need a normal fix.                                                                                                                                                                                  |
 
+## Releases
+
+Publish a stable release only from the current default-branch commit. The
+release workflow validates the published source, prepares the package metadata
+and both Action bundles, then atomically commits those files and retargets the
+newly published `v<major>.<minor>.<patch>` tag to the final release commit. It
+then creates or moves the corresponding `v<major>` tag.
+
+Because GitHub publishes the point tag before this workflow runs, that exact tag
+may briefly resolve first to the original tagged commit and then to the final
+release commit. Later releases do not retarget it again. Wait for the release
+workflow to finish before recording an exact release ref; use the final commit
+SHA when a permanently immutable pin is required.
+
 ## Pinning and upgrades
 
 The examples intentionally use `Snuffy2/prek-autofix/review@v1` for review and

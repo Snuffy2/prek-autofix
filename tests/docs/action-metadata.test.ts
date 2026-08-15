@@ -607,7 +607,7 @@ describe("action metadata", () => {
     ).toThrow(/maximum peel depth/u);
   });
 
-  it("fails closed when the exact immutable release ref does not match", () => {
+  it("fails closed when the exact finalized release ref does not match", () => {
     const targetSha = "2".repeat(40);
 
     expect(() =>
@@ -620,7 +620,7 @@ describe("action metadata", () => {
         undefined,
         "3".repeat(40),
       ),
-    ).toThrow(/does not match its exact immutable tag ref/u);
+    ).toThrow(/does not match its exact finalized tag ref/u);
   });
 
   it("atomically rejects release-tag movement before updating the major tag", () => {
@@ -690,7 +690,7 @@ describe("action metadata", () => {
         { name: "v2", commit: { sha: "f".repeat(40) } },
         { name: "v2.10.12", commit: { sha: targetSha } },
       ]),
-    ).toThrow(/known immutable stable release/);
+    ).toThrow(/known finalized stable release/);
   });
 
   it("trusts the exact release ref over a stale paginated tag SHA", () => {
