@@ -397,6 +397,55 @@ describe("action metadata", () => {
     }
   });
 
+  it("isolates release source from trusted tooling during preparation", async () => {
+    const workflow = await metadata(".github/workflows/release.yml");
+    const steps: Array<{
+      "id"?: string;
+      "run"?: string;
+      "uses"?: string;
+      "with"?: Record<string, unknown>;
+      "working-directory"?: string;
+    }> = workflow.jobs.prepare.steps;
+    const releaseCheckout = steps.find(
+      (step) =>
+        step.uses?.startsWith("actions/checkout@") &&
+        step.with?.ref === "${{ github.event.release.tag_name }}",
+    );
+    const toolingCheckout = steps.find(
+      (step) =>
+        step.uses?.startsWith("actions/checkout@") &&
+        step.with?.ref === "${{ github.workflow_sha }}",
+    );
+    const install = steps.find((step) => step.run?.startsWith("npm ci"));
+    const preparation = steps.find((step) => step.id === "release");
+    const upload = steps.find((step) =>
+      step.uses?.startsWith("actions/upload-artifact@"),
+    );
+
+    expect(releaseCheckout?.with).toMatchObject({
+      "path": "release",
+      "persist-credentials": false,
+    });
+    expect(toolingCheckout?.with).toMatchObject({
+      "path": "tooling",
+      "persist-credentials": false,
+    });
+    expect(install).toMatchObject({
+      "run": "npm ci --ignore-scripts",
+      "working-directory": "release",
+    });
+    expect(preparation).toMatchObject({
+      "run": "bash ../tooling/.github/scripts/prepare-release.sh",
+      "working-directory": "release",
+    });
+    expect(upload?.with?.path).toBe(
+      "release/dist/apply/index.js\n" +
+        "release/dist/collect/index.js\n" +
+        "release/package-lock.json\n" +
+        "release/package.json\n",
+    );
+  });
+
   it("keeps moving major tags monotonic across releases and reruns", () => {
     const script = RELEASE_DECISION_SCRIPT;
     const oldSha = "1".repeat(40);
