@@ -74,7 +74,6 @@ function decideRelease(
 function prepareRelease(
   releaseTag: string,
   packageVersion: string,
-  lockVersion = packageVersion,
 ): {
   output: string;
   packageJson: { version: string };
@@ -90,8 +89,8 @@ function prepareRelease(
   writeFileSync(
     lockPath,
     JSON.stringify({
-      version: lockVersion,
-      packages: { "": { version: lockVersion } },
+      version: packageVersion,
+      packages: { "": { version: packageVersion } },
     }),
   );
   try {
