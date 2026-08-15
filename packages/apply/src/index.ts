@@ -9,6 +9,7 @@ import {
   DEFAULT_MAX_FILES,
   parseChangeArtifact,
 } from "../../shared/src/artifact";
+import { versionBanner } from "../../shared/src/version";
 import { getArtifactIfPresent } from "./artifact-lookup";
 import {
   applyArtifact,
@@ -45,6 +46,7 @@ async function run(): Promise<void> {
   if (!Number.isSafeInteger(runAttempt) || runAttempt <= 0) {
     throw new Error("workflow_run.run_attempt is required");
   }
+  core.info(versionBanner());
   const [owner, repo] = github.context.repo.owner
     ? [github.context.repo.owner, github.context.repo.repo]
     : ["", ""];

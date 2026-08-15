@@ -20,20 +20,15 @@ function releaseUpdateScript(workflow: Record<string, any>): string {
   const step = workflow.jobs["update-major"].steps.find(
     (candidate: { run?: unknown }) =>
       typeof candidate.run === "string" &&
-      candidate.run.includes("node <<'NODE'"),
+      candidate.run.includes(".github/scripts/update-major-tag.sh"),
   );
   expect(step, "release workflow is missing its update script").toBeDefined();
   return step?.run ?? "";
 }
 
 function releaseDecisionScript(workflow: Record<string, any>): string {
-  const run = releaseUpdateScript(workflow);
-  const match = run.match(/node <<'NODE'\n([\s\S]*?)\nNODE/);
-  expect(
-    match,
-    "release workflow is missing its decision script",
-  ).not.toBeNull();
-  return match?.[1] ?? "";
+  releaseUpdateScript(workflow);
+  return resolve(".github/scripts/decide-major-tag.mjs");
 }
 
 function decideRelease(
@@ -61,7 +56,7 @@ function decideRelease(
   writeFileSync(tagsFile, JSON.stringify([tags]));
   writeFileSync(releasesFile, JSON.stringify([releases]));
   try {
-    return execFileSync(process.execPath, ["-e", script], {
+    return execFileSync(process.execPath, [script], {
       encoding: "utf8",
       env: {
         ...process.env,
@@ -71,6 +66,55 @@ function decideRelease(
         RELEASES_FILE: releasesFile,
       },
     });
+  } finally {
+    rmSync(directory, { recursive: true });
+  }
+}
+
+function prepareRelease(
+  releaseTag: string,
+  packageVersion: string,
+  lockVersion = packageVersion,
+): {
+  output: string;
+  packageJson: { version: string };
+  packageLock: { version: string; packages: { "": { version: string } } };
+} {
+  const directory = mkdtempSync(
+    join(tmpdir(), "prek-autofix-prepare-release-"),
+  );
+  const packagePath = join(directory, "package.json");
+  const lockPath = join(directory, "package-lock.json");
+  const outputPath = join(directory, "output");
+  writeFileSync(packagePath, JSON.stringify({ version: packageVersion }));
+  writeFileSync(
+    lockPath,
+    JSON.stringify({
+      version: lockVersion,
+      packages: { "": { version: lockVersion } },
+    }),
+  );
+  try {
+    execFileSync(
+      process.execPath,
+      [resolve(".github/scripts/prepare-release.mjs")],
+      {
+        cwd: resolve("."),
+        env: {
+          ...process.env,
+          GITHUB_OUTPUT: outputPath,
+          PACKAGE_JSON_PATH: packagePath,
+          PACKAGE_LOCK_PATH: lockPath,
+          RELEASE_TAG: releaseTag,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    return {
+      output: readFileSync(outputPath, "utf8"),
+      packageJson: JSON.parse(readFileSync(packagePath, "utf8")),
+      packageLock: JSON.parse(readFileSync(lockPath, "utf8")),
+    };
   } finally {
     rmSync(directory, { recursive: true });
   }
@@ -130,6 +174,7 @@ fi
   const run = releaseUpdateScript(workflow);
   try {
     execFileSync("bash", ["-eo", "pipefail", "-c", run], {
+      cwd: resolve("."),
       encoding: "utf8",
       env: {
         ...process.env,
@@ -142,6 +187,7 @@ fi
         MOVING_TAG_COMMIT_SHA: movingTagCommitSha,
         FAILURE: failure,
         GITHUB_REPOSITORY: "owner/repository",
+        GITHUB_WORKSPACE: resolve("."),
         RELEASE_TAG: releaseTag,
         TARGET_SHA: targetSha,
       },
@@ -284,26 +330,94 @@ describe("action metadata", () => {
     expect(applyBundle.byteLength).toBeGreaterThan(0);
   });
 
-  it("isolates release verification from repository write credentials", async () => {
+  it("keeps release workflow logic in dedicated scripts", async () => {
     const workflow = await metadata(".github/workflows/release.yml");
-    const checkout = workflow.jobs.verify.steps.find(
+    const preparation = workflow.jobs.prepare.steps.find(
+      (step: { id?: string }) => step.id === "release",
+    );
+    const finalization = workflow.jobs.finalize.steps.find(
+      (step: { id?: string }) => step.id === "release",
+    );
+
+    expect(preparation?.run).toBe("bash .github/scripts/prepare-release.sh");
+    expect(finalization?.run).toBe(
+      "node tooling/.github/scripts/finalize-release.mjs",
+    );
+    expect(releaseUpdateScript(workflow)).toBe(
+      "bash .github/scripts/update-major-tag.sh",
+    );
+    expect(JSON.stringify(workflow)).not.toContain("node <<");
+  });
+
+  it("updates package metadata to the published release version", () => {
+    const prepared = prepareRelease("v1.0.8", "1.0.7");
+
+    expect(prepared.output).toMatch(
+      /^major-tag=v1\nsource-sha=[0-9a-f]{40}\nversion=1\.0\.8\n$/,
+    );
+    expect(prepared.packageJson.version).toBe("1.0.8");
+    expect(prepared.packageLock.version).toBe("1.0.8");
+    expect(prepared.packageLock.packages[""].version).toBe("1.0.8");
+    expect(() => prepareRelease("v1.0.6", "1.0.7")).toThrow();
+    expect(() => prepareRelease("v1", "1.0.7")).toThrow();
+  });
+
+  it("isolates release preparation from repository write credentials", async () => {
+    const workflow = await metadata(".github/workflows/release.yml");
+    const checkout = workflow.jobs.prepare.steps.find(
+      (step: { uses?: string }) => step.uses?.startsWith("actions/checkout@"),
+    );
+    const finalCheckouts = workflow.jobs.finalize.steps.filter(
+      (step: { uses?: string }) => step.uses?.startsWith("actions/checkout@"),
+    );
+    const writeCheckout = workflow.jobs["update-major"].steps.find(
       (step: { uses?: string }) => step.uses?.startsWith("actions/checkout@"),
     );
     expect(workflow.permissions).toEqual({ contents: "read" });
     expect(checkout?.with["persist-credentials"]).toBe(false);
+    expect(workflow.concurrency).toEqual({
+      "group": "release-${{ github.repository }}",
+      "cancel-in-progress": false,
+    });
+    expect(workflow.jobs.finalize.permissions).toEqual({
+      actions: "read",
+      contents: "write",
+    });
+    expect(finalCheckouts).toHaveLength(2);
+    expect(finalCheckouts[0]?.with).toMatchObject({
+      "ref": "${{ github.workflow_sha }}",
+      "path": "tooling",
+      "persist-credentials": false,
+    });
+    expect(finalCheckouts[1]?.with).toMatchObject({
+      "ref": "${{ needs.prepare.outputs.source-sha }}",
+      "path": "release",
+      "persist-credentials": false,
+    });
+    expect(JSON.stringify(workflow.jobs.finalize)).not.toMatch(
+      /npm ci|npm test/,
+    );
     expect(workflow.jobs["update-major"].permissions).toEqual({
       contents: "write",
     });
+    expect(writeCheckout?.with).toMatchObject({
+      "ref": "${{ github.workflow_sha }}",
+      "sparse-checkout": ".github/scripts",
+      "persist-credentials": false,
+    });
     expect(JSON.stringify(workflow.jobs["update-major"])).not.toMatch(
-      /npm ci|npm test|checkout|packages\//,
+      /npm ci|npm test|packages\//,
     );
     expect(workflow.jobs["update-major"].concurrency).toEqual({
       "group":
-        "release-major-${{ github.repository }}-${{ needs.verify.outputs.major-tag }}",
+        "release-major-${{ github.repository }}-${{ needs.prepare.outputs.major-tag }}",
       "cancel-in-progress": false,
     });
-    expect(workflow.jobs.verify.outputs["major-tag"]).toBe(
+    expect(workflow.jobs.prepare.outputs["major-tag"]).toBe(
       "${{ steps.release.outputs.major-tag }}",
+    );
+    expect(workflow.jobs.finalize.outputs["release-sha"]).toBe(
+      "${{ steps.release.outputs.sha }}",
     );
   });
 

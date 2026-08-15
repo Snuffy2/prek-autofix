@@ -1,6 +1,6 @@
 {
   "name": "prek-autofix",
-  "version": "0.1.0",
+  "version": "1.0.7",
   "private": true,
   "description": "Safely apply prek fixes to pull request branches",
   "license": "MIT",

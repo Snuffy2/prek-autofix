@@ -1,8 +1,10 @@
 import * as core from "@actions/core";
 import * as github from "@actions/github";
+import { versionBanner } from "../../shared/src/version";
 import { executeCommand, runCollect } from "./runner";
 
 async function main(): Promise<void> {
+  core.info(versionBanner());
   const payload = github.context.payload.pull_request;
   await runCollect(
     {
