@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   test:
-    name: Node 24
+    name: Node CI
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
