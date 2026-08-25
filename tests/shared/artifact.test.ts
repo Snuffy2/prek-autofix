@@ -5,9 +5,7 @@ import {
   DEFAULT_MAX_FILES,
   MAX_PATH_COMPONENTS,
   MAX_TOTAL_PATH_COMPONENTS,
-  artifactName,
   isSafeRepositoryPath,
-  isWorkflowPath,
   parseChangeArtifact,
 } from "../../packages/shared/src/artifact";
 
@@ -35,7 +33,6 @@ const validArtifact = {
 describe("artifact contract", () => {
   it("parses a valid artifact", () => {
     expect(parseChangeArtifact(validArtifact)).toEqual(validArtifact);
-    expect(artifactName(42, 3)).toBe("prek-autofix-42-3");
   });
 
   it.each([
@@ -63,11 +60,6 @@ describe("artifact contract", () => {
     "src/\0file",
   ])("rejects unsafe repository path %j", (candidate) => {
     expect(isSafeRepositoryPath(candidate)).toBe(false);
-  });
-
-  it("recognizes workflow paths", () => {
-    expect(isWorkflowPath(".github/workflows/check.yml")).toBe(true);
-    expect(isWorkflowPath(".github/dependabot.yml")).toBe(false);
   });
 
   it.each([

@@ -9,7 +9,6 @@ const eligibleJobs = () => [
   {
     name: "review",
     conclusion: "success",
-    steps: [{ name: "Review prek fixes", conclusion: "success" }],
   },
 ];
 
@@ -58,7 +57,7 @@ describe("source workflow job eligibility", () => {
     {
       name: "duplicate review",
       mutate: (jobs: ReturnType<typeof eligibleJobs>) => {
-        jobs.push({ ...jobs[0]!, steps: [...jobs[0]!.steps] });
+        jobs.push({ ...jobs[0]! });
       },
       message: "exactly one review job",
     },

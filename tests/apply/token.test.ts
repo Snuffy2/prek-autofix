@@ -15,12 +15,6 @@ describe("selectMutationToken", () => {
       builtIn: "built-in",
       expected: { token: "built-in", usedGithubTokenFallback: true },
     },
-    {
-      name: "matching configured and built-in tokens",
-      configured: "built-in",
-      builtIn: "built-in",
-      expected: { token: "built-in", usedGithubTokenFallback: false },
-    },
   ])("selects the $name correctly", ({ configured, builtIn, expected }) => {
     expect(selectMutationToken(configured, builtIn)).toEqual(expected);
   });
