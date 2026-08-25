@@ -76,6 +76,10 @@ if [[ "$1" == "graphql" ]]; then
     fi
   done
   printf '%s' "$query" > "$QUERY_PATH"
+  if [[ "$RELEASE_REF_TYPE" == "tag" && "$query" == *'$pointName'* ]]; then
+    printf '%s\\n' 'gh: Invalid object type tag, expected commit' >&2
+    exit 1
+  fi
   printf '%s\\n' '{"data":{"updateRefs":{"clientMutationId":null}}}'
   exit 0
 fi
@@ -142,38 +146,30 @@ fi
 }
 
 describe("major tag updates", () => {
-  it.each([
-    {
-      action: "update" as const,
-      expectedPointOid: RELEASE_TAG_OBJECT_SHA,
-      releaseRefType: "tag" as const,
-    },
-    {
-      action: "create" as const,
-      expectedPointOid: RELEASE_TAG_OBJECT_SHA,
-      releaseRefType: "tag" as const,
-    },
-    {
-      action: "update" as const,
-      expectedPointOid: TARGET_SHA,
-      releaseRefType: "commit" as const,
-    },
-    {
-      action: "create" as const,
-      expectedPointOid: TARGET_SHA,
-      releaseRefType: "commit" as const,
-    },
-  ])(
-    "guards the verified $releaseRefType release ref during $action",
-    ({ action, expectedPointOid, releaseRefType }) => {
-      const { bindings, query } = runMajorTagUpdate(action, releaseRefType);
+  it.each([{ action: "update" as const }, { action: "create" as const }])(
+    "atomically guards a lightweight release tag during $action",
+    ({ action }) => {
+      const { bindings, query } = runMajorTagUpdate(action, "commit");
       const normalizedQuery = query.replace(/\s+/gu, " ");
 
       expect(normalizedQuery).toContain(
         "name: $pointName beforeOid: $pointOid afterOid: $pointOid force: false",
       );
       expect(bindings.pointName).toBe(`refs/tags/${RELEASE_TAG}`);
-      expect(bindings.pointOid).toBe(expectedPointOid);
+      expect(bindings.pointOid).toBe(TARGET_SHA);
+    },
+  );
+
+  it.each([{ action: "update" as const }, { action: "create" as const }])(
+    "updates the major tag for an annotated release tag during $action",
+    ({ action }) => {
+      const { bindings, query } = runMajorTagUpdate(action, "tag");
+
+      expect(query).not.toContain("$pointName");
+      expect(bindings).not.toHaveProperty("pointName");
+      expect(bindings).not.toHaveProperty("pointOid");
+      expect(bindings.majorName).toBe("refs/tags/v2");
+      expect(bindings.majorAfterOid).toBe(TARGET_SHA);
     },
   );
 });
