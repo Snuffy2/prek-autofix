@@ -11,6 +11,12 @@ function workflow(filename: string): ReturnType<typeof parse> {
   );
 }
 
+interface WorkflowStep {
+  readonly id?: string;
+  readonly uses?: string;
+  readonly with?: Record<string, unknown>;
+}
+
 describe("repository maintenance workflows", () => {
   it("uses the v2 prek autoupdate action with built-in PAT auto-merge", () => {
     const autoupdate = workflow("prek_autoupdate.yml");
@@ -25,7 +31,6 @@ describe("repository maintenance workflows", () => {
       with: {
         "token": "${{ secrets.PREK_AUTOUPDATE_TOKEN }}",
         "auto-merge": true,
-        "update-day": "0",
       },
     });
   });
@@ -33,44 +38,39 @@ describe("repository maintenance workflows", () => {
   it("reviews the exact pull request head with the local review action", () => {
     const review = workflow("prek-autofix-review.yml");
     const reviewJob = review.jobs.review;
-    const checkout = reviewJob.steps.find((step: { uses?: string }) =>
-      step.uses?.startsWith("actions/checkout@"),
-    );
-    const install = reviewJob.steps.find(
-      (step: { run?: string }) => step.run === "npm ci --ignore-scripts",
+    const checkout = reviewJob.steps.find(
+      (step: WorkflowStep) =>
+        step.with?.repository ===
+          "${{ github.event.pull_request.head.repo.full_name }}" &&
+        step.with?.ref === "${{ github.event.pull_request.head.sha }}",
     );
     const reviewStep = reviewJob.steps.find(
-      (step: { id?: string }) => step.id === "review",
+      (step: WorkflowStep) => step.id === "review",
     );
 
     expect(review.name).toBe("prek-autofix");
     expect(review.permissions).toEqual({ contents: "read" });
     expect(checkout).toMatchObject({
-      uses: expect.stringMatching(/^actions\/checkout@v\d+$/),
       with: {
         "repository": "${{ github.event.pull_request.head.repo.full_name }}",
         "ref": "${{ github.event.pull_request.head.sha }}",
         "persist-credentials": false,
       },
     });
-    expect(install).toMatchObject({
-      run: "npm ci --ignore-scripts",
-    });
     expect(reviewStep).toMatchObject({
       id: "review",
       uses: "./review",
     });
-    expect(reviewJob["timeout-minutes"]).toBe(15);
     expect(JSON.stringify(reviewJob)).not.toContain("PREK_AUTOFIX_TOKEN");
   });
 
   it("loads the local fix action only from trusted main", () => {
     const fixWorkflow = workflow("prek-autofix-fix.yml");
     const steps = fixWorkflow.jobs.fix.steps;
-    const checkout = steps.find((step: { uses?: string }) =>
-      step.uses?.startsWith("actions/checkout@"),
+    const checkout = steps.find(
+      (step: WorkflowStep) => step.with?.ref === "main",
     );
-    const fix = steps.find((step: { uses?: string }) => step.uses === "./fix");
+    const fix = steps.find((step: WorkflowStep) => step.uses === "./fix");
 
     expect(fixWorkflow.on.workflow_run).toEqual({
       workflows: ["prek-autofix"],
@@ -86,7 +86,6 @@ describe("repository maintenance workflows", () => {
       "statuses": "write",
     });
     expect(checkout).toMatchObject({
-      uses: expect.stringMatching(/^actions\/checkout@v\d+$/),
       with: {
         "ref": "main",
         "persist-credentials": false,

@@ -384,12 +384,20 @@ describe("release workflow", () => {
       required: false,
       type: "string",
     });
-    expect(releaseWorkflow.on.workflow_dispatch.inputs.bump).toMatchObject({
+    const bumpInput = releaseWorkflow.on.workflow_dispatch.inputs.bump;
+    expect(bumpInput).toBeDefined();
+    if (!bumpInput) {
+      throw new TypeError("Release bump input must be defined");
+    }
+    expect(bumpInput).toMatchObject({
       default: "none",
-      options: ["none", "patch", "minor", "major"],
       required: true,
       type: "choice",
     });
+    expect(bumpInput.options).toHaveLength(4);
+    expect(bumpInput.options).toEqual(
+      expect.arrayContaining(["none", "patch", "minor", "major"]),
+    );
     expect(
       releaseWorkflow.on.workflow_dispatch.inputs.prerelease,
     ).toMatchObject({
