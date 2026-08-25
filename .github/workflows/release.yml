@@ -71,10 +71,12 @@ jobs:
         working-directory: release
 
       - name: Restore automatic release tag
+        id: restore-tag
         if:
           inputs.tag == '' && inputs.prerelease == false && github.run_attempt
           != 1
         uses: actions/download-artifact@v8
+        continue-on-error: true
         with:
           github-token: ${{ github.token }}
           name: release-resolution-${{ github.run_id }}
@@ -90,14 +92,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           IS_PRERELEASE: ${{ inputs.prerelease }}
           PERSISTED_TAG_PATH: ${{ runner.temp }}/release-resolution/release-tag
-          REQUIRE_PERSISTED_TAG: ${{ github.run_attempt != 1 }}
+          REQUIRE_PERSISTED_TAG: "false"
         run: node ../tooling/.github/scripts/resolve-release-tag.mjs
         working-directory: release
 
       - name: Persist automatic release tag
         if:
-          inputs.tag == '' && inputs.prerelease == false && github.run_attempt
-          == 1
+          inputs.tag == '' && inputs.prerelease == false && (github.run_attempt
+          == 1 || steps.restore-tag.outcome != 'success')
         uses: actions/upload-artifact@v7
         with:
           if-no-files-found: error

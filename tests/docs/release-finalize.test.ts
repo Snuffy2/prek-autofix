@@ -50,6 +50,7 @@ interface FinalizerOptions {
   mutatePrepared?: (directory: string) => void;
   statusOutput?: string;
   tagCommitSha?: string;
+  tagChangedPaths?: string[];
   tagFilesMatch?: boolean;
   tagSha?: string;
   tagMissing?: boolean;
@@ -169,7 +170,9 @@ exit 2
             SOURCE_SHA,
             STATUS_OUTPUT: options.statusOutput ?? "",
             TAG_COMMIT_SHA: options.tagCommitSha ?? SOURCE_SHA,
-            TAG_CHANGED_PATHS: RELEASE_FILES.join("\n"),
+            TAG_CHANGED_PATHS: (
+              options.tagChangedPaths ?? RELEASE_FILES
+            ).join("\n"),
             TAG_FILES_MATCH: String(options.tagFilesMatch ?? true),
             TAG_MISSING: String(options.tagMissing ?? true),
             TAG_PARENT_SHA: options.tagParentSha ?? SOURCE_SHA,
@@ -279,6 +282,19 @@ describe("release finalization", () => {
     },
   );
 
+  it("rejects an existing release tag with an unexpected changed path", () => {
+    expect(() =>
+      runFinalizer({
+        tagChangedPaths: [...RELEASE_FILES, "unexpected.txt"],
+        tagCommitSha: RELEASE_SHA,
+        tagMissing: false,
+        tagSha: "3".repeat(40),
+      }),
+    ).toThrow(
+      "Existing release tag changes unexpected path: unexpected.txt",
+    );
+  });
+
   it("rejects a dirty release checkout", () => {
     expect(() => runFinalizer({ statusOutput: " M package.json\n" })).toThrow(
       "Release checkout must start clean",
@@ -303,6 +319,19 @@ describe("release finalization", () => {
         },
       }),
     ).toThrow("Prepared release path is not a regular file: package.json");
+  });
+
+  it("rejects a prepared file larger than 10 MiB", () => {
+    expect(() =>
+      runFinalizer({
+        mutatePrepared: (directory) => {
+          writeFileSync(
+            join(directory, "dist/apply/index.js"),
+            Buffer.alloc(10 * 1024 * 1024 + 1),
+          );
+        },
+      }),
+    ).toThrow("Prepared release path is too large: dist/apply/index.js");
   });
 
   it("rejects an unexpected changed path", () => {

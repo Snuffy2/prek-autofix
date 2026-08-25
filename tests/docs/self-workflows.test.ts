@@ -23,6 +23,7 @@ describe("repository maintenance workflows", () => {
     const reviewJob = review.jobs.review;
     const checkout = reviewJob.steps.find(
       (step: WorkflowStep) =>
+        step.uses?.startsWith("actions/checkout@") &&
         step.with?.repository ===
           "${{ github.event.pull_request.head.repo.full_name }}" &&
         step.with?.ref === "${{ github.event.pull_request.head.sha }}",
@@ -51,7 +52,8 @@ describe("repository maintenance workflows", () => {
     const fixWorkflow = workflow("prek-autofix-fix.yml");
     const steps = fixWorkflow.jobs.fix.steps;
     const checkout = steps.find(
-      (step: WorkflowStep) => step.with?.ref === "main",
+      (step: WorkflowStep) =>
+        step.uses?.startsWith("actions/checkout@") && step.with?.ref === "main",
     );
     const fix = steps.find((step: WorkflowStep) => step.uses === "./fix");
 

@@ -10,6 +10,12 @@ describe("selectMutationToken", () => {
       expected: { token: "configured", usedGithubTokenFallback: false },
     },
     {
+      name: "configured token equal to built-in token",
+      configured: "same-token",
+      builtIn: "same-token",
+      expected: { token: "same-token", usedGithubTokenFallback: false },
+    },
+    {
       name: "empty configured token",
       configured: "",
       builtIn: "built-in",

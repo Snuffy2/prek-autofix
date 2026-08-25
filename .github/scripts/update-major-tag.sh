@@ -163,6 +163,8 @@ update)
       -f query='
         mutation UpdateMajorTag(
           $repositoryId: ID!
+          $pointName: GitRefname!
+          $pointOid: GitObjectID!
           $majorName: GitRefname!
           $majorBeforeOid: GitObjectID!
           $majorAfterOid: GitObjectID!
@@ -171,6 +173,12 @@ update)
             input: {
               repositoryId: $repositoryId
               refUpdates: [
+                {
+                  name: $pointName
+                  beforeOid: $pointOid
+                  afterOid: $pointOid
+                  force: false
+                }
                 {
                   name: $majorName
                   beforeOid: $majorBeforeOid
@@ -185,6 +193,8 @@ update)
         }
       ' \
       -F repositoryId="$repository_id" \
+      -f pointName="refs/tags/$RELEASE_TAG" \
+      -f pointOid="$release_direct_oid" \
       -f majorName="refs/tags/$major_tag" \
       -f majorBeforeOid="$direct_before_oid" \
       -f majorAfterOid="$update_sha"
@@ -240,6 +250,8 @@ create)
       -f query='
         mutation CreateMajorTag(
           $repositoryId: ID!
+          $pointName: GitRefname!
+          $pointOid: GitObjectID!
           $majorName: GitRefname!
           $majorAfterOid: GitObjectID!
         ) {
@@ -247,6 +259,12 @@ create)
             input: {
               repositoryId: $repositoryId
               refUpdates: [
+                {
+                  name: $pointName
+                  beforeOid: $pointOid
+                  afterOid: $pointOid
+                  force: false
+                }
                 {
                   name: $majorName
                   beforeOid: "0000000000000000000000000000000000000000"
@@ -261,6 +279,8 @@ create)
         }
       ' \
       -F repositoryId="$repository_id" \
+      -f pointName="refs/tags/$RELEASE_TAG" \
+      -f pointOid="$release_direct_oid" \
       -f majorName="refs/tags/$major_tag" \
       -f majorAfterOid="$update_sha"
   fi

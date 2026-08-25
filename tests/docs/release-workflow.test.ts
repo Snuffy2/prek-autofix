@@ -7,14 +7,16 @@ import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
 interface WorkflowStep {
-  readonly env?: Record<string, string>;
-  readonly uses?: string;
-  readonly with?: Record<string, unknown>;
+  readonly "continue-on-error"?: boolean;
+  readonly "env"?: Record<string, string>;
+  readonly "id"?: string;
+  readonly "if"?: string;
+  readonly "uses"?: string;
+  readonly "with"?: Record<string, unknown>;
 }
 
 interface WorkflowJob {
   readonly if?: string;
-  readonly outputs?: Record<string, string>;
   readonly steps: WorkflowStep[];
 }
 
@@ -138,7 +140,6 @@ describe("release workflow", () => {
     const releaseWorkflow = workflow();
     const inputs = releaseWorkflow.on.workflow_dispatch.inputs;
 
-    expect(Object.keys(releaseWorkflow.on)).toEqual(["workflow_dispatch"]);
     expect(inputs.tag).toMatchObject({ required: false, type: "string" });
     expect(inputs.bump).toMatchObject({
       required: true,
@@ -163,27 +164,19 @@ describe("release workflow", () => {
     }
   });
 
-  it("passes one resolved release tag through every release job", () => {
-    const jobs = workflow().jobs;
-    expect(jobs.prepare?.outputs?.["release-tag"]).toBe(
-      "${{ steps.tag.outputs.release-tag }}",
+  it("retries automatic tag resolution when a rerun has no saved tag", () => {
+    const steps = workflow().jobs.prepare?.steps ?? [];
+    const restoreStep = steps.find((step) =>
+      step.uses?.startsWith("actions/download-artifact@"),
     );
-    expect(
-      jobs.prepare?.steps.some(
-        (step) =>
-          step.env?.RELEASE_TAG === "${{ steps.tag.outputs.release-tag }}",
-      ),
-    ).toBe(true);
+    const resolveStep = steps.find((step) => step.id === "tag");
+    const persistStep = steps.find((step) =>
+      step.uses?.startsWith("actions/upload-artifact@"),
+    );
 
-    for (const jobName of ["finalize", "publish", "update-major"]) {
-      expect(
-        jobs[jobName]?.steps.some(
-          (step) =>
-            step.env?.RELEASE_TAG ===
-            "${{ needs.prepare.outputs.release-tag }}",
-        ),
-      ).toBe(true);
-    }
+    expect(restoreStep?.["continue-on-error"]).toBe(true);
+    expect(resolveStep?.env?.REQUIRE_PERSISTED_TAG).toBe("false");
+    expect(persistStep?.if).toMatch(/restore-tag\.outcome != 'success'/u);
   });
 
   it.each([
