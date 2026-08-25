@@ -12,6 +12,24 @@ function workflow(filename: string): ReturnType<typeof parse> {
 }
 
 describe("repository maintenance workflows", () => {
+  it("uses the v2 prek autoupdate action with built-in PAT auto-merge", () => {
+    const autoupdate = workflow("prek_autoupdate.yml");
+    const job = autoupdate.jobs["prek-autoupdate"];
+    const update = job.steps.find(
+      (step: { uses?: string }) => step.uses === "Snuffy2/prek-autoupdate@v2",
+    );
+
+    expect(job.permissions).toEqual({ contents: "read" });
+    expect(update).toMatchObject({
+      uses: "Snuffy2/prek-autoupdate@v2",
+      with: {
+        "token": "${{ secrets.PREK_AUTOUPDATE_TOKEN }}",
+        "auto-merge": true,
+        "update-day": "0",
+      },
+    });
+  });
+
   it("reviews the exact pull request head with the local review action", () => {
     const review = workflow("prek-autofix-review.yml");
     const reviewJob = review.jobs.review;
