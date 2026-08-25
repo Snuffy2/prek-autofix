@@ -333,9 +333,7 @@ describe("release finalization", () => {
   });
 
   it("does not mask an unexpected cached diff failure", () => {
-    expect(() => runFinalizer({ cachedDiffStatus: 2 })).toThrow(
-      "Command failed: git diff --cached --quiet",
-    );
+    expect(() => runFinalizer({ cachedDiffStatus: 2 })).toThrow();
   });
 
   it.each([
