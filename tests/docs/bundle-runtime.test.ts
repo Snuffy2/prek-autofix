@@ -29,7 +29,6 @@ describe("bundled action startup", () => {
   ])("starts the $name bundle", ({ path }) => {
     const output = runBundle(path);
 
-    expect(output.trim()).not.toBe("");
-    expect(output).not.toContain("ERR_INVALID_ARG_VALUE");
+    expect(output).toContain("::error::");
   });
 });

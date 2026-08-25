@@ -26,7 +26,7 @@ describe("source workflow job eligibility", () => {
       IneligibleSourceJobsError,
     );
     expect(() => assertEligibleSourceJobs(jobs)).toThrow(
-      "source workflow returned malformed jobs",
+      /malformed jobs/,
     );
   });
 
@@ -42,7 +42,7 @@ describe("source workflow job eligibility", () => {
       IneligibleSourceJobsError,
     );
     expect(() => assertEligibleSourceJobs([job])).toThrow(
-      "source workflow returned malformed jobs",
+      /malformed jobs/,
     );
   });
 

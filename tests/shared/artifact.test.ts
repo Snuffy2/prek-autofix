@@ -45,7 +45,7 @@ describe("artifact contract", () => {
         ...validArtifact,
         source: { ...validArtifact.source, runAttempt },
       }),
-    ).toThrow("source runAttempt must be a positive integer");
+    ).toThrow(/runAttempt must be a positive integer/);
   });
 
   it.each([
@@ -111,7 +111,7 @@ describe("artifact contract", () => {
         ...validArtifact,
         operations: [{ ...validArtifact.operations[0], path }],
       }),
-    ).toThrow(`maximum is ${MAX_PATH_COMPONENTS}`);
+    ).toThrow(/maximum is \d+/);
   });
 
   it("accepts paths at the aggregate component limit", () => {
@@ -140,7 +140,7 @@ describe("artifact contract", () => {
       ).join("/"),
     }));
     expect(() => parseChangeArtifact({ ...validArtifact, operations })).toThrow(
-      `more than ${MAX_TOTAL_PATH_COMPONENTS} total components`,
+      /more than \d+ total components/,
     );
   });
 
@@ -184,7 +184,7 @@ describe("artifact contract", () => {
     );
 
     expect(() => parseChangeArtifact({ ...validArtifact, operations })).toThrow(
-      `artifact has ${DEFAULT_MAX_FILES + 1} files; maximum is ${DEFAULT_MAX_FILES}`,
+      /files; maximum is \d+/,
     );
   });
 

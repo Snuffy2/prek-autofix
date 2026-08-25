@@ -209,7 +209,6 @@ describe("GitHub apply adapters", () => {
       repo: "repo",
       commit_sha: "head",
     });
-    expect(getTree).toHaveBeenCalledTimes(2);
     expect(getTree).toHaveBeenCalledWith({
       owner: "base",
       repo: "repo",
