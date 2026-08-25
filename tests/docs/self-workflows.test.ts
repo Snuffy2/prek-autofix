@@ -85,4 +85,54 @@ describe("repository maintenance workflows", () => {
     });
     expect(JSON.stringify(checkout)).not.toContain("PREK_AUTOFIX_TOKEN");
   });
+
+  it("revokes Dependabot auto-merge when either eligibility check fails", () => {
+    const dependabotWorkflow = workflow("dependabot-auto-merge.yml");
+    const metadata = dependabotWorkflow.jobs["verify-dependabot-metadata"];
+    const changedFiles = dependabotWorkflow.jobs["verify-changed-files"];
+    const enable = dependabotWorkflow.jobs["enable-auto-merge"];
+    const revoke = dependabotWorkflow.jobs["disable-auto-merge"];
+    const metadataAction = metadata.steps.find((step: { uses?: string }) =>
+      step.uses?.startsWith("dependabot/fetch-metadata@"),
+    );
+    const metadataCheckout = metadata.steps.find((step: { uses?: string }) =>
+      step.uses?.startsWith("actions/checkout@"),
+    );
+    const changedFilesCheckout = changedFiles.steps.find(
+      (step: { uses?: string }) => step.uses?.startsWith("actions/checkout@"),
+    );
+    const revokeStep = revoke.steps.find((step: { run?: string }) =>
+      step.run?.includes("gh pr merge --disable-auto"),
+    );
+
+    expect(metadataAction).toBeDefined();
+    expect(metadata.permissions).toEqual({
+      "contents": "read",
+      "pull-requests": "read",
+    });
+    expect(metadataCheckout).toBeUndefined();
+    expect(changedFiles.permissions).toEqual({
+      "contents": "read",
+      "pull-requests": "read",
+    });
+    expect(changedFilesCheckout).toBeUndefined();
+    expect(changedFiles.needs).toBeUndefined();
+    expect(changedFiles.steps[0].env).not.toHaveProperty("PACKAGE_ECOSYSTEM");
+    expect(enable.needs).toEqual([
+      "verify-dependabot-metadata",
+      "verify-changed-files",
+    ]);
+    expect(revoke.needs).toEqual([
+      "verify-dependabot-metadata",
+      "verify-changed-files",
+    ]);
+    expect(revoke.if).toMatch(
+      /always\(\).*verify-dependabot-metadata\.result == 'failure'.*verify-changed-files\.result == 'failure'/s,
+    );
+    expect(revoke.permissions).toEqual({
+      "contents": "write",
+      "pull-requests": "write",
+    });
+    expect(revokeStep).toBeDefined();
+  });
 });
