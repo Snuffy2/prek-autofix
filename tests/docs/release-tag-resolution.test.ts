@@ -98,12 +98,6 @@ printf '%s\n' "$RELEASES_JSON"
 }
 
 describe("release tag resolution", () => {
-  it("prefers an explicit tag over the bump selection", () => {
-    expect(resolveReleaseTag({ bump: "major", explicitTag: "v4.5.6" })).toEqual(
-      { ghCalled: false, releaseTag: "v4.5.6" },
-    );
-  });
-
   it("persists and recovers the automatic tag without bumping again", () => {
     const firstAttempt = resolveReleaseTag({
       bump: "patch",

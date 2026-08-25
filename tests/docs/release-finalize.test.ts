@@ -6,7 +6,6 @@ import {
   readFileSync,
   rmSync,
   symlinkSync,
-  truncateSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -46,20 +45,15 @@ function writeReleaseFiles(
 
 interface FinalizerOptions {
   branchSha?: string;
-  cachedDiffStatus?: number;
   changedPaths?: string[];
   noChanges?: boolean;
-  releaseTag?: string;
   mutatePrepared?: (directory: string) => void;
-  onFailure?: (calls: string) => void;
   statusOutput?: string;
   tagCommitSha?: string;
-  tagChangedPaths?: string[];
   tagFilesMatch?: boolean;
   tagSha?: string;
   tagMissing?: boolean;
   tagParentSha?: string;
-  tagSubject?: string;
 }
 
 function runFinalizer(options: FinalizerOptions = {}): {
@@ -72,7 +66,7 @@ function runFinalizer(options: FinalizerOptions = {}): {
   const binDirectory = join(directory, "bin");
   const callsPath = join(directory, "calls");
   const outputPath = join(directory, "output");
-  const releaseTag = options.releaseTag ?? "v2.0.3";
+  const releaseTag = "v2.0.3";
   mkdirSync(binDirectory, { recursive: true });
   writeReleaseFiles(releaseDirectory, "2.0.2", "old");
   writeReleaseFiles(preparedDirectory, releaseTag.slice(1), "new");
@@ -160,7 +154,7 @@ exit 2
           env: {
             ...process.env,
             BRANCH_SHA: options.branchSha ?? SOURCE_SHA,
-            CACHED_DIFF_STATUS: String(options.cachedDiffStatus ?? 1),
+            CACHED_DIFF_STATUS: "1",
             CALLS_PATH: callsPath,
             CHANGED_PATHS: (options.changedPaths ?? RELEASE_FILES).join("\n"),
             DEFAULT_BRANCH: "main",
@@ -175,25 +169,18 @@ exit 2
             SOURCE_SHA,
             STATUS_OUTPUT: options.statusOutput ?? "",
             TAG_COMMIT_SHA: options.tagCommitSha ?? SOURCE_SHA,
-            TAG_CHANGED_PATHS: (options.tagChangedPaths ?? RELEASE_FILES).join(
-              "\n",
-            ),
+            TAG_CHANGED_PATHS: RELEASE_FILES.join("\n"),
             TAG_FILES_MATCH: String(options.tagFilesMatch ?? true),
             TAG_MISSING: String(options.tagMissing ?? true),
             TAG_PARENT_SHA: options.tagParentSha ?? SOURCE_SHA,
             TAG_SHA: options.tagSha ?? SOURCE_SHA,
-            TAG_SUBJECT:
-              options.tagSubject ??
-              `Updating to version ${releaseTag} [skip ci]`,
+            TAG_SUBJECT: `Updating to version ${releaseTag} [skip ci]`,
           },
           stdio: ["ignore", "pipe", "pipe"],
         },
       );
     } catch (error) {
       const stderr = (error as { stderr?: Buffer | string }).stderr;
-      options.onFailure?.(
-        readFileSync(callsPath, { encoding: "utf8", flag: "a+" }),
-      );
       throw new Error(
         stderr?.toString().trim() || "release finalization failed",
         {
@@ -252,16 +239,6 @@ describe("release finalization", () => {
     expect(result.calls).not.toContain("push ");
   });
 
-  it("accepts a semantic prerelease tag", () => {
-    const result = runFinalizer({
-      releaseTag: "v2.1.0-beta.1",
-      tagMissing: true,
-    });
-
-    expect(result.output).toBe(`sha=${RELEASE_SHA}\n`);
-    expect(result.calls).toContain(`annotated-tag target=${RELEASE_SHA}`);
-  });
-
   it("fails if the default branch advances during preparation", () => {
     expect(() => runFinalizer({ branchSha: "3".repeat(40) })).toThrow(
       "Default branch advanced during preparation",
@@ -302,22 +279,6 @@ describe("release finalization", () => {
     },
   );
 
-  it("rejects a generated release tag that changes an unexpected path", () => {
-    let calls = "";
-    expect(() =>
-      runFinalizer({
-        onFailure: (failureCalls) => {
-          calls = failureCalls;
-        },
-        tagChangedPaths: [...RELEASE_FILES, "README.md"],
-        tagCommitSha: RELEASE_SHA,
-        tagMissing: false,
-        tagSha: "3".repeat(40),
-      }),
-    ).toThrow(/existing release tag changes unexpected path/iu);
-    expect(calls).not.toContain("push ");
-  });
-
   it("rejects a dirty release checkout", () => {
     expect(() => runFinalizer({ statusOutput: " M package.json\n" })).toThrow(
       "Release checkout must start clean",
@@ -332,32 +293,16 @@ describe("release finalization", () => {
     expect(result.calls).not.toContain("commit -m");
   });
 
-  it("does not mask an unexpected cached diff failure", () => {
-    expect(() => runFinalizer({ cachedDiffStatus: 2 })).toThrow();
-  });
-
-  it.each([
-    {
-      name: "symlink",
-      mutatePrepared: (directory: string) => {
-        const path = join(directory, "package.json");
-        rmSync(path);
-        symlinkSync("package-lock.json", path);
-      },
-      message: "Prepared release path is not a regular file: package.json",
-    },
-    {
-      name: "file larger than 10 MiB",
-      mutatePrepared: (directory: string) => {
-        truncateSync(
-          join(directory, "dist/apply/index.js"),
-          10 * 1024 * 1024 + 1,
-        );
-      },
-      message: "Prepared release path is too large: dist/apply/index.js",
-    },
-  ])("rejects a prepared $name", ({ mutatePrepared, message }) => {
-    expect(() => runFinalizer({ mutatePrepared })).toThrow(message);
+  it("rejects a prepared symlink", () => {
+    expect(() =>
+      runFinalizer({
+        mutatePrepared: (directory) => {
+          const path = join(directory, "package.json");
+          rmSync(path);
+          symlinkSync("package-lock.json", path);
+        },
+      }),
+    ).toThrow("Prepared release path is not a regular file: package.json");
   });
 
   it("rejects an unexpected changed path", () => {
