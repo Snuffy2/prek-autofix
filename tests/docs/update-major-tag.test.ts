@@ -18,15 +18,25 @@ const RELEASE_TAG_OBJECT_SHA = "2".repeat(40);
 const CURRENT_MAJOR_SHA = "3".repeat(40);
 
 type MajorTagAction = "create" | "update";
+type ReleaseRefType = "commit" | "tag";
+
+interface GraphQLCall {
+  readonly bindings: Readonly<Record<string, string>>;
+  readonly query: string;
+}
 
 interface Tag {
   readonly commit: { readonly sha: string };
   readonly name: string;
 }
 
-function runMajorTagUpdate(action: MajorTagAction): string {
+function runMajorTagUpdate(
+  action: MajorTagAction,
+  releaseRefType: ReleaseRefType,
+): GraphQLCall {
   const directory = mkdtempSync(join(tmpdir(), "prek-autofix-major-tag-"));
   const binDirectory = join(directory, "bin");
+  const bindingsPath = join(directory, "bindings");
   const queryPath = join(directory, "query");
   const ghPath = join(binDirectory, "gh");
   mkdirSync(binDirectory);
@@ -61,6 +71,8 @@ if [[ "$1" == "graphql" ]]; then
   for argument in "$@"; do
     if [[ "$argument" == query=* ]]; then
       query="\${argument#query=}"
+    elif [[ "$argument" == *=* ]]; then
+      printf '%s\\n' "$argument" >> "$BINDINGS_PATH"
     fi
   done
   printf '%s' "$query" > "$QUERY_PATH"
@@ -69,7 +81,7 @@ if [[ "$1" == "graphql" ]]; then
 fi
 request="$*"
 if [[ "$request" == *"git/ref/tags/$RELEASE_TAG"* ]]; then
-  printf '%s\\t%s\\n' "$RELEASE_TAG_OBJECT_SHA" tag
+  printf '%s\\t%s\\n' "$RELEASE_REF_OID" "$RELEASE_REF_TYPE"
 elif [[ "$request" == *"git/tags/$RELEASE_TAG_OBJECT_SHA"* ]]; then
   printf '%s\\t%s\\n' "$TARGET_SHA" commit
 elif [[ "$request" == *"git/ref/tags/v2"* ]]; then
@@ -92,6 +104,7 @@ fi
       cwd: resolve("."),
       env: {
         ...process.env,
+        BINDINGS_PATH: bindingsPath,
         GH_TOKEN: "token-sentinel",
         GITHUB_REPOSITORY: "owner/repository",
         PATH: `${binDirectory}:${process.env.PATH}`,
@@ -99,13 +112,25 @@ fi
         RELEASES_JSON: JSON.stringify([releases]),
         RELEASE_TAG,
         RELEASE_TAG_OBJECT_SHA,
+        RELEASE_REF_OID:
+          releaseRefType === "tag" ? RELEASE_TAG_OBJECT_SHA : TARGET_SHA,
+        RELEASE_REF_TYPE: releaseRefType,
         TAGS_JSON: JSON.stringify([tags]),
         TARGET_SHA,
         CURRENT_MAJOR_SHA,
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
-    return readFileSync(queryPath, "utf8");
+    const bindings = Object.fromEntries(
+      readFileSync(bindingsPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((binding) => {
+          const separator = binding.indexOf("=");
+          return [binding.slice(0, separator), binding.slice(separator + 1)];
+        }),
+    );
+    return { bindings, query: readFileSync(queryPath, "utf8") };
   } catch (error) {
     const stderr = (error as { stderr?: Buffer | string }).stderr;
     throw new Error(stderr?.toString().trim() || "major tag update failed", {
@@ -117,14 +142,38 @@ fi
 }
 
 describe("major tag updates", () => {
-  it.each(["update", "create"] as const)(
-    "keeps the annotated release ref guarded during %s",
-    (action) => {
-      const query = runMajorTagUpdate(action).replace(/\s+/gu, " ");
+  it.each([
+    {
+      action: "update" as const,
+      expectedPointOid: RELEASE_TAG_OBJECT_SHA,
+      releaseRefType: "tag" as const,
+    },
+    {
+      action: "create" as const,
+      expectedPointOid: RELEASE_TAG_OBJECT_SHA,
+      releaseRefType: "tag" as const,
+    },
+    {
+      action: "update" as const,
+      expectedPointOid: TARGET_SHA,
+      releaseRefType: "commit" as const,
+    },
+    {
+      action: "create" as const,
+      expectedPointOid: TARGET_SHA,
+      releaseRefType: "commit" as const,
+    },
+  ])(
+    "guards the verified $releaseRefType release ref during $action",
+    ({ action, expectedPointOid, releaseRefType }) => {
+      const { bindings, query } = runMajorTagUpdate(action, releaseRefType);
+      const normalizedQuery = query.replace(/\s+/gu, " ");
 
-      expect(query).toContain(
+      expect(normalizedQuery).toContain(
         "name: $pointName beforeOid: $pointOid afterOid: $pointOid force: false",
       );
+      expect(bindings.pointName).toBe(`refs/tags/${RELEASE_TAG}`);
+      expect(bindings.pointOid).toBe(expectedPointOid);
     },
   );
 });
