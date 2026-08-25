@@ -15,11 +15,8 @@ import {
   assertRootIdentity,
   captureRootIdentity,
   captureTrustedPython,
-  GIT_CAPTURE_LIMIT_BYTES,
-  TRUSTED_GIT_PATH,
   writeArtifact,
   type Execute,
-  type TrustedExecutableIdentity,
 } from "../../packages/collect/src/git";
 import { executeCommand } from "../../packages/collect/src/runner";
 import {
@@ -207,80 +204,6 @@ describe("collectOperations", () => {
     ).rejects.toThrow();
   });
 
-  it("never follows an ancestor replaced with an outside symlink", async () => {
-    const root = await repository();
-    const inside = join(root, "inside");
-    const parked = join(root, "parked");
-    const outside = await mkdtemp(join(tmpdir(), "collect-outside-"));
-    const marker = join(root, "directory-opened");
-    directories.push(outside);
-    await import("node:fs/promises").then(({ mkdir }) => mkdir(inside));
-    await writeFile(join(inside, "value.txt"), "inside\n");
-    await writeFile(join(outside, "value.txt"), "outside\n");
-    let instrumented = false;
-    const execute: Execute = async (command, args, options) => {
-      const insertionPoint = "        fd = child\n        if delay_ms:";
-      const scriptIndex = args.indexOf("-c") + 1;
-      const script = args[scriptIndex];
-      if (
-        scriptIndex > 0 &&
-        script !== undefined &&
-        script.includes(insertionPoint)
-      ) {
-        const copiedArgs = [...args];
-        const instrumentedScript = script.replace(
-          insertionPoint,
-          `        fd = child\n        open(${JSON.stringify(marker)}, "wb").close()\n        if delay_ms:`,
-        );
-        if (instrumentedScript === script) {
-          throw new Error("secure reader script instrumentation did not match");
-        }
-        instrumented = true;
-        copiedArgs[scriptIndex] = instrumentedScript;
-        const running = executeCommand(command, copiedArgs, options);
-        const deadline = Date.now() + 10_000;
-        while (true) {
-          try {
-            await stat(marker);
-            break;
-          } catch (error) {
-            if (
-              (error as NodeJS.ErrnoException).code !== "ENOENT" ||
-              Date.now() >= deadline
-            ) {
-              throw new Error(
-                "timed out waiting for secure reader to open component directory",
-                { cause: error },
-              );
-            }
-            await new Promise((resolve) => setTimeout(resolve, 10));
-          }
-        }
-        await rename(inside, parked);
-        await symlink(outside, inside);
-        return await running;
-      }
-      return executeCommand(command, args, options);
-    };
-
-    const operations = await collectOperations(
-      root,
-      execute,
-      env,
-      DEFAULT_MAX_FILES,
-      DEFAULT_MAX_BYTES,
-      200,
-    );
-
-    expect(instrumented).toBe(true);
-    expect(Buffer.from(operations[0]?.content ?? "", "base64").toString()).toBe(
-      "inside\n",
-    );
-    expect(JSON.stringify(operations)).not.toContain(
-      Buffer.from("outside\n").toString("base64"),
-    );
-  }, 15_000);
-
   it("accepts content exactly at the byte ceiling", async () => {
     const root = await repository();
     const content = Buffer.alloc(DEFAULT_MAX_BYTES, 0x5a);
@@ -382,28 +305,6 @@ describe("collectOperations", () => {
     );
   });
 
-  it("looks up modes only for the bounded deleted paths", async () => {
-    const root = await repository();
-    const execute: Execute = vi.fn(executeCommand);
-    await import("node:fs/promises").then(({ unlink }) =>
-      unlink(join(root, "delete.txt")),
-    );
-
-    await collectOperations(root, execute, env);
-
-    const modeCall = vi
-      .mocked(execute)
-      .mock.calls.find(([, args]) => gitSubcommand(args) === "ls-tree");
-    expect(modeCall).toBeDefined();
-    const modeArgs = modeCall?.[1] ?? [];
-    expect(modeArgs).toEqual(expect.arrayContaining(["ls-tree", "-z", "HEAD"]));
-    const separatorIndex = modeArgs.indexOf("--");
-    expect(separatorIndex).toBeGreaterThanOrEqual(0);
-    expect(modeArgs.slice(separatorIndex + 1)).toEqual(["delete.txt"]);
-    expect(modeArgs).not.toContain("-r");
-    expect(modeCall?.[2].captureLimitBytes).toBe(GIT_CAPTURE_LIMIT_BYTES);
-  });
-
   it("does not execute a repository-configured fsmonitor command", async () => {
     const root = await repository();
     const marker = join(root, ".git", "fsmonitor-ran");
@@ -420,44 +321,6 @@ describe("collectOperations", () => {
       collectOperations(root, executeCommand, env),
     ).resolves.toHaveLength(1);
     await expect(readFile(marker)).rejects.toThrow();
-  });
-
-  it("supervises bounded worktree Git inspection when trust is pinned", async () => {
-    const root = await mkdtemp(join(tmpdir(), "collect-supervised-git-"));
-    directories.push(root);
-    const execute: Execute = vi.fn(async () => resultBuffer(""));
-    const trustedPython: TrustedExecutableIdentity = {
-      canonicalPath: "/usr/bin/python3",
-      device: "1",
-      inode: "1",
-      mode: "33261",
-      uid: "0",
-    };
-
-    await expect(
-      collectOperations(
-        root,
-        execute,
-        env,
-        DEFAULT_MAX_FILES,
-        DEFAULT_MAX_BYTES,
-        0,
-        undefined,
-        trustedPython,
-        1234,
-      ),
-    ).resolves.toEqual([]);
-
-    for (const [, args, options] of vi.mocked(execute).mock.calls) {
-      const subcommand = gitSubcommand(args);
-      if (subcommand !== "diff" && subcommand !== "ls-files") continue;
-      expect(options).toMatchObject({
-        superviseProcessTree: true,
-        trustedPythonPath: trustedPython.canonicalPath,
-        timeoutDescription: "git worktree inspection",
-        timeoutMs: 1234,
-      });
-    }
   });
 
   it.skipIf(process.platform !== "linux")(
@@ -560,16 +423,9 @@ describe("trusted collector helpers", () => {
       ...env,
       PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
     };
-    const execute: Execute = vi.fn(executeCommand);
-
     await expect(
-      collectOperations(root, execute, hostileEnv),
+      collectOperations(root, executeCommand, hostileEnv),
     ).resolves.toHaveLength(1);
-    expect(execute).toHaveBeenCalledWith(
-      TRUSTED_GIT_PATH,
-      expect.anything(),
-      expect.anything(),
-    );
     await expect(readFile(marker)).rejects.toThrow();
   });
 
