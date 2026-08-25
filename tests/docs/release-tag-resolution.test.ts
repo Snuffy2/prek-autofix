@@ -135,40 +135,37 @@ describe("release tag resolution", () => {
     });
   });
 
-  it("fails safely when an automatic rerun has no persisted tag", () => {
-    expect(() =>
-      resolveReleaseTag({
-        bump: "patch",
-        releases: [
-          {
-            draft: false,
-            prerelease: false,
-            published_at: "2026-01-01T00:00:00Z",
-            tag_name: "v2.4.9",
-          },
-        ],
-        requirePersistedTag: true,
-      }),
-    ).toThrow(/persisted automatic release tag is missing/iu);
-  });
-
-  it("fails safely when an automatic rerun has a corrupt persisted tag", () => {
-    expect(() =>
-      resolveReleaseTag({
-        bump: "patch",
-        persistedTag: "not-a-release-tag",
-        releases: [
-          {
-            draft: false,
-            prerelease: false,
-            published_at: "2026-01-01T00:00:00Z",
-            tag_name: "v2.4.9",
-          },
-        ],
-        requirePersistedTag: true,
-      }),
-    ).toThrow(/persisted automatic release tag is invalid/iu);
-  });
+  it.each([
+    {
+      name: "missing",
+      persistedTag: undefined,
+      message: /persisted automatic release tag is missing/iu,
+    },
+    {
+      name: "corrupt",
+      persistedTag: "not-a-release-tag",
+      message: /persisted automatic release tag is invalid/iu,
+    },
+  ])(
+    "fails safely when an automatic rerun has a $name persisted tag",
+    ({ persistedTag, message }) => {
+      expect(() =>
+        resolveReleaseTag({
+          bump: "patch",
+          persistedTag,
+          releases: [
+            {
+              draft: false,
+              prerelease: false,
+              published_at: "2026-01-01T00:00:00Z",
+              tag_name: "v2.4.9",
+            },
+          ],
+          requirePersistedTag: true,
+        }),
+      ).toThrow(message);
+    },
+  );
 
   it("keeps explicit tags ahead of persisted automatic state", () => {
     expect(

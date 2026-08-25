@@ -268,37 +268,39 @@ describe("release finalization", () => {
     );
   });
 
-  it("rejects an existing release tag with the wrong parent", () => {
-    expect(() =>
-      runFinalizer({
+  it.each([
+    {
+      name: "wrong parent",
+      options: {
         tagCommitSha: RELEASE_SHA,
         tagMissing: false,
         tagParentSha: "4".repeat(40),
         tagSha: "3".repeat(40),
-      }),
-    ).toThrow(/existing release tag/iu);
-  });
-
-  it("rejects an existing lightweight release tag", () => {
-    expect(() =>
-      runFinalizer({
+      },
+    },
+    {
+      name: "lightweight tag",
+      options: {
         tagCommitSha: RELEASE_SHA,
         tagMissing: false,
         tagSha: RELEASE_SHA,
-      }),
-    ).toThrow(/existing release tag/iu);
-  });
-
-  it("rejects an existing release tag with different release files", () => {
-    expect(() =>
-      runFinalizer({
+      },
+    },
+    {
+      name: "different release files",
+      options: {
         tagCommitSha: RELEASE_SHA,
         tagFilesMatch: false,
         tagMissing: false,
         tagSha: "3".repeat(40),
-      }),
-    ).toThrow(/existing release tag/iu);
-  });
+      },
+    },
+  ] satisfies ReadonlyArray<{ name: string; options: FinalizerOptions }>)(
+    "rejects an existing release tag with $name",
+    ({ options }) => {
+      expect(() => runFinalizer(options)).toThrow(/existing release tag/iu);
+    },
+  );
 
   it("rejects a generated release tag that changes an unexpected path", () => {
     let calls = "";
@@ -336,29 +338,28 @@ describe("release finalization", () => {
     );
   });
 
-  it("rejects a prepared symlink", () => {
-    expect(() =>
-      runFinalizer({
-        mutatePrepared: (directory) => {
-          const path = join(directory, "package.json");
-          rmSync(path);
-          symlinkSync("package-lock.json", path);
-        },
-      }),
-    ).toThrow("Prepared release path is not a regular file: package.json");
-  });
-
-  it("rejects a prepared file larger than 10 MiB", () => {
-    expect(() =>
-      runFinalizer({
-        mutatePrepared: (directory) => {
-          truncateSync(
-            join(directory, "dist/apply/index.js"),
-            10 * 1024 * 1024 + 1,
-          );
-        },
-      }),
-    ).toThrow("Prepared release path is too large: dist/apply/index.js");
+  it.each([
+    {
+      name: "symlink",
+      mutatePrepared: (directory: string) => {
+        const path = join(directory, "package.json");
+        rmSync(path);
+        symlinkSync("package-lock.json", path);
+      },
+      message: "Prepared release path is not a regular file: package.json",
+    },
+    {
+      name: "file larger than 10 MiB",
+      mutatePrepared: (directory: string) => {
+        truncateSync(
+          join(directory, "dist/apply/index.js"),
+          10 * 1024 * 1024 + 1,
+        );
+      },
+      message: "Prepared release path is too large: dist/apply/index.js",
+    },
+  ])("rejects a prepared $name", ({ mutatePrepared, message }) => {
+    expect(() => runFinalizer({ mutatePrepared })).toThrow(message);
   });
 
   it("rejects an unexpected changed path", () => {
