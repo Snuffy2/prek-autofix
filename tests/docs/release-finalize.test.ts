@@ -170,9 +170,9 @@ exit 2
             SOURCE_SHA,
             STATUS_OUTPUT: options.statusOutput ?? "",
             TAG_COMMIT_SHA: options.tagCommitSha ?? SOURCE_SHA,
-            TAG_CHANGED_PATHS: (
-              options.tagChangedPaths ?? RELEASE_FILES
-            ).join("\n"),
+            TAG_CHANGED_PATHS: (options.tagChangedPaths ?? RELEASE_FILES).join(
+              "\n",
+            ),
             TAG_FILES_MATCH: String(options.tagFilesMatch ?? true),
             TAG_MISSING: String(options.tagMissing ?? true),
             TAG_PARENT_SHA: options.tagParentSha ?? SOURCE_SHA,
@@ -290,9 +290,7 @@ describe("release finalization", () => {
         tagMissing: false,
         tagSha: "3".repeat(40),
       }),
-    ).toThrow(
-      "Existing release tag changes unexpected path: unexpected.txt",
-    );
+    ).toThrow("Existing release tag changes unexpected path: unexpected.txt");
   });
 
   it("rejects a dirty release checkout", () => {
