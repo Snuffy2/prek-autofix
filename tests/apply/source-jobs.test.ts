@@ -25,9 +25,7 @@ describe("source workflow job eligibility", () => {
     expect(() => assertEligibleSourceJobs(jobs)).toThrow(
       IneligibleSourceJobsError,
     );
-    expect(() => assertEligibleSourceJobs(jobs)).toThrow(
-      /malformed jobs/,
-    );
+    expect(() => assertEligibleSourceJobs(jobs)).toThrow(/malformed jobs/);
   });
 
   it.each([
@@ -41,9 +39,7 @@ describe("source workflow job eligibility", () => {
     expect(() => assertEligibleSourceJobs([job])).toThrow(
       IneligibleSourceJobsError,
     );
-    expect(() => assertEligibleSourceJobs([job])).toThrow(
-      /malformed jobs/,
-    );
+    expect(() => assertEligibleSourceJobs([job])).toThrow(/malformed jobs/);
   });
 
   it.each([
