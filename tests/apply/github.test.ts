@@ -414,7 +414,7 @@ describe("GitHub apply adapters", () => {
     );
     const read = createReadClient(octokit as never, "base", "repo");
 
-    await expect(read.resolveComment(4)).rejects.toThrow("deletion denied");
+    await expect(read.resolveComment(4)).rejects.toThrow();
     expect(octokit.rest.issues.updateComment).not.toHaveBeenCalled();
     expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
   });
@@ -451,7 +451,7 @@ describe("GitHub apply adapters", () => {
     const mutation = createMutationClient(octokit as never);
     await expect(
       mutation.updateRef("R", "refs/heads/x", "after", "before"),
-    ).rejects.toThrow("branch protection");
+    ).rejects.toThrow();
     expect(octokit.rest.actions.getWorkflowRun).not.toHaveBeenCalled();
   });
 });

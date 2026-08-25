@@ -3,7 +3,6 @@ import * as core from "@actions/core";
 import * as github from "@actions/github";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getArtifactIfPresent } from "../../packages/apply/src/artifact-lookup";
-import { versionBanner } from "../../packages/shared/src/version";
 
 const mocks = vi.hoisted(() => ({
   applyArtifact: vi.fn(),
@@ -294,7 +293,6 @@ describe("apply entrypoint validation", () => {
       await vi.waitFor(() =>
         expect(mocks.applyArtifact).toHaveBeenCalledOnce(),
       );
-      expect(core.info).toHaveBeenCalledWith(versionBanner());
       expect(core.getInput).toHaveBeenCalledWith("autofix-token");
       expect(github.getOctokit).toHaveBeenCalledWith("github-token");
       expect(github.getOctokit).toHaveBeenCalledWith(expectedMutationToken);

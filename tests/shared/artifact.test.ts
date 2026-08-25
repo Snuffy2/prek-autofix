@@ -45,7 +45,7 @@ describe("artifact contract", () => {
         ...validArtifact,
         source: { ...validArtifact.source, runAttempt },
       }),
-    ).toThrow(/runAttempt must be a positive integer/);
+    ).toThrow(/runAttempt.*positive integer/);
   });
 
   it.each([
