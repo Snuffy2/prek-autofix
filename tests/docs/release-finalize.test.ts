@@ -6,11 +6,11 @@ import {
   readFileSync,
   rmSync,
   symlinkSync,
-  truncateSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 const SOURCE_SHA = "1".repeat(40);
@@ -45,13 +45,16 @@ function writeReleaseFiles(
 
 interface FinalizerOptions {
   branchSha?: string;
-  cachedDiffStatus?: number;
   changedPaths?: string[];
   noChanges?: boolean;
   mutatePrepared?: (directory: string) => void;
   statusOutput?: string;
   tagCommitSha?: string;
+  tagChangedPaths?: string[];
+  tagFilesMatch?: boolean;
   tagSha?: string;
+  tagMissing?: boolean;
+  tagParentSha?: string;
 }
 
 function runFinalizer(options: FinalizerOptions = {}): {
@@ -64,9 +67,10 @@ function runFinalizer(options: FinalizerOptions = {}): {
   const binDirectory = join(directory, "bin");
   const callsPath = join(directory, "calls");
   const outputPath = join(directory, "output");
+  const releaseTag = "v2.0.3";
   mkdirSync(binDirectory, { recursive: true });
-  writeReleaseFiles(releaseDirectory, "1.0.7", "old");
-  writeReleaseFiles(preparedDirectory, "1.0.8", "new");
+  writeReleaseFiles(releaseDirectory, "2.0.2", "old");
+  writeReleaseFiles(preparedDirectory, releaseTag.slice(1), "new");
   options.mutatePrepared?.(preparedDirectory);
   const gitPath = join(binDirectory, "git");
   writeFileSync(
@@ -81,21 +85,46 @@ status)
   ;;
 diff)
   if [[ "$2" == "--name-only" ]]; then
-    printf '%s\n' "$CHANGED_PATHS"
+    if [[ "\${3:-}" == "$SOURCE_SHA" && "\${4:-}" == "$TAG_COMMIT_SHA" ]]; then
+      printf '%s\n' "$TAG_CHANGED_PATHS"
+    else
+      printf '%s\n' "$CHANGED_PATHS"
+    fi
     exit 0
   fi
   if [[ "$2" == "--cached" && "$3" == "--quiet" ]]; then
     [[ "$NO_CHANGES" == "true" ]] && exit 0
     exit "$CACHED_DIFF_STATUS"
   fi
+  if [[ "$2" == "--quiet" ]]; then
+    [[ "$TAG_FILES_MATCH" == "true" ]] && exit 0
+    exit 1
+  fi
   ;;
 ls-remote)
   printf '%s\trefs/heads/main\n' "$BRANCH_SHA"
-  printf '%s\trefs/tags/v1.0.8\n' "$TAG_SHA"
-  printf '%s\trefs/tags/v1.0.8^{}\n' "$TAG_COMMIT_SHA"
+  if [[ "$TAG_MISSING" != "true" ]]; then
+    printf '%s\trefs/tags/%s\n' "$TAG_SHA" "$RELEASE_TAG"
+    printf '%s\trefs/tags/%s^{}\n' "$TAG_COMMIT_SHA" "$RELEASE_TAG"
+  fi
   exit 0
   ;;
-add|config|commit)
+tag)
+  if [[ "$2" == "-a" && "$3" == "$RELEASE_TAG" && "$4" == "-m" ]]; then
+    printf 'annotated-tag target=%s\n' "$6" >> "$CALLS_PATH"
+    exit 0
+  fi
+  exit 2
+  ;;
+add|config|commit|fetch)
+  exit 0
+  ;;
+rev-list)
+  printf '%s %s\n' "$TAG_COMMIT_SHA" "$TAG_PARENT_SHA"
+  exit 0
+  ;;
+log)
+  printf '%s\n' "$TAG_SUBJECT"
   exit 0
   ;;
 rev-parse)
@@ -126,7 +155,7 @@ exit 2
           env: {
             ...process.env,
             BRANCH_SHA: options.branchSha ?? SOURCE_SHA,
-            CACHED_DIFF_STATUS: String(options.cachedDiffStatus ?? 1),
+            CACHED_DIFF_STATUS: "1",
             CALLS_PATH: callsPath,
             CHANGED_PATHS: (options.changedPaths ?? RELEASE_FILES).join("\n"),
             DEFAULT_BRANCH: "main",
@@ -136,12 +165,19 @@ exit 2
             PREPARED_DIRECTORY: preparedDirectory,
             RELEASE_DIRECTORY: releaseDirectory,
             RELEASE_SHA,
-            RELEASE_TAG: "v1.0.8",
+            RELEASE_TAG: releaseTag,
             NO_CHANGES: String(options.noChanges ?? false),
             SOURCE_SHA,
             STATUS_OUTPUT: options.statusOutput ?? "",
             TAG_COMMIT_SHA: options.tagCommitSha ?? SOURCE_SHA,
+            TAG_CHANGED_PATHS: (options.tagChangedPaths ?? RELEASE_FILES).join(
+              "\n",
+            ),
+            TAG_FILES_MATCH: String(options.tagFilesMatch ?? true),
+            TAG_MISSING: String(options.tagMissing ?? true),
+            TAG_PARENT_SHA: options.tagParentSha ?? SOURCE_SHA,
             TAG_SHA: options.tagSha ?? SOURCE_SHA,
+            TAG_SUBJECT: `Updating to version ${releaseTag} [skip ci]`,
           },
           stdio: ["ignore", "pipe", "pipe"],
         },
@@ -150,7 +186,9 @@ exit 2
       const stderr = (error as { stderr?: Buffer | string }).stderr;
       throw new Error(
         stderr?.toString().trim() || "release finalization failed",
-        { cause: error },
+        {
+          cause: error,
+        },
       );
     }
     return {
@@ -163,22 +201,14 @@ exit 2
 }
 
 describe("release finalization", () => {
-  it("atomically rewrites the default branch and published release tag", () => {
+  it("publishes only an annotated tag for the local release commit", () => {
     const result = runFinalizer();
 
     expect(result.output).toBe(`sha=${RELEASE_SHA}\n`);
-    expect(result.calls).toContain(
-      "commit -m Updating to version v1.0.8 [skip ci]",
-    );
-    expect(result.calls).toContain("push --atomic");
-    expect(result.calls).toContain(
-      `--force-with-lease=refs/heads/main:${SOURCE_SHA}`,
-    );
-    expect(result.calls).toContain(
-      `--force-with-lease=refs/tags/v1.0.8:${SOURCE_SHA}`,
-    );
-    expect(result.calls).toContain("HEAD:refs/heads/main");
-    expect(result.calls).toContain("+HEAD:refs/tags/v1.0.8");
+    expect(result.calls).toContain(`annotated-tag target=${RELEASE_SHA}`);
+    expect(result.calls).toContain("refs/tags/v2.0.3:refs/tags/v2.0.3");
+    expect(result.calls).toContain("--force-with-lease=refs/tags/v2.0.3:");
+    expect(result.calls).not.toContain("HEAD:refs/heads/main");
     expect(result.calls).not.toContain("token-sentinel");
     expect(result.calls).not.toContain(
       Buffer.from("x-access-token:token-sentinel").toString("base64"),
@@ -188,25 +218,79 @@ describe("release finalization", () => {
     );
   });
 
+  it("resumes an existing annotated release tag after validation", () => {
+    const tagSha = "3".repeat(40);
+    const result = runFinalizer({
+      tagCommitSha: RELEASE_SHA,
+      tagMissing: false,
+      tagSha,
+    });
+
+    expect(result.output).toBe(`sha=${RELEASE_SHA}\n`);
+    expect(result.calls).not.toContain("push ");
+  });
+
+  it("resumes an annotated source tag when prepared files are unchanged", () => {
+    const result = runFinalizer({
+      noChanges: true,
+      tagCommitSha: SOURCE_SHA,
+      tagMissing: false,
+      tagSha: "3".repeat(40),
+    });
+
+    expect(result.output).toBe(`sha=${SOURCE_SHA}\n`);
+    expect(result.calls).not.toContain("push ");
+  });
+
   it("fails if the default branch advances during preparation", () => {
     expect(() => runFinalizer({ branchSha: "3".repeat(40) })).toThrow(
-      "Default branch or release tag advanced during preparation",
+      "Default branch advanced during preparation",
     );
   });
 
-  it("fails if the release tag advances during preparation", () => {
-    expect(() => runFinalizer({ tagCommitSha: "3".repeat(40) })).toThrow(
-      "Default branch or release tag advanced during preparation",
-    );
-  });
+  it.each([
+    {
+      name: "wrong parent",
+      options: {
+        tagCommitSha: RELEASE_SHA,
+        tagMissing: false,
+        tagParentSha: "4".repeat(40),
+        tagSha: "3".repeat(40),
+      },
+    },
+    {
+      name: "lightweight tag",
+      options: {
+        tagCommitSha: RELEASE_SHA,
+        tagMissing: false,
+        tagSha: RELEASE_SHA,
+      },
+    },
+    {
+      name: "different release files",
+      options: {
+        tagCommitSha: RELEASE_SHA,
+        tagFilesMatch: false,
+        tagMissing: false,
+        tagSha: "3".repeat(40),
+      },
+    },
+  ] satisfies ReadonlyArray<{ name: string; options: FinalizerOptions }>)(
+    "rejects an existing release tag with $name",
+    ({ options }) => {
+      expect(() => runFinalizer(options)).toThrow(/existing release tag/iu);
+    },
+  );
 
-  it("uses an annotated tag's peeled commit for freshness and tag object for the lease", () => {
-    const tagSha = "3".repeat(40);
-    const result = runFinalizer({ tagCommitSha: SOURCE_SHA, tagSha });
-
-    expect(result.calls).toContain(
-      `--force-with-lease=refs/tags/v1.0.8:${tagSha}`,
-    );
+  it("rejects an existing release tag with an unexpected changed path", () => {
+    expect(() =>
+      runFinalizer({
+        tagChangedPaths: [...RELEASE_FILES, "unexpected.txt"],
+        tagCommitSha: RELEASE_SHA,
+        tagMissing: false,
+        tagSha: "3".repeat(40),
+      }),
+    ).toThrow("Existing release tag changes unexpected path: unexpected.txt");
   });
 
   it("rejects a dirty release checkout", () => {
@@ -215,17 +299,12 @@ describe("release finalization", () => {
     );
   });
 
-  it("writes the source SHA without pushing when prepared files are unchanged", () => {
+  it("tags the source SHA when prepared files are unchanged", () => {
     const result = runFinalizer({ noChanges: true });
 
     expect(result.output).toBe(`sha=${SOURCE_SHA}\n`);
-    expect(result.calls).not.toContain("push --atomic");
-  });
-
-  it("does not mask an unexpected cached diff failure", () => {
-    expect(() => runFinalizer({ cachedDiffStatus: 2 })).toThrow(
-      "Command failed: git diff --cached --quiet",
-    );
+    expect(result.calls).toContain(`annotated-tag target=${SOURCE_SHA}`);
+    expect(result.calls).not.toContain("commit -m");
   });
 
   it("rejects a prepared symlink", () => {
@@ -244,9 +323,9 @@ describe("release finalization", () => {
     expect(() =>
       runFinalizer({
         mutatePrepared: (directory) => {
-          truncateSync(
+          writeFileSync(
             join(directory, "dist/apply/index.js"),
-            10 * 1024 * 1024 + 1,
+            Buffer.alloc(10 * 1024 * 1024 + 1),
           );
         },
       }),
@@ -265,7 +344,7 @@ describe("release finalization", () => {
         mutatePrepared: (directory) => {
           writeFileSync(
             join(directory, "package-lock.json"),
-            `${JSON.stringify({ version: "1.0.7", packages: { "": { version: "1.0.7" } } })}\n`,
+            `${JSON.stringify({ version: "2.0.2", packages: { "": { version: "2.0.2" } } })}\n`,
           );
         },
       }),

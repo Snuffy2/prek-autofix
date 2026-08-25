@@ -336,17 +336,19 @@ same-repository update.
 
 ## Releases
 
-Publish a stable release only from the current default-branch commit. The
-release workflow validates the published source, prepares the package metadata
-and both Action bundles, then atomically commits those files and retargets the
-newly published `v<major>.<minor>.<patch>` tag to the final release commit. It
-then creates or moves the corresponding `v<major>` tag.
+Run the Release workflow from the default branch. Select `patch`, `minor`, or
+`major` to bump the highest published stable semantic release, or supply an
+explicit `v<major>.<minor>.<patch>` tag. An explicit tag takes precedence over
+the bump selection. Prereleases require an explicit tag such as `v1.1.0-beta.1`
+and the **Publish as a prerelease** option.
 
-Because GitHub publishes the point tag before this workflow runs, that exact tag
-may briefly resolve first to the original tagged commit and then to the final
-release commit. Later releases do not retarget it again. Wait for the release
-workflow to finish before recording an exact release ref; use the final commit
-SHA when a permanently immutable pin is required.
+The workflow validates the selected source, prepares the package metadata and
+both Action bundles, creates a release commit without updating the protected
+default branch, and pushes only an annotated point tag for that commit. It then
+publishes the GitHub Release. Stable releases also create or move the matching
+`v<major>` tag; prereleases do not. The exact release tag is never retargeted by
+later releases. Wait for the workflow to finish before recording a release ref,
+and use the final commit SHA when a permanently immutable pin is required.
 
 ## Pinning and upgrades
 

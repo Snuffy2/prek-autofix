@@ -17,8 +17,7 @@ jobs:
     if: github.event.repository.fork == false
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -29,5 +28,5 @@ jobs:
         uses: Snuffy2/prek-autoupdate@v2
         with:
           token: ${{ secrets.PREK_AUTOUPDATE_TOKEN }}
-          author-login: prek-autoupdate-bot
+          auto-merge: true
           update-day: "0"

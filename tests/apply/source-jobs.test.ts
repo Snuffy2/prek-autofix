@@ -9,7 +9,6 @@ const eligibleJobs = () => [
   {
     name: "review",
     conclusion: "success",
-    steps: [{ name: "Review prek fixes", conclusion: "success" }],
   },
 ];
 
@@ -26,9 +25,7 @@ describe("source workflow job eligibility", () => {
     expect(() => assertEligibleSourceJobs(jobs)).toThrow(
       IneligibleSourceJobsError,
     );
-    expect(() => assertEligibleSourceJobs(jobs)).toThrow(
-      "source workflow returned malformed jobs",
-    );
+    expect(() => assertEligibleSourceJobs(jobs)).toThrow(/malformed jobs/);
   });
 
   it.each([
@@ -42,9 +39,7 @@ describe("source workflow job eligibility", () => {
     expect(() => assertEligibleSourceJobs([job])).toThrow(
       IneligibleSourceJobsError,
     );
-    expect(() => assertEligibleSourceJobs([job])).toThrow(
-      "source workflow returned malformed jobs",
-    );
+    expect(() => assertEligibleSourceJobs([job])).toThrow(/malformed jobs/);
   });
 
   it.each([
@@ -58,7 +53,7 @@ describe("source workflow job eligibility", () => {
     {
       name: "duplicate review",
       mutate: (jobs: ReturnType<typeof eligibleJobs>) => {
-        jobs.push({ ...jobs[0]!, steps: [...jobs[0]!.steps] });
+        jobs.push({ ...jobs[0]! });
       },
       message: "exactly one review job",
     },

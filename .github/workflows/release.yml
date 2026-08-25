@@ -1,9 +1,30 @@
 name: Release
 
+run-name: Release ${{ inputs.tag || inputs.bump }}
+
 on:
-  release:
-    types:
-      - published
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Stable version bump when tag is blank
+        required: true
+        default: none
+        type: choice
+        options:
+          - none
+          - patch
+          - minor
+          - major
+      tag:
+        description: Release tag (for example, v1.0.1 or v1.1.0-beta.1)
+        required: false
+        default: ""
+        type: string
+      prerelease:
+        description: Publish as a prerelease
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -14,16 +35,19 @@ concurrency:
 
 jobs:
   prepare:
-    if: github.event.release.prerelease == false
     outputs:
       major-tag: ${{ steps.release.outputs.major-tag }}
+      release-tag: ${{ steps.tag.outputs.release-tag }}
       source-sha: ${{ steps.release.outputs.source-sha }}
+    permissions:
+      actions: read
+      contents: read
     runs-on: ubuntu-latest
     steps:
-      - name: Check out published release source
+      - name: Check out release source
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ github.sha }}
           path: release
           fetch-depth: 0
           persist-credentials: false
@@ -46,11 +70,53 @@ jobs:
       - run: npm ci --ignore-scripts
         working-directory: release
 
+      - name: Restore automatic release tag
+        id: restore-tag
+        if:
+          inputs.tag == '' && inputs.prerelease == false && github.run_attempt
+          != 1
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          github-token: ${{ github.token }}
+          name: release-resolution-${{ github.run_id }}
+          path: ${{ runner.temp }}/release-resolution
+          repository: ${{ github.repository }}
+          run-id: ${{ github.run_id }}
+
+      - name: Resolve release tag
+        id: tag
+        env:
+          BUMP_TYPE: ${{ inputs.bump }}
+          EXPLICIT_TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+          IS_PRERELEASE: ${{ inputs.prerelease }}
+          PERSISTED_TAG_PATH: ${{ runner.temp }}/release-resolution/release-tag
+          REQUIRE_PERSISTED_TAG: ${{ github.run_attempt != 1 }}
+        run: node ../tooling/.github/scripts/resolve-release-tag.mjs
+        working-directory: release
+
+      - name: Persist automatic release tag
+        if:
+          inputs.tag == '' && inputs.prerelease == false && github.run_attempt
+          == 1
+        uses: actions/upload-artifact@v7
+        with:
+          if-no-files-found: error
+          name: release-resolution-${{ github.run_id }}
+          path: ${{ runner.temp }}/release-resolution/release-tag
+
       - name: Prepare and validate release files
         id: release
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: bash ../tooling/.github/scripts/prepare-release.sh
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+          IS_PRERELEASE: ${{ inputs.prerelease }}
+          RELEASE_REF: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ steps.tag.outputs.release-tag }}
+        run: |
+          bash ../tooling/.github/scripts/validate-release-request.sh
+          bash ../tooling/.github/scripts/prepare-release.sh
         working-directory: release
 
       - name: Upload prepared release files
@@ -67,7 +133,7 @@ jobs:
 
   finalize:
     needs: prepare
-    # Commit the prepared release files and retarget the new point tag once.
+    # Create the release commit locally and publish only its annotated point tag.
     permissions:
       actions: read
       contents: write
@@ -97,19 +163,40 @@ jobs:
           name: release-${{ github.run_id }}-${{ github.run_attempt }}
           path: prepared
 
-      - name: Commit release files and finalize published tag
+      - name: Commit release files and finalize release tag
         id: release
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           GH_TOKEN: ${{ github.token }}
           PREPARED_DIRECTORY: ${{ github.workspace }}/prepared
           RELEASE_DIRECTORY: ${{ github.workspace }}/release
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release-tag }}
           SOURCE_SHA: ${{ needs.prepare.outputs.source-sha }}
         run: node tooling/.github/scripts/finalize-release.mjs
 
-  update-major:
+  publish:
     needs: [prepare, finalize]
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out trusted release tooling
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IS_PRERELEASE: ${{ inputs.prerelease }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release-tag }}
+        run: bash .github/scripts/publish-release.sh
+
+  update-major:
+    needs: [prepare, finalize, publish]
+    if: inputs.prerelease == false
     # Move or create the verified major tag; no other repository writes are needed.
     permissions:
       contents: write
@@ -130,6 +217,6 @@ jobs:
       - name: Update moving major tag
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release-tag }}
           TARGET_SHA: ${{ needs.finalize.outputs.release-sha }}
         run: bash .github/scripts/update-major-tag.sh

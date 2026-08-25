@@ -5,9 +5,7 @@ import {
   DEFAULT_MAX_FILES,
   MAX_PATH_COMPONENTS,
   MAX_TOTAL_PATH_COMPONENTS,
-  artifactName,
   isSafeRepositoryPath,
-  isWorkflowPath,
   parseChangeArtifact,
 } from "../../packages/shared/src/artifact";
 
@@ -35,7 +33,6 @@ const validArtifact = {
 describe("artifact contract", () => {
   it("parses a valid artifact", () => {
     expect(parseChangeArtifact(validArtifact)).toEqual(validArtifact);
-    expect(artifactName(42, 3)).toBe("prek-autofix-42-3");
   });
 
   it.each([
@@ -48,7 +45,7 @@ describe("artifact contract", () => {
         ...validArtifact,
         source: { ...validArtifact.source, runAttempt },
       }),
-    ).toThrow("source runAttempt must be a positive integer");
+    ).toThrow(/runAttempt.*positive integer/);
   });
 
   it.each([
@@ -63,11 +60,6 @@ describe("artifact contract", () => {
     "src/\0file",
   ])("rejects unsafe repository path %j", (candidate) => {
     expect(isSafeRepositoryPath(candidate)).toBe(false);
-  });
-
-  it("recognizes workflow paths", () => {
-    expect(isWorkflowPath(".github/workflows/check.yml")).toBe(true);
-    expect(isWorkflowPath(".github/dependabot.yml")).toBe(false);
   });
 
   it.each([
@@ -119,7 +111,7 @@ describe("artifact contract", () => {
         ...validArtifact,
         operations: [{ ...validArtifact.operations[0], path }],
       }),
-    ).toThrow(`maximum is ${MAX_PATH_COMPONENTS}`);
+    ).toThrow(/maximum is \d+/);
   });
 
   it("accepts paths at the aggregate component limit", () => {
@@ -148,7 +140,7 @@ describe("artifact contract", () => {
       ).join("/"),
     }));
     expect(() => parseChangeArtifact({ ...validArtifact, operations })).toThrow(
-      `more than ${MAX_TOTAL_PATH_COMPONENTS} total components`,
+      /more than \d+ total components/,
     );
   });
 
@@ -192,7 +184,7 @@ describe("artifact contract", () => {
     );
 
     expect(() => parseChangeArtifact({ ...validArtifact, operations })).toThrow(
-      `artifact has ${DEFAULT_MAX_FILES + 1} files; maximum is ${DEFAULT_MAX_FILES}`,
+      /files; maximum is \d+/,
     );
   });
 

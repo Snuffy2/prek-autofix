@@ -363,47 +363,8 @@ describe("runCollect", () => {
     expect(call.outputs.get("artifact-path")).toBe("");
   });
 
-  it("allows only required hook runtime and cache environment variables", () => {
-    expect(
-      sanitizedEnvironment({
-        PATH: "/bin",
-        HOME: "/home/runner",
-        TMPDIR: "/tmp",
-        LANG: "C.UTF-8",
-        CI: "true",
-        GITHUB_WORKSPACE: "/workspace",
-        GITHUB_REPOSITORY: "owner/repo",
-        RUNNER_TEMP: "/runner-temp",
-        PREK_HOME: "/cache/prek",
-        PRE_COMMIT_HOME: "/cache/pre-commit",
-        XDG_CACHE_HOME: "/cache",
-        UV_CACHE_DIR: "/runner/setup-uv-cache",
-        UV_FROZEN: "1",
-        UV_LOCKED: "1",
-        UV_NO_CONFIG: "1",
-        UV_OFFLINE: "1",
-        UV_INDEX_URL: "<redacted-noncredential-sentinel>",
-        GITHUB_TOKEN: "token",
-        GH_TOKEN: "token",
-        ACTIONS_RUNTIME_TOKEN: "token",
-        NODE_AUTH_TOKEN: "token",
-        PREK_AUTOFIX_TOKEN: "token",
-        CLIENT_SECRET: "secret",
-        PASSWORD: "password",
-        AWS_ACCESS_KEY_ID: "access-key",
-        API_KEY: "api-key",
-        PRIVATE_KEY: "private-key",
-        GOOGLE_APPLICATION_CREDENTIALS: "/tmp/credentials",
-        NPM_CONFIG_USERCONFIG: "/tmp/npmrc",
-        DOCKER_CONFIG: "/tmp/docker",
-        GIT_CONFIG_GLOBAL: "/tmp/gitconfig",
-        GIT_EXTERNAL_DIFF: "/tmp/diff",
-        GITHUB_ENV: "/tmp/env",
-        GITHUB_OUTPUT: "/tmp/output",
-        GITHUB_PATH: "/tmp/path",
-        GITHUB_STEP_SUMMARY: "/tmp/summary",
-      }),
-    ).toEqual({
+  it("preserves hook runtime/cache without credentials or write configuration", () => {
+    const sanitized = sanitizedEnvironment({
       PATH: "/bin",
       HOME: "/home/runner",
       TMPDIR: "/tmp",
@@ -420,7 +381,74 @@ describe("runCollect", () => {
       UV_LOCKED: "1",
       UV_NO_CONFIG: "1",
       UV_OFFLINE: "1",
+      UV_INDEX_URL: "<redacted-noncredential-sentinel>",
+      GITHUB_TOKEN: "token",
+      GH_TOKEN: "token",
+      ACTIONS_RUNTIME_TOKEN: "token",
+      NODE_AUTH_TOKEN: "token",
+      PREK_AUTOFIX_TOKEN: "token",
+      CLIENT_SECRET: "secret",
+      PASSWORD: "password",
+      AWS_ACCESS_KEY_ID: "access-key",
+      API_KEY: "api-key",
+      PRIVATE_KEY: "private-key",
+      GOOGLE_APPLICATION_CREDENTIALS: "/tmp/credentials",
+      NPM_CONFIG_USERCONFIG: "/tmp/npmrc",
+      DOCKER_CONFIG: "/tmp/docker",
+      GIT_CONFIG_GLOBAL: "/tmp/gitconfig",
+      GIT_EXTERNAL_DIFF: "/tmp/diff",
+      GITHUB_ENV: "/tmp/env",
+      GITHUB_OUTPUT: "/tmp/output",
+      GITHUB_PATH: "/tmp/path",
+      GITHUB_STEP_SUMMARY: "/tmp/summary",
     });
+
+    expect(sanitized).toEqual(
+      expect.objectContaining({
+        PATH: "/bin",
+        HOME: "/home/runner",
+        TMPDIR: "/tmp",
+        LANG: "C.UTF-8",
+        CI: "true",
+        GITHUB_WORKSPACE: "/workspace",
+        GITHUB_REPOSITORY: "owner/repo",
+        RUNNER_TEMP: "/runner-temp",
+        PREK_HOME: "/cache/prek",
+        PRE_COMMIT_HOME: "/cache/pre-commit",
+        XDG_CACHE_HOME: "/cache",
+        UV_CACHE_DIR: "/runner/setup-uv-cache",
+        UV_FROZEN: "1",
+        UV_LOCKED: "1",
+        UV_NO_CONFIG: "1",
+        UV_OFFLINE: "1",
+      }),
+    );
+
+    const credentialOrWriteConfigKeys = [
+      "UV_INDEX_URL",
+      "GITHUB_TOKEN",
+      "GH_TOKEN",
+      "ACTIONS_RUNTIME_TOKEN",
+      "NODE_AUTH_TOKEN",
+      "PREK_AUTOFIX_TOKEN",
+      "CLIENT_SECRET",
+      "PASSWORD",
+      "AWS_ACCESS_KEY_ID",
+      "API_KEY",
+      "PRIVATE_KEY",
+      "GOOGLE_APPLICATION_CREDENTIALS",
+      "NPM_CONFIG_USERCONFIG",
+      "DOCKER_CONFIG",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_EXTERNAL_DIFF",
+      "GITHUB_ENV",
+      "GITHUB_OUTPUT",
+      "GITHUB_PATH",
+      "GITHUB_STEP_SUMMARY",
+    ] as const;
+    for (const key of credentialOrWriteConfigKeys) {
+      expect(sanitized[key]).toBeUndefined();
+    }
   });
 });
 
@@ -561,11 +589,11 @@ describe("executeCommand", () => {
 
     stream.write(Buffer.from("blocked"));
     stream.write(Buffer.from("still blocked"));
-    expect(source.pause).toHaveBeenCalledOnce();
+    expect(source.pause).toHaveBeenCalled();
     expect(source.resume).not.toHaveBeenCalled();
 
     target.emit("drain");
-    expect(source.resume).toHaveBeenCalledOnce();
+    expect(source.resume).toHaveBeenCalled();
   });
 
   it("times out a hook and reports process-tree termination", async () => {

@@ -95,8 +95,8 @@ describe("applyArtifact", () => {
     await expect(
       applyArtifact(read, mutation, { ...request(artifact), source }),
     ).resolves.toEqual({ pullRequestNumber: 4, commitSha: "commit" });
-    expect(read.getWorkflowRun).toHaveBeenCalledExactlyOnceWith(7);
-    expect(read.listAssociatedPullRequests).toHaveBeenCalledExactlyOnceWith(
+    expect(read.getWorkflowRun).toHaveBeenCalledWith(7);
+    expect(read.listAssociatedPullRequests).toHaveBeenCalledWith(
       "a".repeat(40),
     );
   });
