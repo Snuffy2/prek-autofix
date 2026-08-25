@@ -92,14 +92,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           IS_PRERELEASE: ${{ inputs.prerelease }}
           PERSISTED_TAG_PATH: ${{ runner.temp }}/release-resolution/release-tag
-          REQUIRE_PERSISTED_TAG: "false"
+          REQUIRE_PERSISTED_TAG: ${{ github.run_attempt != 1 }}
         run: node ../tooling/.github/scripts/resolve-release-tag.mjs
         working-directory: release
 
       - name: Persist automatic release tag
         if:
-          inputs.tag == '' && inputs.prerelease == false && (github.run_attempt
-          == 1 || steps.restore-tag.outcome != 'success')
+          inputs.tag == '' && inputs.prerelease == false && github.run_attempt
+          == 1
         uses: actions/upload-artifact@v7
         with:
           if-no-files-found: error

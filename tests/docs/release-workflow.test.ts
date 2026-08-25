@@ -164,7 +164,7 @@ describe("release workflow", () => {
     }
   });
 
-  it("retries automatic tag resolution when a rerun has no saved tag", () => {
+  it("fails closed when an automatic rerun cannot restore its release tag", () => {
     const steps = workflow().jobs.prepare?.steps ?? [];
     const restoreStep = steps.find((step) =>
       step.uses?.startsWith("actions/download-artifact@"),
@@ -175,8 +175,10 @@ describe("release workflow", () => {
     );
 
     expect(restoreStep?.["continue-on-error"]).toBe(true);
-    expect(resolveStep?.env?.REQUIRE_PERSISTED_TAG).toBe("false");
-    expect(persistStep?.if).toMatch(/restore-tag\.outcome != 'success'/u);
+    expect(resolveStep?.env?.REQUIRE_PERSISTED_TAG).toBe(
+      "${{ github.run_attempt != 1 }}",
+    );
+    expect(persistStep?.if).toMatch(/github\.run_attempt\s*==\s*1/u);
   });
 
   it.each([
