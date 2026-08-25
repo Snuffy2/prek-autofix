@@ -12,10 +12,8 @@ describe("action metadata", () => {
     const primaryAction = await metadata("action.yml");
     const reviewAction = await metadata("review/action.yml");
 
-    for (const action of [primaryAction, reviewAction]) {
-      expect(action.inputs).toEqual(primaryAction.inputs);
-      expect(action.outputs).toEqual(primaryAction.outputs);
-    }
+    expect(reviewAction.inputs).toEqual(primaryAction.inputs);
+    expect(reviewAction.outputs).toEqual(primaryAction.outputs);
     expect(primaryAction.runs.using).toBe(reviewAction.runs.using);
     expect(primaryAction.runs.steps).toEqual(
       reviewAction.runs.steps.map((step: Record<string, any>) =>
