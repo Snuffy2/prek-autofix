@@ -77,26 +77,22 @@ exit 2
 }
 
 describe("release publication", () => {
-  it("publishes a stable release without the prerelease flag", () => {
-    const calls = publishRelease("v2.1.0", false);
+  it.each([
+    { name: "stable", tag: "v2.1.0", prerelease: false },
+    { name: "prerelease", tag: "v2.1.0-beta.1", prerelease: true },
+  ])("publishes a $name release", ({ tag, prerelease }) => {
+    const calls = publishRelease(tag, prerelease);
     const createCall = calls
       .split("\n")
       .find((call) => call.startsWith("release create "));
 
-    expect(createCall).toContain("release create v2.1.0");
+    expect(createCall).toContain(`release create ${tag}`);
     expect(createCall).toContain("--verify-tag");
-    expect(createCall).not.toContain("--prerelease");
-  });
-
-  it("publishes a prerelease with the prerelease flag", () => {
-    const calls = publishRelease("v2.1.0-beta.1", true);
-    const createCall = calls
-      .split("\n")
-      .find((call) => call.startsWith("release create "));
-
-    expect(createCall).toContain("release create v2.1.0-beta.1");
-    expect(createCall).toContain("--verify-tag");
-    expect(createCall).toContain("--prerelease");
+    if (prerelease) {
+      expect(createCall).toContain("--prerelease");
+    } else {
+      expect(createCall).not.toContain("--prerelease");
+    }
   });
 
   it("rejects an existing release with a different prerelease state", () => {

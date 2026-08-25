@@ -17,19 +17,22 @@ function runBundle(path: string): string {
 }
 
 describe("bundled action startup", () => {
-  it("starts the review bundle", () => {
-    const output = runBundle("dist/collect/index.js");
+  it.each([
+    {
+      name: "review",
+      path: "dist/collect/index.js",
+      expected:
+        "context.repo requires a GITHUB_REPOSITORY environment variable",
+    },
+    {
+      name: "fix",
+      path: "dist/apply/index.js",
+      expected: "fix action may only run for workflow_run",
+    },
+  ])("starts the $name bundle", ({ path, expected }) => {
+    const output = runBundle(path);
 
-    expect(output).toContain(
-      "context.repo requires a GITHUB_REPOSITORY environment variable",
-    );
-    expect(output).not.toContain("ERR_INVALID_ARG_VALUE");
-  });
-
-  it("starts the fix bundle", () => {
-    const output = runBundle("dist/apply/index.js");
-
-    expect(output).toContain("fix action may only run for workflow_run");
+    expect(output).toContain(expected);
     expect(output).not.toContain("ERR_INVALID_ARG_VALUE");
   });
 });
