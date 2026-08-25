@@ -9,7 +9,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  verify-dependency-update:
+  verify-dependabot-metadata:
     if: >-
       github.event.repository.fork == false &&
       github.event.pull_request.user.login == 'dependabot[bot]' &&
@@ -22,14 +22,23 @@ jobs:
       pull-requests: read
     steps:
       - name: Fetch Dependabot metadata
-        id: dependabot-metadata
         uses: dependabot/fetch-metadata@v3
 
+  verify-changed-files:
+    if: >-
+      github.event.repository.fork == false &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref ==
+      github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
       - name: Verify supported dependency update
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PACKAGE_ECOSYSTEM:
-            ${{ steps.dependabot-metadata.outputs.package-ecosystem }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPOSITORY: ${{ github.repository }}
         run: |
@@ -40,35 +49,23 @@ jobs:
             echo "Refusing auto-merge; no changed files were reported"
             exit 1
           }
-          case "${PACKAGE_ECOSYSTEM}" in
-            npm)
-              invalid_files="$(printf '%s\n' "${changed_files}" | grep -Ev '^package(-lock)?\.json$' || true)"
-              [[ -z "${invalid_files}" ]] || {
-                echo "Refusing npm auto-merge; unexpected files were:"
-                echo "${invalid_files}"
-                exit 1
-              }
-              printf '%s\n' "${changed_files}" | grep -Fxq 'package-lock.json' || {
-                echo "Refusing npm auto-merge; package-lock.json was not changed"
-                exit 1
-              }
-              ;;
-            github_actions)
-              invalid_files="$(printf '%s\n' "${changed_files}" | grep -Ev '^(\.github/workflows/[^/]+\.ya?ml|(review/|fix/)?action\.ya?ml)$' || true)"
-              [[ -z "${invalid_files}" ]] || {
-                echo "Refusing GitHub Actions auto-merge; unexpected files were:"
-                echo "${invalid_files}"
-                exit 1
-              }
-              ;;
-            *)
-              echo "Refusing unsupported ecosystem: ${PACKAGE_ECOSYSTEM}"
-              exit 1
-              ;;
-          esac
+          npm_invalid_files="$(printf '%s\n' "${changed_files}" | grep -Ev '^package(-lock)?\.json$' || true)"
+          if [[ -z "${npm_invalid_files}" ]] && \
+            printf '%s\n' "${changed_files}" | grep -Fxq 'package-lock.json'; then
+            exit 0
+          fi
+
+          actions_invalid_files="$(printf '%s\n' "${changed_files}" | grep -Ev '^(\.github/workflows/[^/]+\.ya?ml|(review/|fix/)?action\.ya?ml)$' || true)"
+          if [[ -z "${actions_invalid_files}" ]]; then
+            exit 0
+          fi
+
+          echo "Refusing auto-merge; changed files are neither a supported npm update nor a GitHub Actions-only update:"
+          echo "${changed_files}"
+          exit 1
 
   enable-auto-merge:
-    needs: verify-dependency-update
+    needs: [verify-dependabot-metadata, verify-changed-files]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -82,3 +79,31 @@ jobs:
         run:
           gh pr merge --auto --squash --match-head-commit "${HEAD_SHA}"
           "${PR_URL}"
+
+  disable-auto-merge:
+    if: >-
+      always() && (needs.verify-dependabot-metadata.result == 'failure' ||
+      needs.verify-changed-files.result == 'failure') &&
+      github.event.repository.fork == false &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref ==
+      github.event.repository.default_branch
+    needs: [verify-dependabot-metadata, verify-changed-files]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Disable an existing auto-merge request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+          auto_merge_enabled="$(gh pr view "${PR_URL}" --json autoMergeRequest --jq '.autoMergeRequest != null')"
+          if [[ "${auto_merge_enabled}" == true ]]; then
+            gh pr merge --disable-auto "${PR_URL}"
+          else
+            echo "Auto-merge is not enabled."
+          fi
