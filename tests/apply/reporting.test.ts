@@ -1,3 +1,4 @@
+import * as core from "@actions/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApplyError,
@@ -8,6 +9,11 @@ import {
   type StatusClient,
 } from "../../packages/apply/src/apply";
 import { createFixReporter } from "../../packages/apply/src/reporting";
+
+vi.mock("@actions/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@actions/core")>();
+  return { ...actual, warning: vi.fn() };
+});
 
 function fixture() {
   const source: ResolvedSource = {
@@ -172,6 +178,8 @@ describe("fix result reporting", () => {
 
   it("keeps status and comment publication best effort", async () => {
     const { read, reporter, status } = fixture();
+    const warning = vi.mocked(core.warning);
+    warning.mockClear();
     vi.mocked(status.setCommitStatus).mockRejectedValue(
       new Error("status denied"),
     );
@@ -180,5 +188,12 @@ describe("fix result reporting", () => {
     );
 
     await expect(reporter.failure(new Error("boom"))).resolves.toBeUndefined();
+    expect(warning).toHaveBeenCalledTimes(2);
+    expect(warning).toHaveBeenCalledWith(
+      "prek-autofix could not publish its pull request status",
+    );
+    expect(warning).toHaveBeenCalledWith(
+      "prek-autofix could not publish its pull request recovery comment",
+    );
   });
 });
