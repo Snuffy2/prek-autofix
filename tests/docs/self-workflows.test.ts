@@ -70,7 +70,7 @@ describe("repository maintenance workflows", () => {
     );
     const candidateStep = reviewJob.steps.find(
       (step: WorkflowStep) =>
-        step.uses === "j178/prek-action@v2" &&
+        step.uses?.startsWith("j178/prek-action@") &&
         step.if === "github.event_name == 'workflow_dispatch'",
     );
 
