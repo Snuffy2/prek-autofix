@@ -17,14 +17,13 @@ interface WorkflowStep {
 
 interface WorkflowJob {
   readonly if?: string;
+  readonly needs?: string | string[];
   readonly steps: WorkflowStep[];
 }
 
 interface Workflow {
   readonly on: {
-    readonly workflow_dispatch: {
-      readonly inputs: Record<string, Record<string, unknown>>;
-    };
+    readonly release: { readonly types: string[] };
   };
   readonly permissions: Record<string, string>;
   readonly jobs: Record<string, WorkflowJob>;
@@ -136,23 +135,16 @@ function prepareRelease(
 }
 
 describe("release workflow", () => {
-  it("exposes manual releases with least-privilege credentials", () => {
+  it("uses a published release with separated candidate and promotion permissions", () => {
     const releaseWorkflow = workflow();
-    const inputs = releaseWorkflow.on.workflow_dispatch.inputs;
-
-    expect(inputs.tag).toMatchObject({ required: false, type: "string" });
-    expect(inputs.bump).toMatchObject({
-      required: true,
-      type: "choice",
-      options: expect.arrayContaining(["none", "patch", "minor", "major"]),
-    });
-    expect(inputs.prerelease).toMatchObject({
-      required: true,
-      type: "boolean",
-    });
+    expect(releaseWorkflow.on.release.types).toEqual(["published"]);
     expect(releaseWorkflow.permissions).toEqual({ contents: "read" });
-    expect(releaseWorkflow.jobs["update-major"]?.if).toBe(
-      "inputs.prerelease == false",
+    expect(releaseWorkflow.jobs.candidate?.if).toContain(
+      "github.event.release.prerelease == false",
+    );
+    expect(releaseWorkflow.jobs.release?.if).toContain("always()");
+    expect(releaseWorkflow.jobs.prerelease?.if).toContain(
+      "github.event.release.prerelease == true",
     );
 
     const checkouts = Object.values(releaseWorkflow.jobs).flatMap((job) =>
@@ -164,21 +156,18 @@ describe("release workflow", () => {
     }
   });
 
-  it("fails closed when an automatic rerun cannot restore its release tag", () => {
-    const steps = workflow().jobs.prepare?.steps ?? [];
-    const restoreStep = steps.find((step) =>
-      step.uses?.startsWith("actions/download-artifact@"),
-    );
-    const resolveStep = steps.find((step) => step.id === "tag");
-    const persistStep = steps.find((step) =>
+  it("keeps the privileged release job dependent on a completed candidate", () => {
+    const releaseJob = workflow().jobs.release;
+    const candidateArtifact = workflow().jobs.candidate?.steps.find((step) =>
       step.uses?.startsWith("actions/upload-artifact@"),
     );
-
-    expect(restoreStep?.["continue-on-error"]).toBe(true);
-    expect(resolveStep?.env?.REQUIRE_PERSISTED_TAG).toBe(
-      "${{ github.run_attempt != 1 }}",
+    const candidateDownload = releaseJob?.steps.find((step) =>
+      step.uses?.startsWith("actions/download-artifact@"),
     );
-    expect(persistStep?.if).toMatch(/github\.run_attempt\s*==\s*1/u);
+
+    expect(candidateArtifact?.with?.["if-no-files-found"]).toBe("error");
+    expect(candidateDownload?.with?.name).toContain("release-candidate-");
+    expect(releaseJob?.needs).toBe("candidate");
   });
 
   it.each([
