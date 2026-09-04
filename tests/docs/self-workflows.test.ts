@@ -16,6 +16,7 @@ function workflow(filename: string): ReturnType<typeof parse> {
 interface WorkflowStep {
   readonly env?: Record<string, string>;
   readonly id?: string;
+  readonly if?: string;
   readonly run?: string;
   readonly uses?: string;
   readonly with?: Record<string, unknown>;
@@ -56,33 +57,38 @@ function dependabotScopeStatus(script: string, changedFiles: string[]): number {
 }
 
 describe("repository maintenance workflows", () => {
-  it("reviews the exact pull request head with the local review action", () => {
+  it("reviews the exact pull request head and verifies a dispatched candidate", () => {
     const review = workflow("prek-autofix-review.yml");
     const reviewJob = review.jobs.review;
-    const checkout = reviewJob.steps.find(
-      (step: WorkflowStep) =>
-        step.uses?.startsWith("actions/checkout@") &&
-        step.with?.repository ===
-          "${{ github.event.pull_request.head.repo.full_name }}" &&
-        step.with?.ref === "${{ github.event.pull_request.head.sha }}",
+    const checkout = reviewJob.steps.find((step: WorkflowStep) =>
+      step.uses?.startsWith("actions/checkout@"),
     );
     const reviewStep = reviewJob.steps.find(
-      (step: WorkflowStep) => step.id === "review",
+      (step: WorkflowStep) =>
+        step.uses === "./review" &&
+        step.if === "github.event_name == 'pull_request'",
+    );
+    const candidateStep = reviewJob.steps.find(
+      (step: WorkflowStep) =>
+        step.uses === "j178/prek-action@v2" &&
+        step.if === "github.event_name == 'workflow_dispatch'",
     );
 
     expect(review.name).toBe("prek-autofix");
     expect(review.permissions).toEqual({ contents: "read" });
     expect(checkout).toMatchObject({
       with: {
-        "repository": "${{ github.event.pull_request.head.repo.full_name }}",
-        "ref": "${{ github.event.pull_request.head.sha }}",
+        "repository": expect.stringContaining(
+          "github.event.pull_request.head.repo.full_name",
+        ),
+        "ref": expect.stringContaining("github.event.pull_request.head.sha"),
         "persist-credentials": false,
       },
     });
     expect(reviewStep).toMatchObject({
-      id: "review",
       uses: "./review",
     });
+    expect(candidateStep).toBeDefined();
     expect(JSON.stringify(reviewJob)).not.toContain("PREK_AUTOFIX_TOKEN");
   });
 
