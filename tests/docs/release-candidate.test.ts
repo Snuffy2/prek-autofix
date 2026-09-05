@@ -2,8 +2,10 @@ import { execFileSync } from "node:child_process";
 import {
   mkdtempSync,
   mkdirSync,
+  existsSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -53,6 +55,13 @@ function stageCandidate(candidate: string, root: string): void {
   });
 }
 
+function expectOriginalWorkspace(root: string): void {
+  expect(JSON.parse(readFileSync(join(root, "package.json"), "utf8"))).toEqual({
+    version: "1.0.7",
+  });
+  expect(existsSync(join(root, "dist/apply/index.js"))).toBe(false);
+}
+
 describe("release candidate validation", () => {
   it("stages only the validated release artifact", () => {
     const { candidate, root } = workspace();
@@ -82,11 +91,54 @@ describe("release candidate validation", () => {
       expect(() => stageCandidate(candidate, root)).toThrow(
         "Release candidate path is too large: package.json",
       );
-      expect(
-        JSON.parse(readFileSync(join(root, "package.json"), "utf8")),
-      ).toEqual({
-        version: "1.0.7",
-      });
+      expectOriginalWorkspace(root);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects malformed candidate metadata without changing the workspace", () => {
+    const { candidate, root } = workspace();
+    try {
+      writeCandidate(candidate, "{");
+
+      expect(() => stageCandidate(candidate, root)).toThrow("SyntaxError");
+      expectOriginalWorkspace(root);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects candidate metadata beyond the release version without changing the workspace", () => {
+    const { candidate, root } = workspace();
+    try {
+      writeCandidate(
+        candidate,
+        JSON.stringify({ extra: true, version: "1.0.8" }),
+      );
+
+      expect(() => stageCandidate(candidate, root)).toThrow(
+        "Release candidate package.json changes metadata beyond its version.",
+      );
+      expectOriginalWorkspace(root);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects non-regular candidate paths without changing the workspace", () => {
+    const { candidate, root } = workspace();
+    try {
+      writeCandidate(candidate);
+      symlinkSync(
+        join(candidate, "package.json"),
+        join(candidate, "extra-link"),
+      );
+
+      expect(() => stageCandidate(candidate, root)).toThrow(
+        "Release candidate contains a non-regular path: extra-link",
+      );
+      expectOriginalWorkspace(root);
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

@@ -1,4 +1,4 @@
-import { deepStrictEqual } from "node:assert";
+import { AssertionError, deepStrictEqual } from "node:assert";
 import { copyFileSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
@@ -86,9 +86,11 @@ export function validateAndStageCandidate({
         readJson(join(candidateDirectory, relativePath)),
         expected,
       );
-    } catch {
+    } catch (error) {
+      if (!(error instanceof AssertionError)) throw error;
       throw new Error(
         `Release candidate ${relativePath} changes metadata beyond its version.`,
+        { cause: error },
       );
     }
   }
