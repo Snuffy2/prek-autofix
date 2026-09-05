@@ -326,7 +326,8 @@ jobs:
           bash .github/scripts/update-major-tag.sh
 
       - name: Delete validated temporary branch
-        if: success()
+        if: >-
+          always() && !cancelled() && steps.validation_ref.outputs.name != ''
         env:
           CANDIDATE_SHA: ${{ steps.candidate.outputs.sha }}
           GH_TOKEN: ${{ github.token }}

@@ -435,6 +435,17 @@ describe("release workflow", () => {
     expect(releaseJob?.needs).toBe("candidate");
   });
 
+  it("cleans up a created validation ref after non-cancelled failures", () => {
+    const cleanup = workflow().jobs.release?.steps.find(
+      (step) => step.name === "Delete validated temporary branch",
+    );
+
+    expect(cleanup?.if).toContain("always()");
+    expect(cleanup?.if).toContain("!cancelled()");
+    expect(cleanup?.if).toContain("steps.validation_ref.outputs.name != ''");
+    expect(cleanup?.if).not.toContain("success()");
+  });
+
   it("completes a bumped release candidate with regenerated bundles", () => {
     const candidateBuild = workflow().jobs.candidate?.steps.find(
       (step) => step.name === "Build and validate the release candidate",
