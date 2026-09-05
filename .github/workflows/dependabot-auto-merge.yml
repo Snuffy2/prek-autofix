@@ -49,7 +49,7 @@ jobs:
             echo "Refusing auto-merge; no changed files were reported"
             exit 1
           }
-          npm_invalid_files="$(printf '%s\n' "${changed_files}" | grep -Ev '^package(-lock)?\.json$' || true)"
+          npm_invalid_files="$(printf '%s\n' "${changed_files}" | grep -Ev '^(package(-lock)?\.json|dist/(apply|collect)/index\.js)$' || true)"
           if [[ -z "${npm_invalid_files}" ]] && \
             printf '%s\n' "${changed_files}" | grep -Fxq 'package-lock.json'; then
             exit 0
@@ -82,8 +82,8 @@ jobs:
 
   disable-auto-merge:
     if: >-
-      always() && (needs.verify-dependabot-metadata.result == 'failure' ||
-      needs.verify-changed-files.result == 'failure') &&
+      failure() && !cancelled() && (needs.verify-dependabot-metadata.result ==
+      'failure' || needs.verify-changed-files.result == 'failure') &&
       github.event.repository.fork == false &&
       github.event.pull_request.user.login == 'dependabot[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
