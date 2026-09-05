@@ -11,6 +11,8 @@ interface WorkflowStep {
   readonly "env"?: Record<string, string>;
   readonly "id"?: string;
   readonly "if"?: string;
+  readonly "name"?: string;
+  readonly "run"?: string;
   readonly "uses"?: string;
   readonly "with"?: Record<string, unknown>;
 }
@@ -168,6 +170,21 @@ describe("release workflow", () => {
     expect(candidateArtifact?.with?.["if-no-files-found"]).toBe("error");
     expect(candidateDownload?.with?.name).toContain("release-candidate-");
     expect(releaseJob?.needs).toBe("candidate");
+  });
+
+  it("validates rebuilt bundles against the staged release candidate", () => {
+    const candidateBuild = workflow().jobs.candidate?.steps.find(
+      (step) => step.name === "Build and validate the release candidate",
+    );
+    const commands = candidateBuild?.run;
+    const stageCandidate =
+      "git add -- dist/apply/index.js dist/collect/index.js package-lock.json package.json";
+
+    expect(commands).toBeDefined();
+    expect(commands!.indexOf(stageCandidate)).toBeGreaterThan(-1);
+    expect(commands!.indexOf("npm run check:dist")).toBeGreaterThan(
+      commands!.indexOf(stageCandidate),
+    );
   });
 
   it.each([
