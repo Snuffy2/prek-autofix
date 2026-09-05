@@ -49,6 +49,7 @@ jobs:
           npm run lint
           npm run typecheck
           npm test
+          npm run build
           git add -- dist/apply/index.js dist/collect/index.js package-lock.json package.json
           npm run check:dist
           changed_paths="$(git diff --name-only)"

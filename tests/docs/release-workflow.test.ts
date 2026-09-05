@@ -1,5 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -37,6 +44,48 @@ interface ReleaseTag {
 }
 
 const RELEASE_DECISION_SCRIPT = resolve(".github/scripts/decide-major-tag.mjs");
+const PREPARE_RELEASE_SCRIPT = resolve(".github/scripts/prepare-release.mjs");
+
+function releaseCandidateWorkspace(): string {
+  const directory = mkdtempSync(
+    join(tmpdir(), "prek-autofix-candidate-build-"),
+  );
+  for (const path of [".gitignore", "package.json", "package-lock.json"]) {
+    cpSync(resolve(path), join(directory, path));
+  }
+  for (const path of ["dist", "packages"]) {
+    cpSync(resolve(path), join(directory, path), { recursive: true });
+  }
+  symlinkSync(resolve("node_modules"), join(directory, "node_modules"));
+  execFileSync("git", ["init", "-q"], { cwd: directory });
+  execFileSync("git", ["config", "user.email", "test@example.invalid"], {
+    cwd: directory,
+  });
+  execFileSync("git", ["config", "user.name", "test"], { cwd: directory });
+  execFileSync("git", ["add", "."], { cwd: directory });
+  execFileSync("git", ["commit", "-qm", "baseline"], { cwd: directory });
+  return directory;
+}
+
+function nextReleaseTag(directory: string): string {
+  const packageMetadata: unknown = JSON.parse(
+    readFileSync(join(directory, "package.json"), "utf8"),
+  );
+  const version =
+    typeof packageMetadata === "object" &&
+    packageMetadata !== null &&
+    typeof (packageMetadata as { version?: unknown }).version === "string"
+      ? (packageMetadata as { version: string }).version
+      : undefined;
+  const match =
+    /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$/.exec(
+      version ?? "",
+    );
+  if (!match) {
+    throw new Error("candidate package version must use semantic versioning");
+  }
+  return `v${match[1]}.${match[2]}.${BigInt(match[3]!) + 1n}`;
+}
 
 function workflow(): Workflow {
   return parse(
@@ -172,19 +221,70 @@ describe("release workflow", () => {
     expect(releaseJob?.needs).toBe("candidate");
   });
 
-  it("validates rebuilt bundles against the staged release candidate", () => {
+  it("completes a bumped release candidate with regenerated bundles", () => {
     const candidateBuild = workflow().jobs.candidate?.steps.find(
       (step) => step.name === "Build and validate the release candidate",
     );
     const commands = candidateBuild?.run;
-    const stageCandidate =
+    const prepare = "node .github/scripts/prepare-release.mjs";
+    const build = "npm run build";
+    const stage =
       "git add -- dist/apply/index.js dist/collect/index.js package-lock.json package.json";
+    const checkDist = "npm run check:dist";
 
     expect(commands).toBeDefined();
-    expect(commands!.indexOf(stageCandidate)).toBeGreaterThan(-1);
-    expect(commands!.indexOf("npm run check:dist")).toBeGreaterThan(
-      commands!.indexOf(stageCandidate),
+    expect(commands!.indexOf(prepare)).toBeGreaterThan(-1);
+    expect(commands!.indexOf(build)).toBeGreaterThan(
+      commands!.indexOf(prepare),
     );
+    expect(commands!.indexOf(stage)).toBeGreaterThan(commands!.indexOf(build));
+    expect(commands!.indexOf(checkDist)).toBeGreaterThan(
+      commands!.indexOf(stage),
+    );
+
+    const directory = releaseCandidateWorkspace();
+    try {
+      const releaseTag = nextReleaseTag(directory);
+      execFileSync(process.execPath, [PREPARE_RELEASE_SCRIPT], {
+        cwd: directory,
+        env: {
+          ...process.env,
+          GITHUB_OUTPUT: join(directory, ".git", "github-output"),
+          RELEASE_TAG: releaseTag,
+        },
+      });
+      execFileSync("npm", ["run", "build"], { cwd: directory });
+      execFileSync(
+        "git",
+        [
+          "add",
+          "--",
+          "dist/apply/index.js",
+          "dist/collect/index.js",
+          "package-lock.json",
+          "package.json",
+        ],
+        { cwd: directory },
+      );
+      execFileSync("npm", ["run", "check:dist"], { cwd: directory });
+
+      expect(
+        execFileSync("git", ["diff", "--cached", "--name-only"], {
+          cwd: directory,
+          encoding: "utf8",
+        }),
+      ).toBe(
+        "dist/apply/index.js\ndist/collect/index.js\npackage-lock.json\npackage.json\n",
+      );
+      expect(
+        execFileSync("git", ["ls-files", "--others", "--exclude-standard"], {
+          cwd: directory,
+          encoding: "utf8",
+        }),
+      ).toBe("");
+    } finally {
+      rmSync(directory, { recursive: true });
+    }
   });
 
   it.each([
