@@ -1,5 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -11,20 +20,21 @@ interface WorkflowStep {
   readonly "env"?: Record<string, string>;
   readonly "id"?: string;
   readonly "if"?: string;
+  readonly "name"?: string;
+  readonly "run"?: string;
   readonly "uses"?: string;
   readonly "with"?: Record<string, unknown>;
 }
 
 interface WorkflowJob {
   readonly if?: string;
+  readonly needs?: string | string[];
   readonly steps: WorkflowStep[];
 }
 
 interface Workflow {
   readonly on: {
-    readonly workflow_dispatch: {
-      readonly inputs: Record<string, Record<string, unknown>>;
-    };
+    readonly release: { readonly types: string[] };
   };
   readonly permissions: Record<string, string>;
   readonly jobs: Record<string, WorkflowJob>;
@@ -36,6 +46,53 @@ interface ReleaseTag {
 }
 
 const RELEASE_DECISION_SCRIPT = resolve(".github/scripts/decide-major-tag.mjs");
+const PREPARE_RELEASE_SCRIPT = resolve(".github/scripts/prepare-release.mjs");
+
+function releaseCandidateWorkspace(): string {
+  const directory = mkdtempSync(
+    join(tmpdir(), "prek-autofix-candidate-build-"),
+  );
+  for (const path of [
+    ".gitignore",
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json",
+  ]) {
+    cpSync(resolve(path), join(directory, path));
+  }
+  for (const path of ["dist", "packages"]) {
+    cpSync(resolve(path), join(directory, path), { recursive: true });
+  }
+  symlinkSync(resolve("node_modules"), join(directory, "node_modules"));
+  execFileSync("git", ["init", "-q"], { cwd: directory });
+  execFileSync("git", ["config", "user.email", "test@example.invalid"], {
+    cwd: directory,
+  });
+  execFileSync("git", ["config", "user.name", "test"], { cwd: directory });
+  execFileSync("git", ["add", "."], { cwd: directory });
+  execFileSync("git", ["commit", "-qm", "baseline"], { cwd: directory });
+  return directory;
+}
+
+function nextReleaseTag(directory: string): string {
+  const packageMetadata: unknown = JSON.parse(
+    readFileSync(join(directory, "package.json"), "utf8"),
+  );
+  const version =
+    typeof packageMetadata === "object" &&
+    packageMetadata !== null &&
+    typeof (packageMetadata as { version?: unknown }).version === "string"
+      ? (packageMetadata as { version: string }).version
+      : undefined;
+  const match =
+    /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$/.exec(
+      version ?? "",
+    );
+  if (!match) {
+    throw new Error("candidate package version must use semantic versioning");
+  }
+  return `v${match[1]}.${match[2]}.${BigInt(match[3]!) + 1n}`;
+}
 
 function workflow(): Workflow {
   return parse(
@@ -73,6 +130,218 @@ function decideRelease(releaseTag: string, tags: ReleaseTag[]): string {
         RELEASES_FILE: releasesFile,
       },
     });
+  } finally {
+    rmSync(directory, { recursive: true });
+  }
+}
+
+type ReleaseUpdateAction = "create" | "noop" | "skip" | "update";
+type ReleaseUpdateFailure =
+  | "create-race"
+  | "major-race"
+  | "none"
+  | "point-mismatch"
+  | "release-tag-move"
+  | "release-tag-move-at-push";
+
+interface ReleaseUpdateResult {
+  readonly error: Error | undefined;
+  readonly initialMajorDirectOid: string | undefined;
+  readonly initialMajorSha: string | undefined;
+  readonly majorDirectOid: string | undefined;
+  readonly majorSha: string | undefined;
+  readonly newerSha: string;
+  readonly targetSha: string;
+}
+
+function runReleaseUpdate(
+  action: ReleaseUpdateAction,
+  failure: ReleaseUpdateFailure = "none",
+  annotatedMajor = false,
+  staleListedPointSha = false,
+  annotatedPoint = true,
+): ReleaseUpdateResult {
+  const directory = mkdtempSync(join(tmpdir(), "prek-autofix-release-write-"));
+  const remote = join(directory, "remote.git");
+  const workspace = join(directory, "workspace");
+  const binDirectory = join(directory, "bin");
+  const ghPath = join(binDirectory, "gh");
+  const gitPath = join(binDirectory, "git");
+  const pointReadsPath = join(directory, "point-reads");
+  const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+  const runGit = (arguments_: string[]): string =>
+    execFileSync(realGit, arguments_, {
+      cwd: workspace,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  const remoteOid = (ref: string): string | undefined => {
+    try {
+      return runGit(["--git-dir", remote, "rev-parse", "--verify", ref]);
+    } catch {
+      return undefined;
+    }
+  };
+  try {
+    mkdirSync(binDirectory);
+    execFileSync(realGit, ["init", "--bare", remote], { stdio: "ignore" });
+    execFileSync(realGit, ["init", "--initial-branch=main", workspace], {
+      stdio: "ignore",
+    });
+    runGit(["config", "user.name", "Release test"]);
+    runGit(["config", "user.email", "test@example.invalid"]);
+    runGit(["remote", "add", "origin", remote]);
+    const commit = (message: string): string => {
+      writeFileSync(join(workspace, "version"), `${message}\n`);
+      runGit(["add", "version"]);
+      runGit(["commit", "-m", message]);
+      return runGit(["rev-parse", "HEAD"]);
+    };
+    const oldSha = commit("old release");
+    const targetSha = commit("target release");
+    const newerSha = commit("newer release");
+    const raceSha = commit("racing update");
+    const pointSha = failure === "point-mismatch" ? raceSha : targetSha;
+
+    runGit(["tag", "v1.9.9", oldSha]);
+    runGit(
+      annotatedPoint
+        ? ["tag", "-a", "v1.10.0", "-m", "Release v1.10.0", pointSha]
+        : ["tag", "v1.10.0", pointSha],
+    );
+    if (action === "skip") {
+      runGit(["tag", "-a", "v1.11.0", "-m", "Release v1.11.0", newerSha]);
+    }
+    if (action !== "create") {
+      const majorSha =
+        action === "skip" ? newerSha : action === "noop" ? targetSha : oldSha;
+      runGit(
+        annotatedMajor
+          ? ["tag", "-a", "v1", "-m", "Moving v1", majorSha]
+          : ["tag", "v1", majorSha],
+      );
+    }
+    runGit(["push", "origin", "HEAD:refs/heads/main"]);
+    runGit(["push", "origin", "refs/tags/v1.9.9", "refs/tags/v1.10.0"]);
+    if (action === "skip") runGit(["push", "origin", "refs/tags/v1.11.0"]);
+    if (action !== "create") runGit(["push", "origin", "refs/tags/v1"]);
+
+    const initialMajorDirectOid = remoteOid("refs/tags/v1");
+    const initialMajorSha =
+      remoteOid("refs/tags/v1^{}") ?? initialMajorDirectOid;
+    const listedPointSha = staleListedPointSha ? oldSha : targetSha;
+    const tags = [
+      ...(action === "create"
+        ? []
+        : [
+            {
+              name: "v1",
+              commit: {
+                sha:
+                  action === "skip"
+                    ? newerSha
+                    : action === "noop"
+                      ? targetSha
+                      : oldSha,
+              },
+            },
+          ]),
+      { name: "v1.9.9", commit: { sha: oldSha } },
+      { name: "v1.10.0", commit: { sha: listedPointSha } },
+      ...(action === "skip"
+        ? [{ name: "v1.11.0", commit: { sha: newerSha } }]
+        : []),
+    ];
+    const releases = tags
+      .filter((tag) => tag.name !== "v1")
+      .map((tag) => ({
+        tag_name: tag.name,
+        draft: false,
+        prerelease: false,
+        published_at: "2026-01-01T00:00:00Z",
+      }));
+    writeFileSync(
+      ghPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == *"tags?per_page=100"* ]]; then
+  printf '%s' "$TAGS_JSON"
+elif [[ "$*" == *"releases?per_page=100"* ]]; then
+  printf '%s' "$RELEASES_JSON"
+else
+  printf 'unexpected gh call: %s\\n' "$*" >&2
+  exit 2
+fi
+`,
+    );
+    chmodSync(ghPath, 0o755);
+    writeFileSync(
+      gitPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == "ls-remote" && "$*" == *"refs/tags/$RELEASE_TAG"* ]]; then
+  count=0
+  [[ ! -f "$POINT_READS_PATH" ]] || read -r count < "$POINT_READS_PATH"
+  ((count += 1))
+  printf '%s\\n' "$count" > "$POINT_READS_PATH"
+  if [[ "$FAILURE" == "release-tag-move" && "$count" -ge 2 ]]; then
+    "$REAL_GIT" --git-dir="$REMOTE_PATH" update-ref "refs/tags/$RELEASE_TAG" "$RACE_SHA"
+  fi
+elif [[ "$1" == "push" ]]; then
+  if [[ "$FAILURE" == "release-tag-move-at-push" ]]; then
+    "$REAL_GIT" --git-dir="$REMOTE_PATH" update-ref "refs/tags/$RELEASE_TAG" "$RACE_SHA"
+  fi
+  if [[ "$FAILURE" == "major-race" || "$FAILURE" == "create-race" ]]; then
+    "$REAL_GIT" --git-dir="$REMOTE_PATH" update-ref "refs/tags/$MAJOR_TAG" "$RACE_SHA"
+  fi
+fi
+exec "$REAL_GIT" "$@"
+`,
+    );
+    chmodSync(gitPath, 0o755);
+
+    let error: Error | undefined;
+    try {
+      execFileSync("bash", [resolve(".github/scripts/update-major-tag.sh")], {
+        cwd: workspace,
+        env: {
+          ...process.env,
+          FAILURE: failure,
+          GITHUB_REPOSITORY: "owner/repository",
+          MAJOR_TAG: "v1",
+          PATH: `${binDirectory}:${process.env.PATH}`,
+          POINT_READS_PATH: pointReadsPath,
+          RACE_SHA: raceSha,
+          REAL_GIT: realGit,
+          RELEASES_JSON: JSON.stringify([releases]),
+          RELEASE_TAG: "v1.10.0",
+          REMOTE_PATH: remote,
+          TAGS_JSON: JSON.stringify([tags]),
+          TARGET_SHA: targetSha,
+        },
+        stdio: "pipe",
+      });
+    } catch (caught) {
+      const failureOutput = caught as {
+        stderr?: Buffer | string;
+        stdout?: Buffer | string;
+      };
+      error = new Error(
+        failureOutput.stderr?.toString().trim() ||
+          failureOutput.stdout?.toString().trim() ||
+          "release update failed",
+        { cause: caught },
+      );
+    }
+    return {
+      error,
+      initialMajorDirectOid,
+      initialMajorSha,
+      majorDirectOid: remoteOid("refs/tags/v1"),
+      majorSha: remoteOid("refs/tags/v1^{}") ?? remoteOid("refs/tags/v1"),
+      newerSha,
+      targetSha,
+    };
   } finally {
     rmSync(directory, { recursive: true });
   }
@@ -136,23 +405,16 @@ function prepareRelease(
 }
 
 describe("release workflow", () => {
-  it("exposes manual releases with least-privilege credentials", () => {
+  it("uses a published release with separated candidate and promotion permissions", () => {
     const releaseWorkflow = workflow();
-    const inputs = releaseWorkflow.on.workflow_dispatch.inputs;
-
-    expect(inputs.tag).toMatchObject({ required: false, type: "string" });
-    expect(inputs.bump).toMatchObject({
-      required: true,
-      type: "choice",
-      options: expect.arrayContaining(["none", "patch", "minor", "major"]),
-    });
-    expect(inputs.prerelease).toMatchObject({
-      required: true,
-      type: "boolean",
-    });
+    expect(releaseWorkflow.on.release.types).toEqual(["published"]);
     expect(releaseWorkflow.permissions).toEqual({ contents: "read" });
-    expect(releaseWorkflow.jobs["update-major"]?.if).toBe(
-      "inputs.prerelease == false",
+    expect(releaseWorkflow.jobs.candidate?.if).toContain(
+      "github.event.release.prerelease == false",
+    );
+    expect(releaseWorkflow.jobs.release?.if).toContain("always()");
+    expect(releaseWorkflow.jobs.prerelease?.if).toContain(
+      "github.event.release.prerelease == true",
     );
 
     const checkouts = Object.values(releaseWorkflow.jobs).flatMap((job) =>
@@ -164,21 +426,112 @@ describe("release workflow", () => {
     }
   });
 
-  it("fails closed when an automatic rerun cannot restore its release tag", () => {
-    const steps = workflow().jobs.prepare?.steps ?? [];
-    const restoreStep = steps.find((step) =>
-      step.uses?.startsWith("actions/download-artifact@"),
-    );
-    const resolveStep = steps.find((step) => step.id === "tag");
-    const persistStep = steps.find((step) =>
+  it("keeps the privileged release job dependent on a completed candidate", () => {
+    const releaseJob = workflow().jobs.release;
+    const candidateArtifact = workflow().jobs.candidate?.steps.find((step) =>
       step.uses?.startsWith("actions/upload-artifact@"),
     );
-
-    expect(restoreStep?.["continue-on-error"]).toBe(true);
-    expect(resolveStep?.env?.REQUIRE_PERSISTED_TAG).toBe(
-      "${{ github.run_attempt != 1 }}",
+    const candidateDownload = releaseJob?.steps.find((step) =>
+      step.uses?.startsWith("actions/download-artifact@"),
     );
-    expect(persistStep?.if).toMatch(/github\.run_attempt\s*==\s*1/u);
+
+    expect(candidateArtifact?.with?.["if-no-files-found"]).toBe("error");
+    expect(candidateDownload?.with?.name).toContain("release-candidate-");
+    expect(releaseJob?.needs).toBe("candidate");
+  });
+
+  it("cleans up a created validation ref after non-cancelled failures", () => {
+    const cleanup = workflow().jobs.release?.steps.find(
+      (step) => step.name === "Delete validated temporary branch",
+    );
+
+    expect(cleanup?.if).toContain("always()");
+    expect(cleanup?.if).toContain("!cancelled()");
+    expect(cleanup?.if).toContain("steps.validation_ref.outputs.name != ''");
+    expect(cleanup?.if).not.toContain("success()");
+  });
+
+  it("completes a bumped release candidate with regenerated bundles", () => {
+    const candidateBuild = workflow().jobs.candidate?.steps.find(
+      (step) => step.name === "Build and validate the release candidate",
+    );
+    const commands = candidateBuild?.run;
+    const prepare = "node .github/scripts/prepare-release.mjs";
+    const build = "npm run build";
+    const stage =
+      "git add -- dist/apply/index.js dist/collect/index.js package-lock.json package.json";
+    const checkDist = "npm run check:dist";
+
+    expect(commands).toBeDefined();
+    expect(commands!.indexOf(prepare)).toBeGreaterThan(-1);
+    expect(commands!.indexOf(build)).toBeGreaterThan(
+      commands!.indexOf(prepare),
+    );
+    expect(commands!.indexOf(stage)).toBeGreaterThan(commands!.indexOf(build));
+    expect(commands!.indexOf(checkDist)).toBeGreaterThan(
+      commands!.indexOf(stage),
+    );
+    expect(commands).toContain("git diff --cached --name-only");
+    expect(commands).toContain('[[ -z "$changed_path" ]] && continue');
+
+    const reconstruction = workflow().jobs.release?.steps.find(
+      (step) =>
+        step.name === "Validate and stage the read-only release candidate",
+    )?.run;
+    expect(reconstruction).toContain('[[ -z "$changed_path" ]] && continue');
+
+    const releaseMetadata = workflow().jobs.release?.steps.find(
+      (step) =>
+        step.name === "Validate release metadata and immutable starting refs",
+    )?.run;
+    for (const pathGuard of [commands, reconstruction, releaseMetadata]) {
+      expect(pathGuard).toContain('[[ -z "$changed_path" ]] && continue');
+      expect(pathGuard).toContain("unexpected path");
+    }
+
+    const directory = releaseCandidateWorkspace();
+    try {
+      const releaseTag = nextReleaseTag(directory);
+      execFileSync(process.execPath, [PREPARE_RELEASE_SCRIPT], {
+        cwd: directory,
+        env: {
+          ...process.env,
+          GITHUB_OUTPUT: join(directory, ".git", "github-output"),
+          RELEASE_TAG: releaseTag,
+        },
+      });
+      execFileSync("npm", ["run", "build"], { cwd: directory });
+      execFileSync(
+        "git",
+        [
+          "add",
+          "--",
+          "dist/apply/index.js",
+          "dist/collect/index.js",
+          "package-lock.json",
+          "package.json",
+        ],
+        { cwd: directory },
+      );
+      execFileSync("npm", ["run", "check:dist"], { cwd: directory });
+
+      expect(
+        execFileSync("git", ["diff", "--cached", "--name-only"], {
+          cwd: directory,
+          encoding: "utf8",
+        }),
+      ).toBe(
+        "dist/apply/index.js\ndist/collect/index.js\npackage-lock.json\npackage.json\n",
+      );
+      expect(
+        execFileSync("git", ["ls-files", "--others", "--exclude-standard"], {
+          cwd: directory,
+          encoding: "utf8",
+        }),
+      ).toBe("");
+    } finally {
+      rmSync(directory, { recursive: true });
+    }
   });
 
   it.each([
@@ -247,6 +600,111 @@ describe("release workflow", () => {
     "returns the observable major-tag %s decision",
     (_, tags, expected) => {
       expect(decideRelease("v1.10.0", [...tags])).toBe(expected);
+    },
+  );
+
+  it.each([
+    ["lightweight", false],
+    ["annotated", true],
+  ] as const)(
+    "updates an existing %s moving tag through a real Git remote",
+    (_kind, annotated) => {
+      const result = runReleaseUpdate("update", "none", annotated);
+
+      expect(result.error).toBeUndefined();
+      expect(result.initialMajorSha).not.toBe(result.targetSha);
+      expect(result.majorSha).toBe(result.targetSha);
+      expect(result.majorDirectOid).toBe(result.targetSha);
+    },
+  );
+
+  it("creates a missing moving tag through a real Git remote", () => {
+    const result = runReleaseUpdate("create");
+
+    expect(result.error).toBeUndefined();
+    expect(result.initialMajorSha).toBeUndefined();
+    expect(result.majorSha).toBe(result.targetSha);
+  });
+
+  it.each(["update", "create"] as const)(
+    "handles a lightweight finalized tag during a %s decision",
+    (action) => {
+      const result = runReleaseUpdate(action, "none", false, false, false);
+
+      expect(result.error).toBeUndefined();
+      expect(result.majorSha).toBe(result.targetSha);
+    },
+  );
+
+  it.each(["noop", "skip"] as const)(
+    "leaves the moving tag unchanged for a %s decision",
+    (action) => {
+      const result = runReleaseUpdate(action);
+
+      expect(result.error).toBeUndefined();
+      expect(result.majorSha).toBe(result.initialMajorSha);
+      if (action === "skip") expect(result.majorSha).toBe(result.newerSha);
+    },
+  );
+
+  it("accepts a stale paginated SHA after verifying the exact remote tag", () => {
+    const result = runReleaseUpdate("create", "none", false, true);
+
+    expect(result.error).toBeUndefined();
+    expect(result.majorSha).toBe(result.targetSha);
+  });
+
+  it("fails closed when the exact finalized release ref does not match", () => {
+    const result = runReleaseUpdate("update", "point-mismatch");
+
+    expect(result.error?.message).toMatch(
+      /does not match its exact finalized tag ref/u,
+    );
+    expect(result.majorSha).toBe(result.initialMajorSha);
+  });
+
+  it.each([
+    ["update", "major-race"],
+    ["create", "create-race"],
+  ] as const)(
+    "rejects a competing %s through the real Git lease",
+    (action, failure) => {
+      const result = runReleaseUpdate(action, failure, action === "update");
+
+      expect(result.error).toBeDefined();
+      expect(result.majorSha).not.toBe(result.targetSha);
+    },
+  );
+
+  it.each(["update", "create", "noop", "skip"] as const)(
+    "rejects release-tag movement before completing a %s decision",
+    (action) => {
+      const result = runReleaseUpdate(action, "release-tag-move");
+
+      expect(result.error?.message).toMatch(
+        /changed while its update was being prepared/u,
+      );
+      expect(result.majorSha).toBe(result.initialMajorSha);
+    },
+  );
+
+  it.each([
+    ["update", true],
+    ["create", false],
+  ] as const)(
+    "restores the moving tag when the release tag moves during a %s push",
+    (action, annotated) => {
+      const result = runReleaseUpdate(
+        action,
+        "release-tag-move-at-push",
+        annotated,
+      );
+
+      expect(result.error?.message).toMatch(
+        /changed while its update was being prepared/u,
+      );
+      expect(result.majorSha).toBe(result.initialMajorSha);
+      expect(result.majorDirectOid).toBe(result.initialMajorDirectOid);
     },
   );
 });
