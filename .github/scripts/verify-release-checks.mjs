@@ -207,7 +207,7 @@ export async function waitForWorkflow({
     } catch (error) {
       if (
         !(error instanceof GitHubCommandError) ||
-        !error.message.includes("404")
+        !/(?:^|\n)HTTP\s+404\b|\(HTTP\s+404\)/mu.test(error.message)
       ) {
         throw error;
       }

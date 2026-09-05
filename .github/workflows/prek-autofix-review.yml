@@ -55,4 +55,10 @@ jobs:
 
       - name: Require a clean release candidate
         if: github.event_name == 'workflow_dispatch'
-        run: git diff --exit-code
+        run: |
+          set -euo pipefail
+          if [[ -n "$(git status --porcelain)" ]]; then
+            git status --porcelain >&2
+            echo "prek modified the release candidate tree" >&2
+            exit 1
+          fi

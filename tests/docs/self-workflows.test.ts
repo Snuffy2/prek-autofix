@@ -73,6 +73,11 @@ describe("repository maintenance workflows", () => {
         step.uses?.startsWith("j178/prek-action@") &&
         step.if === "github.event_name == 'workflow_dispatch'",
     );
+    const cleanCandidate = reviewJob.steps.find(
+      (step: WorkflowStep) =>
+        step.if === "github.event_name == 'workflow_dispatch'" &&
+        step.run?.includes("git status --porcelain") === true,
+    );
 
     expect(review.name).toBe("prek-autofix");
     expect(review.permissions).toEqual({ contents: "read" });
@@ -85,10 +90,12 @@ describe("repository maintenance workflows", () => {
         "persist-credentials": false,
       },
     });
+    expect(checkout?.with?.ref).toContain("inputs.expected_sha");
     expect(reviewStep).toMatchObject({
       uses: "./review",
     });
     expect(candidateStep).toBeDefined();
+    expect(cleanCandidate).toBeDefined();
     expect(JSON.stringify(reviewJob)).not.toContain("PREK_AUTOFIX_TOKEN");
   });
 

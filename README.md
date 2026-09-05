@@ -340,7 +340,7 @@ Create and publish a stable GitHub Release whose target is the default branch
 and whose tag is `v<major>.<minor>.<patch>`. The workflow checks out that exact
 tag in a read-only candidate job, prepares package metadata and both Action
 bundles, then validates the candidate through the repository's Node CI and
-review gates. A privileged job accepts only that narrow artifact, creates a
+`prek` check. A privileged job accepts only that narrow artifact, creates a
 deterministic release commit, and atomically advances the default branch and
 annotated point tag using ref leases. Stable releases also create or move the
 matching `v<major>` tag. The exact release tag is never retargeted later.

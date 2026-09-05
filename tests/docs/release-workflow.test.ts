@@ -52,7 +52,12 @@ function releaseCandidateWorkspace(): string {
   const directory = mkdtempSync(
     join(tmpdir(), "prek-autofix-candidate-build-"),
   );
-  for (const path of [".gitignore", "package.json", "package-lock.json"]) {
+  for (const path of [
+    ".gitignore",
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json",
+  ]) {
     cpSync(resolve(path), join(directory, path));
   }
   for (const path of ["dist", "packages"]) {
@@ -466,6 +471,23 @@ describe("release workflow", () => {
     expect(commands!.indexOf(checkDist)).toBeGreaterThan(
       commands!.indexOf(stage),
     );
+    expect(commands).toContain("git diff --cached --name-only");
+    expect(commands).toContain('[[ -z "$changed_path" ]] && continue');
+
+    const reconstruction = workflow().jobs.release?.steps.find(
+      (step) =>
+        step.name === "Validate and stage the read-only release candidate",
+    )?.run;
+    expect(reconstruction).toContain('[[ -z "$changed_path" ]] && continue');
+
+    const releaseMetadata = workflow().jobs.release?.steps.find(
+      (step) =>
+        step.name === "Validate release metadata and immutable starting refs",
+    )?.run;
+    for (const pathGuard of [commands, reconstruction, releaseMetadata]) {
+      expect(pathGuard).toContain('[[ -z "$changed_path" ]] && continue');
+      expect(pathGuard).toContain("unexpected path");
+    }
 
     const directory = releaseCandidateWorkspace();
     try {
