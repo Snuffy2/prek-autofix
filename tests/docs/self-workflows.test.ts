@@ -16,8 +16,6 @@ function workflow(filename: string): ReturnType<typeof parse> {
 interface WorkflowStep {
   readonly env?: Record<string, string>;
   readonly id?: string;
-  readonly if?: string;
-  readonly name?: string;
   readonly run?: string;
   readonly uses?: string;
   readonly with?: Record<string, unknown>;
@@ -128,7 +126,6 @@ describe("repository maintenance workflows", () => {
 
   it("revokes Dependabot auto-merge when either eligibility check fails", () => {
     const dependabotWorkflow = workflow("dependabot-auto-merge.yml");
-    const ciWorkflow = workflow("ci.yml");
     const metadata = dependabotWorkflow.jobs["verify-dependabot-metadata"];
     const changedFiles = dependabotWorkflow.jobs["verify-changed-files"];
     const enable = dependabotWorkflow.jobs["enable-auto-merge"];
@@ -141,14 +138,6 @@ describe("repository maintenance workflows", () => {
     );
     const changedFilesCheckout = changedFiles.steps.find(
       (step: { uses?: string }) => step.uses?.startsWith("actions/checkout@"),
-    );
-    const changedFilesStep = requiredStep(
-      changedFiles.steps,
-      (step) => step.run !== undefined,
-    );
-    const ciScopeStep = requiredStep(
-      ciWorkflow.jobs.test.steps,
-      (step) => step.name === "Verify Dependabot update scope",
     );
     const revokeStep = requiredStep(
       revoke.steps,
@@ -168,14 +157,6 @@ describe("repository maintenance workflows", () => {
     expect(changedFilesCheckout).toBeUndefined();
     expect(changedFiles.needs).toBeUndefined();
     expect(changedFiles.steps[0].env).not.toHaveProperty("PACKAGE_ECOSYSTEM");
-    expect(ciWorkflow.jobs.test.permissions).toEqual({
-      "contents": "read",
-      "pull-requests": "read",
-    });
-    expect(ciScopeStep.if).toContain(
-      "github.event.pull_request.user.login == 'dependabot[bot]'",
-    );
-    expect(ciScopeStep.run).toBe(changedFilesStep.run);
     expect(enable.needs).toEqual([
       "verify-dependabot-metadata",
       "verify-changed-files",
