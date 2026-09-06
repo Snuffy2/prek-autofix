@@ -72,6 +72,7 @@ function dependabotCommit(sha = headSha, verified = true): Commit {
   return {
     author: { login: "dependabot[bot]" },
     commit: { verification: { verified } },
+    committer: { login: "web-flow" },
     parents: [],
     sha,
   };
@@ -318,6 +319,40 @@ describe("Dependabot auto-merge authorization", () => {
         ),
       }),
     ).toThrow();
+  });
+
+  it("rejects direct updates with a missing or non-web-flow committer", () => {
+    for (const committer of [undefined, { login: "maintainer" }])
+      expect(() =>
+        authorize({
+          changedFiles: ["package-lock.json"],
+          commits: [{ ...dependabotCommit(), committer }],
+          headRef: "dependabot/npm_and_yarn/vitest-4.1.11",
+          trustedBaseDirectory: trustedBaseWith(
+            "package.json",
+            "package-lock.json",
+          ),
+        }),
+      ).toThrow();
+  });
+
+  it("rejects Update branches with a missing or non-web-flow root committer", () => {
+    for (const committer of [undefined, { login: "maintainer" }]) {
+      const commits = updateChain();
+      commits[0] = { ...commits[0]!, committer };
+      expect(() =>
+        authorize({
+          ancestryProofs: updateChainProofs(),
+          changedFiles: ["package-lock.json"],
+          commits,
+          headRef: "dependabot/npm_and_yarn/vitest-4.1.11",
+          trustedBaseDirectory: trustedBaseWith(
+            "package.json",
+            "package-lock.json",
+          ),
+        }),
+      ).toThrow();
+    }
   });
 
   it("does not use the triggering action as an authorization input", () => {

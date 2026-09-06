@@ -4,6 +4,7 @@ import { parse } from "yaml";
 import { describe, expect, it } from "vitest";
 
 interface Step {
+  readonly env?: Record<string, string>;
   readonly if?: string;
   readonly run?: string;
   readonly uses?: string;
@@ -98,10 +99,13 @@ function needsOnlyJob(job: Job, jobName: string): boolean {
 }
 
 function assertsAuthoritativeDataflow(job: Job): void {
-  const run = authorizationStep(job).run!;
+  const step = authorizationStep(job);
+  const run = step.run!;
   expect(run).toMatch(/pulls.*files/);
   expect(run).toMatch(/pulls.*commits/);
   expect(run).toContain("compare/");
+  expect(step.env?.BASE_SHA).toBe("${{ github.event.pull_request.base.sha }}");
+  expect(run).toContain("${BASE_SHA}");
 }
 
 describe("Dependabot workflow trust contracts", () => {
