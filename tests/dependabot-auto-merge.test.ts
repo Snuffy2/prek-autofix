@@ -13,11 +13,22 @@ interface Commit {
 }
 
 interface AuthorizationInput {
-  readonly actor: string;
+  readonly ancestryProofs?: AncestryProof[];
   readonly changedFiles: string[];
   readonly commits: Commit[];
   readonly event: ReturnType<typeof pullRequestEvent>;
   readonly trustedBaseDirectory: string;
+}
+
+interface AncestryProof {
+  readonly ahead_by: number;
+  readonly base_commit: string;
+  readonly base_sha: string;
+  readonly behind_by: number;
+  readonly head_commit: string;
+  readonly merge_base_commit: string;
+  readonly parent_sha: string;
+  readonly status: string;
 }
 
 const root = resolve(__dirname, "..");
@@ -57,10 +68,10 @@ function pullRequestEvent(headRef: string, action = "synchronize") {
   };
 }
 
-function dependabotCommit(sha = headSha): Commit {
+function dependabotCommit(sha = headSha, verified = true): Commit {
   return {
     author: { login: "dependabot[bot]" },
-    commit: { verification: { verified: true } },
+    commit: { verification: { verified } },
     parents: [],
     sha,
   };
@@ -76,6 +87,34 @@ function updateCommit(sha: string, previous: string, base: string): Commit {
   };
 }
 
+function ancestryProof(parentSha: string, status = "ahead"): AncestryProof {
+  return {
+    ahead_by: status === "identical" ? 0 : 1,
+    base_commit: parentSha,
+    base_sha: currentBaseSha,
+    behind_by: 0,
+    head_commit: currentBaseSha,
+    merge_base_commit: parentSha,
+    parent_sha: parentSha,
+    status,
+  };
+}
+
+function updateChain(): Commit[] {
+  return [
+    dependabotCommit(dependabotSha),
+    updateCommit(firstUpdateSha, dependabotSha, firstBaseSha),
+    updateCommit(headSha, firstUpdateSha, currentBaseSha),
+  ];
+}
+
+function updateChainProofs(): AncestryProof[] {
+  return [
+    ancestryProof(firstBaseSha),
+    ancestryProof(currentBaseSha, "identical"),
+  ];
+}
+
 function trustedBaseWith(...paths: string[]): string {
   const directory = mkdtempSync(join(tmpdir(), "dependabot-authorizer-"));
   temporaryDirectories.push(directory);
@@ -88,26 +127,25 @@ function trustedBaseWith(...paths: string[]): string {
 }
 
 function authorize({
-  actor = "dependabot[bot]",
+  ancestryProofs = [],
   changedFiles,
   commits = [dependabotCommit()],
+  event,
   headRef,
   trustedBaseDirectory,
 }: {
-  readonly actor?: string;
+  readonly ancestryProofs?: AncestryProof[];
   readonly changedFiles: string[];
   readonly commits?: Commit[];
+  readonly event?: ReturnType<typeof pullRequestEvent>;
   readonly headRef: string;
   readonly trustedBaseDirectory: string;
 }): string {
   return authorizeDependabotUpdate({
-    actor,
+    ancestryProofs,
     changedFiles,
     commits,
-    event: pullRequestEvent(
-      headRef,
-      actor === "dependabot[bot]" ? "opened" : "synchronize",
-    ),
+    event: event ?? pullRequestEvent(headRef, "opened"),
     trustedBaseDirectory,
   });
 }
@@ -238,17 +276,16 @@ describe("Dependabot auto-merge authorization", () => {
       ).toThrow();
   });
 
-  it("authorizes a verified GitHub Update branch chain", () => {
-    const event = pullRequestEvent("dependabot/npm_and_yarn/vitest-4.1.11");
+  it("authorizes a reopened multi-merge GitHub Update branch chain", () => {
+    const event = pullRequestEvent(
+      "dependabot/npm_and_yarn/vitest-4.1.11",
+      "reopened",
+    );
     expect(
       authorizeDependabotUpdate({
-        actor: "maintainer",
+        ancestryProofs: updateChainProofs(),
         changedFiles: ["package-lock.json"],
-        commits: [
-          dependabotCommit(dependabotSha),
-          updateCommit(firstUpdateSha, dependabotSha, firstBaseSha),
-          updateCommit(headSha, firstUpdateSha, currentBaseSha),
-        ],
+        commits: updateChain(),
         event,
         trustedBaseDirectory: trustedBaseWith(
           "package.json",
@@ -262,7 +299,7 @@ describe("Dependabot auto-merge authorization", () => {
     const event = pullRequestEvent("dependabot/npm_and_yarn/vitest-4.1.11");
     expect(() =>
       authorizeDependabotUpdate({
-        actor: "maintainer",
+        ancestryProofs: updateChainProofs(),
         changedFiles: ["package-lock.json"],
         commits: [
           dependabotCommit(dependabotSha),
@@ -281,5 +318,70 @@ describe("Dependabot auto-merge authorization", () => {
         ),
       }),
     ).toThrow();
+  });
+
+  it("does not use the triggering action as an authorization input", () => {
+    for (const action of ["opened", "synchronize", "reopened"])
+      expect(
+        authorize({
+          changedFiles: ["package-lock.json"],
+          headRef: "dependabot/npm_and_yarn/vitest-4.1.11",
+          trustedBaseDirectory: trustedBaseWith(
+            "package.json",
+            "package-lock.json",
+          ),
+          event: pullRequestEvent(
+            "dependabot/npm_and_yarn/vitest-4.1.11",
+            action,
+          ),
+        }),
+      ).toBe("npm");
+  });
+
+  it("rejects absent, arbitrary, diverged, and mismatched ancestry evidence", () => {
+    const invalidProofSets: AncestryProof[][] = [
+      [],
+      [{} as AncestryProof, ancestryProof(currentBaseSha, "identical")],
+      [ancestryProof(firstBaseSha), ancestryProof("9".repeat(40))],
+      [
+        ancestryProof(firstBaseSha, "diverged"),
+        ancestryProof(currentBaseSha, "identical"),
+      ],
+      [
+        { ...ancestryProof(firstBaseSha), head_commit: "8".repeat(40) },
+        ancestryProof(currentBaseSha, "identical"),
+      ],
+    ];
+    for (const ancestryProofs of invalidProofSets)
+      expect(() =>
+        authorize({
+          ancestryProofs,
+          changedFiles: ["package-lock.json"],
+          commits: updateChain(),
+          headRef: "dependabot/npm_and_yarn/vitest-4.1.11",
+          trustedBaseDirectory: trustedBaseWith(
+            "package.json",
+            "package-lock.json",
+          ),
+        }),
+      ).toThrow();
+  });
+
+  it("requires the latest merge parent and commit to equal the event state", () => {
+    const staleParentChain = updateChain();
+    staleParentChain[2] = updateCommit(headSha, firstUpdateSha, firstBaseSha);
+    for (const commits of [staleParentChain, [dependabotCommit(dependabotSha)]])
+      expect(() =>
+        authorize({
+          ancestryProofs: updateChainProofs(),
+          changedFiles: ["package-lock.json"],
+          commits,
+          headRef: "dependabot/npm_and_yarn/vitest-4.1.11",
+          trustedBaseDirectory: trustedBaseWith(
+            "package.json",
+            "package-lock.json",
+          ),
+        }),
+      ).toThrow();
   });
 });
