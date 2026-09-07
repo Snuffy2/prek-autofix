@@ -59,6 +59,9 @@ describe("repository maintenance workflows", () => {
     });
     expect(candidateStep).toBeDefined();
     expect(cleanCandidate).toBeDefined();
+    expect(reviewJob.steps.indexOf(cleanCandidate!)).toBeGreaterThan(
+      reviewJob.steps.indexOf(candidateStep!),
+    );
     expect(JSON.stringify(reviewJob)).not.toContain("PREK_AUTOFIX_TOKEN");
   });
 

@@ -63,6 +63,17 @@ jobs:
                 ;;
             esac
           done <<< "$changed_paths"
+          changed_paths="$(git diff --name-only)"
+          while IFS= read -r changed_path; do
+            [[ -z "$changed_path" ]] && continue
+            case "$changed_path" in
+              dist/apply/index.js | dist/collect/index.js | package-lock.json | package.json) ;;
+              *)
+                echo "Candidate construction changed unexpected path: $changed_path" >&2
+                exit 1
+                ;;
+            esac
+          done <<< "$changed_paths"
           [[ -z "$(git ls-files --others --exclude-standard)" ]]
 
       - name: Export the narrow release candidate

@@ -111,7 +111,7 @@ export function verifyJobs(repository, runId, requiredChecks, api = githubApi) {
   if (
     !Array.isArray(jobs) ||
     !Number.isInteger(payload.total_count) ||
-    payload.total_count > jobs.length
+    payload.total_count !== jobs.length
   ) {
     throw new GitHubCommandError(
       "Workflow job list was truncated or unverifiable.",

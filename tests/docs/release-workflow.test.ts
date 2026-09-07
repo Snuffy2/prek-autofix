@@ -63,6 +63,11 @@ function releaseCandidateWorkspace(): string {
   for (const path of ["dist", "packages"]) {
     cpSync(resolve(path), join(directory, path), { recursive: true });
   }
+  mkdirSync(join(directory, ".github", "scripts"), { recursive: true });
+  cpSync(
+    PREPARE_RELEASE_SCRIPT,
+    join(directory, ".github", "scripts", "prepare-release.mjs"),
+  );
   symlinkSync(resolve("node_modules"), join(directory, "node_modules"));
   execFileSync("git", ["init", "-q"], { cwd: directory });
   execFileSync("git", ["config", "user.email", "test@example.invalid"], {
@@ -72,6 +77,53 @@ function releaseCandidateWorkspace(): string {
   execFileSync("git", ["add", "."], { cwd: directory });
   execFileSync("git", ["commit", "-qm", "baseline"], { cwd: directory });
   return directory;
+}
+
+function runCandidateBuild(
+  directory: string,
+  commands: string,
+  releaseTag: string,
+): string | undefined {
+  const binDirectory = mkdtempSync(join(tmpdir(), "prek-autofix-npm-"));
+  const npmPath = join(binDirectory, "npm");
+  const realNpm = execFileSync("which", ["npm"], { encoding: "utf8" }).trim();
+  writeFileSync(
+    npmPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+case "\${1-}:\${2-}" in
+  ci:--ignore-scripts | run:format:check | run:lint | run:typecheck | test:) exit 0 ;;
+esac
+exec "$REAL_NPM" "$@"
+`,
+  );
+  chmodSync(npmPath, 0o755);
+  try {
+    execFileSync("bash", ["-c", commands], {
+      cwd: directory,
+      env: {
+        ...process.env,
+        GITHUB_OUTPUT: join(directory, ".git", "github-output"),
+        PATH: `${binDirectory}:${process.env.PATH}`,
+        REAL_NPM: realNpm,
+        RELEASE_TAG: releaseTag,
+      },
+      stdio: "pipe",
+    });
+    return undefined;
+  } catch (error) {
+    const output = error as {
+      stderr?: Buffer | string;
+      stdout?: Buffer | string;
+    };
+    return (
+      output.stderr?.toString().trim() ||
+      output.stdout?.toString().trim() ||
+      "candidate build failed"
+    );
+  } finally {
+    rmSync(binDirectory, { recursive: true });
+  }
 }
 
 function nextReleaseTag(directory: string): string {
@@ -451,78 +503,44 @@ describe("release workflow", () => {
     expect(cleanup?.if).not.toContain("success()");
   });
 
-  it("completes a bumped release candidate with regenerated bundles", () => {
+  it("builds a narrow candidate and rejects unexpected unstaged tracked changes", () => {
     const candidateBuild = workflow().jobs.candidate?.steps.find(
       (step) => step.name === "Build and validate the release candidate",
     );
     const commands = candidateBuild?.run;
-    const prepare = "node .github/scripts/prepare-release.mjs";
-    const build = "npm run build";
-    const stage =
-      "git add -- dist/apply/index.js dist/collect/index.js package-lock.json package.json";
-    const checkDist = "npm run check:dist";
 
     expect(commands).toBeDefined();
-    expect(commands!.indexOf(prepare)).toBeGreaterThan(-1);
-    expect(commands!.indexOf(build)).toBeGreaterThan(
-      commands!.indexOf(prepare),
-    );
-    expect(commands!.indexOf(stage)).toBeGreaterThan(commands!.indexOf(build));
-    expect(commands!.indexOf(checkDist)).toBeGreaterThan(
-      commands!.indexOf(stage),
-    );
-    expect(commands).toContain("git diff --cached --name-only");
-    expect(commands).toContain('[[ -z "$changed_path" ]] && continue');
-
-    const reconstruction = workflow().jobs.release?.steps.find(
-      (step) =>
-        step.name === "Validate and stage the read-only release candidate",
-    )?.run;
-    expect(reconstruction).toContain('[[ -z "$changed_path" ]] && continue');
-
-    const releaseMetadata = workflow().jobs.release?.steps.find(
-      (step) =>
-        step.name === "Validate release metadata and immutable starting refs",
-    )?.run;
-    for (const pathGuard of [commands, reconstruction, releaseMetadata]) {
-      expect(pathGuard).toContain('[[ -z "$changed_path" ]] && continue');
-      expect(pathGuard).toContain("unexpected path");
-    }
 
     const directory = releaseCandidateWorkspace();
     try {
       const releaseTag = nextReleaseTag(directory);
-      execFileSync(process.execPath, [PREPARE_RELEASE_SCRIPT], {
-        cwd: directory,
-        env: {
-          ...process.env,
-          GITHUB_OUTPUT: join(directory, ".git", "github-output"),
-          RELEASE_TAG: releaseTag,
-        },
-      });
-      execFileSync("npm", ["run", "build"], { cwd: directory });
-      execFileSync(
-        "git",
-        [
-          "add",
-          "--",
+      expect(
+        runCandidateBuild(directory, commands!, releaseTag),
+      ).toBeUndefined();
+
+      expect(
+        new Set(
+          execFileSync("git", ["diff", "--cached", "--name-only"], {
+            cwd: directory,
+            encoding: "utf8",
+          })
+            .trim()
+            .split("\n"),
+        ),
+      ).toEqual(
+        new Set([
           "dist/apply/index.js",
           "dist/collect/index.js",
           "package-lock.json",
           "package.json",
-        ],
-        { cwd: directory },
+        ]),
       );
-      execFileSync("npm", ["run", "check:dist"], { cwd: directory });
-
       expect(
-        execFileSync("git", ["diff", "--cached", "--name-only"], {
+        execFileSync("git", ["diff", "--name-only"], {
           cwd: directory,
           encoding: "utf8",
         }),
-      ).toBe(
-        "dist/apply/index.js\ndist/collect/index.js\npackage-lock.json\npackage.json\n",
-      );
+      ).toBe("");
       expect(
         execFileSync("git", ["ls-files", "--others", "--exclude-standard"], {
           cwd: directory,
@@ -532,7 +550,32 @@ describe("release workflow", () => {
     } finally {
       rmSync(directory, { recursive: true });
     }
-  });
+    const unexpectedDirectory = releaseCandidateWorkspace();
+    try {
+      const packagePath = join(unexpectedDirectory, "package.json");
+      const packageMetadata = JSON.parse(readFileSync(packagePath, "utf8")) as {
+        scripts: Record<string, string>;
+      };
+      packageMetadata.scripts["check:dist"] +=
+        " && printf '\\n' >> tsconfig.json";
+      writeFileSync(
+        packagePath,
+        `${JSON.stringify(packageMetadata, null, 2)}\n`,
+      );
+
+      expect(
+        runCandidateBuild(
+          unexpectedDirectory,
+          commands!,
+          nextReleaseTag(unexpectedDirectory),
+        ),
+      ).toContain(
+        "Candidate construction changed unexpected path: tsconfig.json",
+      );
+    } finally {
+      rmSync(unexpectedDirectory, { recursive: true });
+    }
+  }, 60_000);
 
   it.each([
     ["v2.0.3", "2.0.2", "2.0.3", "v2"],
