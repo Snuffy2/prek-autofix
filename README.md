@@ -336,19 +336,23 @@ same-repository update.
 
 ## Releases
 
-Run the Release workflow from the default branch. Select `patch`, `minor`, or
-`major` to bump the highest published stable semantic release, or supply an
-explicit `v<major>.<minor>.<patch>` tag. An explicit tag takes precedence over
-the bump selection. Prereleases require an explicit tag such as `v1.1.0-beta.1`
-and the **Publish as a prerelease** option.
+Create and publish a stable GitHub Release whose target is the default branch
+and whose tag is `v<major>.<minor>.<patch>`. The workflow checks out that exact
+tag in a read-only candidate job, prepares package metadata and both Action
+bundles, then validates the candidate through the repository's Node CI and
+`prek` check. A privileged job accepts only that narrow artifact, creates a
+deterministic release commit, and atomically advances the default branch and
+annotated point tag using ref leases. Stable releases also create or move the
+matching `v<major>` tag. The exact release tag is never retargeted later.
 
-The workflow validates the selected source, prepares the package metadata and
-both Action bundles, creates a release commit without updating the protected
-default branch, and pushes only an annotated point tag for that commit. It then
-publishes the GitHub Release. Stable releases also create or move the matching
-`v<major>` tag; prereleases do not. The exact release tag is never retargeted by
-later releases. Wait for the workflow to finish before recording a release ref,
-and use the final commit SHA when a permanently immutable pin is required.
+Publishing a prerelease is read-only: its tag must include a prerelease suffix
+such as `v1.1.0-beta.1`, and the workflow verifies its immutable identity
+without rebuilding, promoting refs, or moving a major tag. If a stable release
+fails after its point tag was promoted, rerun the workflow for the same release;
+it validates the existing deterministic release commit before resuming the
+remaining checks and major-tag update. Wait for the workflow to finish before
+recording a release ref, and use the final commit SHA when a permanently
+immutable pin is required.
 
 ## Pinning and upgrades
 

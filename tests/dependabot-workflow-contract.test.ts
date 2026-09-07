@@ -178,7 +178,9 @@ describe("Dependabot workflow trust contracts", () => {
     const steps = requiredSteps(job);
     const authorizationIndex = steps.indexOf(authorizationStep(job));
     const headCheckoutIndex = steps.findIndex(
-      (step) => step.uses?.startsWith("actions/checkout@") && !step.with?.ref,
+      (step, index) =>
+        index > authorizationIndex &&
+        step.uses?.startsWith("actions/checkout@"),
     );
     expect(headCheckoutIndex).toBeGreaterThan(authorizationIndex);
   });
