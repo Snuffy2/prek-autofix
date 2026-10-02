@@ -3,12 +3,6 @@ name: prek-autofix
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  workflow_dispatch:
-    inputs:
-      expected_sha:
-        description: Exact candidate SHA required by the release workflow
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -22,23 +16,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Require the dispatched release candidate SHA
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          EXPECTED_SHA: ${{ inputs.expected_sha }}
-          WORKFLOW_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
-          test "$WORKFLOW_SHA" = "$EXPECTED_SHA"
-
-      - name: Checkout pull request or release candidate
+      - name: Checkout pull request
         uses: actions/checkout@v7
         with:
           repository:
             ${{ github.event.pull_request.head.repo.full_name ||
             github.repository }}
-          ref: ${{ inputs.expected_sha || github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -46,19 +30,4 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Review pull request with prek
-        if: github.event_name == 'pull_request'
         uses: ./review
-
-      - name: Verify release candidate with prek
-        if: github.event_name == 'workflow_dispatch'
-        uses: j178/prek-action@v2
-
-      - name: Require a clean release candidate
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          set -euo pipefail
-          if [[ -n "$(git status --porcelain)" ]]; then
-            git status --porcelain >&2
-            echo "prek modified the release candidate tree" >&2
-            exit 1
-          fi

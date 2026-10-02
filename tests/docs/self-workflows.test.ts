@@ -20,26 +20,14 @@ interface WorkflowStep {
 }
 
 describe("repository maintenance workflows", () => {
-  it("reviews the exact pull request head and verifies a dispatched candidate", () => {
+  it("reviews the exact pull request head without write credentials", () => {
     const review = workflow("prek-autofix-review.yml");
     const reviewJob = review.jobs.review;
     const checkout = reviewJob.steps.find((step: WorkflowStep) =>
       step.uses?.startsWith("actions/checkout@"),
     );
     const reviewStep = reviewJob.steps.find(
-      (step: WorkflowStep) =>
-        step.uses === "./review" &&
-        step.if === "github.event_name == 'pull_request'",
-    );
-    const candidateStep = reviewJob.steps.find(
-      (step: WorkflowStep) =>
-        step.uses?.startsWith("j178/prek-action@") &&
-        step.if === "github.event_name == 'workflow_dispatch'",
-    );
-    const cleanCandidate = reviewJob.steps.find(
-      (step: WorkflowStep) =>
-        step.if === "github.event_name == 'workflow_dispatch'" &&
-        step.run?.includes("git status --porcelain") === true,
+      (step: WorkflowStep) => step.uses === "./review",
     );
 
     expect(review.name).toBe("prek-autofix");
@@ -53,15 +41,9 @@ describe("repository maintenance workflows", () => {
         "persist-credentials": false,
       },
     });
-    expect(checkout?.with?.ref).toContain("inputs.expected_sha");
     expect(reviewStep).toMatchObject({
       uses: "./review",
     });
-    expect(candidateStep).toBeDefined();
-    expect(cleanCandidate).toBeDefined();
-    expect(reviewJob.steps.indexOf(cleanCandidate!)).toBeGreaterThan(
-      reviewJob.steps.indexOf(candidateStep!),
-    );
     expect(JSON.stringify(reviewJob)).not.toContain("PREK_AUTOFIX_TOKEN");
   });
 
