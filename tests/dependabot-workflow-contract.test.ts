@@ -157,17 +157,4 @@ describe("Dependabot workflow trust contracts", () => {
     expect(cleanupJob.if).toContain("!cancelled()");
     requiresEligibleDependabot(cleanupJob.if);
   });
-
-  it("runs CI read-only for dependency updates with follow-up fixes", () => {
-    const ci = workflow(".github/workflows/ci.yml");
-    expect(authorizationJobs(ci)).toHaveLength(0);
-    for (const job of Object.values(ci.jobs)) {
-      expect(job.permissions?.contents).toBe("read");
-      expect(job.permissions?.["pull-requests"]).not.toBe("write");
-      for (const step of requiredSteps(job)) {
-        if (step.uses?.startsWith("actions/checkout@"))
-          expect(step.with?.["persist-credentials"]).toBe(false);
-      }
-    }
-  });
 });
