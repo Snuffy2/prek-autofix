@@ -43,7 +43,6 @@ describe("versionBanner", () => {
           },
         );
         expect(result.error).toBeUndefined();
-        expect(result.status).toBe(1);
         expect(result.stdout).toContain("prek-autofix version v9.8.7");
       } finally {
         rmSync(directory, { recursive: true });

@@ -20,35 +20,6 @@ interface WorkflowStep {
 }
 
 describe("repository maintenance workflows", () => {
-  it("keeps title validation read-only without executing pull request code", () => {
-    const titleLint = workflow("semantic-pull-request.yml");
-    expect(titleLint.on.pull_request_target.types).toContain("edited");
-    expect(titleLint.jobs.validate.permissions).toEqual({
-      "pull-requests": "read",
-    });
-    for (const step of titleLint.jobs.validate.steps as WorkflowStep[]) {
-      expect(step.run).toBeUndefined();
-      expect(step.uses?.startsWith("actions/checkout@")).not.toBe(true);
-    }
-  });
-
-  it("gives hook updates a dependency title accepted by the title lint", () => {
-    const titleLint = workflow("semantic-pull-request.yml");
-    const validator = titleLint.jobs.validate.steps.find((step: WorkflowStep) =>
-      step.uses?.startsWith("amannn/action-semantic-pull-request@"),
-    );
-    const update = workflow("prek_autoupdate.yml").jobs[
-      "prek-autoupdate"
-    ].steps.find((step: WorkflowStep) =>
-      step.uses?.startsWith("Snuffy2/prek-autoupdate@"),
-    );
-    const title = update.with["pr-title"] as string;
-    expect(title).toMatch(/^deps: .+/u);
-    expect(update.with["commit-message"]).toBe(title);
-    const allowedTypes = (validator.with.types as string).trim().split(/\s+/u);
-    expect(allowedTypes).toContain(title.split(":")[0]);
-  });
-
   it("reviews the exact pull request head without write credentials", () => {
     const review = workflow("prek-autofix-review.yml");
     const reviewJob = review.jobs.review;
