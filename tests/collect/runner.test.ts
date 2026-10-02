@@ -234,6 +234,11 @@ describe("runCollect", () => {
       );
 
       await expect(call.promise).rejects.toBeInstanceOf(HardFailureError);
+      await expect(call.promise).rejects.toThrow(
+        paths.length > 0
+          ? "apply the fixes locally"
+          : "prek failed without making new fixes",
+      );
       expect(execute).toHaveBeenCalledWith(
         "prek",
         expect.any(Array),

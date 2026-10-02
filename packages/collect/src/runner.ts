@@ -572,12 +572,12 @@ export async function runCollect(
     );
   }
   if (autofixIgnored) {
-    if (hardFailure) throw hardFailure;
     if (operations.length > 0) {
       throw new HardFailureError(
         "prek generated fixes, but autofix is disabled for this pull request author; apply the fixes locally",
       );
     }
+    if (hardFailure) throw hardFailure;
     return;
   }
   if (operations.length > 0) {
