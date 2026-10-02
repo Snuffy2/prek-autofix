@@ -1,6 +1,8 @@
 version: 2
 updates:
   - package-ecosystem: "npm"
+    commit-message:
+      prefix: "deps"
     directory: "/"
     schedule:
       interval: "weekly"
@@ -19,6 +21,8 @@ updates:
     cooldown:
       default-days: 7
   - package-ecosystem: "github-actions"
+    commit-message:
+      prefix: "deps"
     directories:
       - "/"
       - "/review"
