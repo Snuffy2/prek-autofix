@@ -62,3 +62,8 @@ jobs:
             echo "prek modified the release candidate tree" >&2
             exit 1
           fi
+
+      - name: Verify bundle refresh hook
+        run: |
+          prek --version
+          npm exec -- vitest run tests/docs/bundle-hook.test.ts
