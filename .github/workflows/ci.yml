@@ -21,7 +21,6 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-
       - name: Check out repository
         uses: actions/checkout@v7
         with:
