@@ -149,6 +149,10 @@ Write for developers who are new to the project:
 ## Git practices
 
 - Base feature branches on the latest `main`.
+- Use Conventional Commit prefixes for every pull request title, in the form
+  `type: description` or `type(scope): description`. Allowed types are `build`,
+  `chore`, `ci`, `deps`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`,
+  `style`, and `test`, matching the PR title validation workflow.
 - Keep commits focused and include generated files when required.
 - Do not commit secrets, local environment files, `node_modules/`, coverage
   output, or temporary files.
