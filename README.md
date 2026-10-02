@@ -336,23 +336,25 @@ same-repository update.
 
 ## Releases
 
-Create and publish a stable GitHub Release whose target is the default branch
-and whose tag is `v<major>.<minor>.<patch>`. The workflow checks out that exact
-tag in a read-only candidate job, prepares package metadata and both Action
-bundles, then validates the candidate through the repository's Node CI and
-`prek` check. A privileged job accepts only that narrow artifact, creates a
-deterministic release commit, and atomically advances the default branch and
-annotated point tag using ref leases. Stable releases also create or move the
-matching `v<major>` tag. The exact release tag is never retargeted later.
+The release-please workflow opens or updates a release PR when changes merge
+into `main`. Use Conventional Commit PR titles, such as
+`fix: handle stale artifacts` or `feat: add an input`, and squash-merge PRs so
+the title becomes the commit message. The title lint checks this format.
+Automated prek updates use `deps: update prek hooks` for both the commit message
+and PR title.
 
-Publishing a prerelease is read-only: its tag must include a prerelease suffix
-such as `v1.1.0-beta.1`, and the workflow verifies its immutable identity
-without rebuilding, promoting refs, or moving a major tag. If a stable release
-fails after its point tag was promoted, rerun the workflow for the same release;
-it validates the existing deterministic release commit before resuming the
-remaining checks and major-tag update. Wait for the workflow to finish before
-recording a release ref, and use the final commit SHA when a permanently
-immutable pin is required.
+Maintainers must configure `RELEASE_PLEASE_TOKEN` with repository contents and
+pull-request write access. Use a PAT so release PRs trigger the normal CI and
+prek review workflows. Release PRs update `package.json`, `package-lock.json`,
+and the release manifest. The Action bundles read the shipped package version,
+so version-only changes do not require rebuilding them.
+
+Merge the release PR after its checks pass to publish a
+`v<major>.<minor>.<patch>` GitHub Release. The workflow then creates or advances
+the matching `v<major>` tag without moving the point tag. If that update fails,
+dispatch the Release Please workflow with the existing release tag to retry it.
+Wait for completion before using the moving tag, or pin the release commit SHA
+for an immutable ref.
 
 ## Pinning and upgrades
 
