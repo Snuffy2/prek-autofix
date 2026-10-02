@@ -61,3 +61,12 @@ entry = "npm run typecheck"
 language = "system"
 pass_filenames = false
 types = ["ts"]
+
+# Rebuild after formatting so dependency updates produce convergent autofixes.
+[[repos.hooks]]
+id = "build-dist"
+name = "rebuild action bundles"
+entry = "npm run build"
+language = "system"
+pass_filenames = false
+always_run = true

@@ -334,6 +334,18 @@ same-repository update.
 | First-time contributor workflow waits for approval    | A maintainer must approve the initial `pull_request` workflow run in GitHub's Actions UI. No artifact exists until that read-only run is approved and completes.                                                                                                                                |
 | Check keeps failing after the fix commit              | Read the new Stage 1 log. Remaining findings without stable fixes, or non-converging hooks, need a normal fix.                                                                                                                                                                                  |
 
+## Contributing dependency updates
+
+This repository rebuilds its Action bundles as a local `prek` hook. After a
+Dependabot update, the read-only review run builds with the updated locked
+dependencies. The fix workflow applies any stable bundle changes, then the new
+commit triggers CI to verify the bundles again.
+
+Install dependencies with `npm ci` before running `prek run --all-files`
+locally. Dependabot updates with follow-up fixes require a maintainer to merge
+them manually: automatic merging accepts only verified Dependabot updates and
+GitHub branch-update merges. CI still runs for these follow-up commits.
+
 ## Releases
 
 Create and publish a stable GitHub Release whose target is the default branch

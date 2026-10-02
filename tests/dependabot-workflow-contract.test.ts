@@ -83,12 +83,6 @@ function requiresDependabotAuthorOnly(condition: string | undefined): void {
     expect(value).not.toContain(provenanceGate);
 }
 
-function requiresDependabotPullRequest(condition: string | undefined): void {
-  const value = condition ?? "";
-  expect(value).toContain("github.event_name == 'pull_request'");
-  expect(value).toContain("pull_request.user.login == 'dependabot[bot]'");
-}
-
 function needsOnlyJob(job: Job, jobName: string): boolean {
   return (
     job.needs === jobName ||
@@ -111,13 +105,10 @@ function assertsAuthoritativeDataflow(job: Job): void {
 describe("Dependabot workflow trust contracts", () => {
   it("uses trusted read-only authorization with PR files, commits, and ancestry evidence", () => {
     const autoMerge = workflow(".github/workflows/dependabot-auto-merge.yml");
-    const ci = workflow(".github/workflows/ci.yml");
     const autoMergeAuthorization = authorizationJobs(autoMerge);
-    const ciAuthorization = authorizationJobs(ci);
     expect(autoMergeAuthorization).toHaveLength(1);
-    expect(ciAuthorization).toHaveLength(1);
 
-    for (const [, job] of [...autoMergeAuthorization, ...ciAuthorization]) {
+    for (const [, job] of autoMergeAuthorization) {
       expect(job.permissions).toMatchObject({
         "contents": "read",
         "pull-requests": "read",
@@ -128,9 +119,6 @@ describe("Dependabot workflow trust contracts", () => {
 
     const [, autoMergeJob] = autoMergeAuthorization[0]!;
     requiresDependabotAuthorOnly(autoMergeJob.if);
-    const [, ciJob] = ciAuthorization[0]!;
-    requiresDependabotPullRequest(trustedCheckoutBefore(ciJob).if);
-    requiresDependabotPullRequest(authorizationStep(ciJob).if);
   });
 
   it("keeps write jobs dependent on successful authorization and checkout-free", () => {
@@ -170,18 +158,16 @@ describe("Dependabot workflow trust contracts", () => {
     requiresEligibleDependabot(cleanupJob.if);
   });
 
-  it("authorizes Dependabot PRs before CI checks out their head", () => {
+  it("runs CI read-only for dependency updates with follow-up fixes", () => {
     const ci = workflow(".github/workflows/ci.yml");
-    const authorization = authorizationJobs(ci)[0];
-    expect(authorization).toBeDefined();
-    const [, job] = authorization!;
-    const steps = requiredSteps(job);
-    const authorizationIndex = steps.indexOf(authorizationStep(job));
-    const headCheckoutIndex = steps.findIndex(
-      (step, index) =>
-        index > authorizationIndex &&
-        step.uses?.startsWith("actions/checkout@"),
-    );
-    expect(headCheckoutIndex).toBeGreaterThan(authorizationIndex);
+    expect(authorizationJobs(ci)).toHaveLength(0);
+    for (const job of Object.values(ci.jobs)) {
+      expect(job.permissions?.contents).toBe("read");
+      expect(job.permissions?.["pull-requests"]).not.toBe("write");
+      for (const step of requiredSteps(job)) {
+        if (step.uses?.startsWith("actions/checkout@"))
+          expect(step.with?.["persist-credentials"]).toBe(false);
+      }
+    }
   });
 });
