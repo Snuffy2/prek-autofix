@@ -39,5 +39,16 @@ jobs:
       - name: Test
         run: npm test
 
+      # The separate prek workflow commits bundle updates for Dependabot.
+      # Identify the PR author so maintainer updates use the same build path.
+      - name: Build bundled actions for Dependabot
+        if:
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.user.login == 'dependabot[bot]'
+        run: npm run build
+
       - name: Verify bundled actions
+        if:
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.user.login != 'dependabot[bot]'
         run: npm run check:dist
