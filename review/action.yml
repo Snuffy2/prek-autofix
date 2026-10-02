@@ -14,6 +14,11 @@ inputs:
   cache:
     description: Enable the prek environment cache
     default: "true"
+  ignore-authors:
+    description:
+      Comma- or newline-separated PR author logins to exclude from autofix;
+      empty enables all authors
+    default: "dependabot[bot],renovate[bot]"
   max-passes:
     description: Maximum convergence passes
     default: "3"
@@ -59,6 +64,7 @@ runs:
       env:
         PREK_AUTOFIX_EXTRA_ARGS: ${{ inputs.extra-args }}
         PREK_AUTOFIX_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        PREK_AUTOFIX_IGNORE_AUTHORS: ${{ inputs.ignore-authors }}
         PREK_AUTOFIX_MAX_PASSES: ${{ inputs.max-passes }}
         PREK_AUTOFIX_MAX_LOG_BYTES: ${{ inputs.max-log-bytes }}
         PREK_AUTOFIX_MAX_FILES: ${{ inputs.max-files }}

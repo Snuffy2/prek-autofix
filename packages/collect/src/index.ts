@@ -14,6 +14,7 @@ async function main(): Promise<void> {
       repository: `${github.context.repo.owner}/${github.context.repo.repo}`,
       workflow: github.context.workflow,
       pullRequestNumber: payload?.number,
+      pullRequestAuthor: payload?.user?.login,
       headSha: payload?.head?.sha,
       workspace: process.env.GITHUB_WORKSPACE ?? process.cwd(),
       artifactDirectory: process.env.RUNNER_TEMP ?? process.cwd(),
@@ -24,6 +25,9 @@ async function main(): Promise<void> {
       workingDirectory:
         process.env.PREK_AUTOFIX_WORKING_DIRECTORY ??
         core.getInput("working-directory"),
+      ignoreAuthors:
+        process.env.PREK_AUTOFIX_IGNORE_AUTHORS ??
+        core.getInput("ignore-authors"),
       maxPasses: Number(
         process.env.PREK_AUTOFIX_MAX_PASSES ?? core.getInput("max-passes"),
       ),
