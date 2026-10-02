@@ -39,5 +39,16 @@ jobs:
       - name: Test
         run: npm test
 
+      # The separate prek workflow commits bundle updates for Dependabot.
+      # Autofix follow-ups and other runs still verify the committed bundles.
+      - name: Build bundled actions for Dependabot
+        if:
+          github.event_name == 'pull_request' && github.actor ==
+          'dependabot[bot]'
+        run: npm run build
+
       - name: Verify bundled actions
+        if:
+          github.event_name != 'pull_request' || github.actor !=
+          'dependabot[bot]'
         run: npm run check:dist
