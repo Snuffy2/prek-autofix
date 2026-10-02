@@ -352,10 +352,11 @@ so version-only changes do not require rebuilding them.
 Merge the release PR after its checks pass to publish a
 `v<major>.<minor>.<patch>` GitHub Release. The workflow then creates or advances
 the matching `v<major>` tag without moving the point tag. If that update fails,
-re-run only the failed major-tag update job from the original workflow run. Tag
-updates use a separate job with only contents write access and the workflow's
-`GITHUB_TOKEN`; they do not use `RELEASE_PLEASE_TOKEN`. Wait for completion
-before using the moving tag, or pin the release commit SHA for an immutable ref.
+dispatch the Release Please workflow with the existing release tag to retry it.
+Tag updates use a separate job with only contents write access and the
+workflow's `GITHUB_TOKEN`; they do not use `RELEASE_PLEASE_TOKEN`. Wait for
+completion before using the moving tag, or pin the release commit SHA for an
+immutable ref.
 
 ## Pinning and upgrades
 
