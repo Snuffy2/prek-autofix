@@ -234,17 +234,41 @@ raw API exceptions or credentials.
 
 `review` accepts these inputs:
 
-| Input                  | Default       | Meaning                                                                              |
-| ---------------------- | ------------- | ------------------------------------------------------------------------------------ |
-| `prek-version`         | `latest`      | Version or supported version range to install                                        |
-| `extra-args`           | `--all-files` | Arguments appended to `prek run`                                                     |
-| `working-directory`    | `.`           | Directory in which to run `prek`                                                     |
-| `cache`                | `true`        | Enable the official prek environment cache                                           |
-| `max-passes`           | `3`           | Maximum convergence passes                                                           |
-| `max-log-bytes`        | `1048576`     | Maximum bytes streamed from each of stdout and stderr per pass (1024–10485760)       |
-| `max-files`            | `100`         | Maximum changed files collected into the untrusted review artifact                   |
-| `max-bytes`            | `10485760`    | Maximum total changed-file content bytes collected into the review artifact          |
-| `pass-timeout-seconds` | `600`         | Timeout for each pass (1–3600 seconds); the hook process tree is terminated on Linux |
+| Input                  | Default                         | Meaning                                                                                       |
+| ---------------------- | ------------------------------- | --------------------------------------------------------------------------------------------- |
+| `prek-version`         | `latest`                        | Version or supported version range to install                                                 |
+| `extra-args`           | `--all-files`                   | Arguments appended to `prek run`                                                              |
+| `working-directory`    | `.`                             | Directory in which to run `prek`                                                              |
+| `cache`                | `true`                          | Enable the official prek environment cache                                                    |
+| `ignore-authors`       | `dependabot[bot],renovate[bot]` | Comma- or newline-separated PR author logins excluded from autofix; empty enables all authors |
+| `max-passes`           | `3`                             | Maximum convergence passes                                                                    |
+| `max-log-bytes`        | `1048576`                       | Maximum bytes streamed from each of stdout and stderr per pass (1024–10485760)                |
+| `max-files`            | `100`                           | Maximum changed files collected into the untrusted review artifact                            |
+| `max-bytes`            | `10485760`                      | Maximum total changed-file content bytes collected into the review artifact                   |
+| `pass-timeout-seconds` | `600`                           | Timeout for each pass (1–3600 seconds); the hook process tree is terminated on Linux          |
+
+Dependabot and Renovate PRs are checked by default, but do not receive automatic
+fix commits. For excluded authors, the check fails when hooks report failures or
+leave changes that need to be applied locally. No change artifact is uploaded.
+Stage 2 may still start after the review workflow, but has nothing to apply.
+
+Set `ignore-authors` on the Stage 1 review action to replace the default list.
+Logins match exactly, ignoring case; use the PR author's login, including
+`[bot]` for bot accounts. For a custom list:
+
+```yaml
+with:
+  ignore-authors: |
+    dependabot[bot]
+    my-bot[bot]
+```
+
+To enable autofix for every author, explicitly pass an empty string:
+
+```yaml
+with:
+  ignore-authors: ""
+```
 
 For example, replace the `review` step in Stage 1 with:
 
@@ -378,7 +402,8 @@ broadly.
 ## Outputs
 
 `review` exposes `changed`, `artifact-name`, and `prek-version` outputs.
-`changed` says whether `prek` generated applicable changes; `artifact-name`
-identifies the versioned change artifact; and `prek-version` is the installed
-version. The standard two-workflow setup does not need to consume these directly
-because `fix` resolves the originating workflow run itself.
+`changed` says whether `prek` generated applicable changes for an author allowed
+to receive autofix commits; `artifact-name` identifies the versioned change
+artifact; and `prek-version` is the installed version. The standard two-workflow
+setup does not need to consume these directly because `fix` resolves the
+originating workflow run itself.

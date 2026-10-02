@@ -32,6 +32,7 @@ export interface CollectContext {
   repository: string;
   workflow: string;
   pullRequestNumber?: number;
+  pullRequestAuthor?: string;
   headSha?: string;
   workspace: string;
   artifactDirectory: string;
@@ -39,6 +40,7 @@ export interface CollectContext {
 
 export interface CollectInputs {
   extraArgs: string;
+  ignoreAuthors: string;
   workingDirectory: string;
   maxPasses: number;
   maxLogBytes: number;
@@ -440,6 +442,27 @@ export async function runCollect(
       "pass-timeout-seconds must be an integer between 1 and 3600",
     );
   }
+  const ignoredAuthors = inputs.ignoreAuthors
+    .split(/[,\r\n]/)
+    .map((author) => author.trim().toLowerCase())
+    .filter(Boolean);
+  if (
+    ignoredAuthors.some(
+      (author) => !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\[bot\])?$/.test(author),
+    )
+  ) {
+    throw new Error(
+      "ignore-authors must contain comma- or newline-separated GitHub logins",
+    );
+  }
+  if (ignoredAuthors.length > 0 && !context.pullRequestAuthor) {
+    throw new Error(
+      "pull request author is required when ignore-authors is nonempty",
+    );
+  }
+  const autofixIgnored = ignoredAuthors.includes(
+    context.pullRequestAuthor?.toLowerCase() ?? "",
+  );
   const workspace = resolve(context.workspace);
   const workspaceIdentity = await captureRootIdentity(workspace);
   const artifactRoot = resolve(context.artifactDirectory);
@@ -540,13 +563,22 @@ export async function runCollect(
     previous = snapshot;
   }
 
-  deps.setOutput("changed", String(operations.length > 0));
+  deps.setOutput("changed", String(!autofixIgnored && operations.length > 0));
   deps.setOutput("artifact-name", "");
   deps.setOutput("artifact-path", "");
   if (!converged && !hardFailure) {
     throw new NonConvergenceError(
       `prek did not converge after ${inputs.maxPasses} passes`,
     );
+  }
+  if (autofixIgnored) {
+    if (hardFailure) throw hardFailure;
+    if (operations.length > 0) {
+      throw new HardFailureError(
+        "prek generated fixes, but autofix is disabled for this pull request author; apply the fixes locally",
+      );
+    }
+    return;
   }
   if (operations.length > 0) {
     await assertRootIdentity(workspace, workspaceIdentity);

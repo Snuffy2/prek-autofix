@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -66,6 +66,7 @@ async function invoke(
   platform: NodeJS.Platform = "linux",
   runAttempt = 3,
   inputOverrides: Partial<CollectInputs> = {},
+  pullRequestAuthor: string | undefined = "contributor",
 ) {
   const workspace = await mkdtemp(join(tmpdir(), "collect-runner-"));
   directories.push(workspace);
@@ -93,12 +94,14 @@ async function invoke(
       repository: "owner/repo",
       workflow: "prek-autofix",
       pullRequestNumber: 7,
+      pullRequestAuthor,
       headSha: SHA,
       workspace,
       artifactDirectory: workspace,
     },
     {
       extraArgs: "--all-files",
+      ignoreAuthors: "dependabot[bot],renovate[bot]",
       workingDirectory: ".",
       maxPasses,
       maxLogBytes: 1048576,
@@ -209,6 +212,120 @@ describe("runCollect", () => {
       expect.anything(),
       expect.anything(),
     );
+  });
+
+  it.each([
+    ["dependabot[bot]", 0, ["fixed.txt"]],
+    ["renovate[bot]", 1, ["fixed.txt"]],
+    ["dependabot[bot]", 2, []],
+  ])(
+    "checks excluded author %s and fails without an artifact",
+    async (author, exitCode, paths) => {
+      const execute = setup([result(1), result(exitCode)]);
+      const call = await invoke(
+        execute,
+        3,
+        false,
+        [paths, paths],
+        "linux",
+        3,
+        {},
+        author,
+      );
+
+      await expect(call.promise).rejects.toBeInstanceOf(HardFailureError);
+      expect(execute).toHaveBeenCalledWith(
+        "prek",
+        expect.any(Array),
+        expect.any(Object),
+      );
+      expect(call.outputs.get("changed")).toBe("false");
+      expect(call.outputs.get("artifact-name")).toBe("");
+      expect(call.outputs.get("artifact-path")).toBe("");
+      expect(await readdir(call.workspace)).toEqual([]);
+    },
+  );
+
+  it("passes an excluded author's clean check", async () => {
+    const execute = setup([result(0)]);
+    const call = await invoke(
+      execute,
+      3,
+      false,
+      [[]],
+      "linux",
+      3,
+      {},
+      "renovate[bot]",
+    );
+    await expect(call.promise).resolves.toBeUndefined();
+    expect(execute).toHaveBeenCalledWith(
+      "prek",
+      expect.any(Array),
+      expect.any(Object),
+    );
+    expect(call.outputs.get("changed")).toBe("false");
+    expect(await readdir(call.workspace)).toEqual([]);
+  });
+
+  it.each([
+    ["", "dependabot[bot]"],
+    ["", "renovate[bot]"],
+    ["custom-bot[bot]", "dependabot[bot]"],
+    ["custom-bot[bot]", "custom-bot"],
+  ])(
+    "allows fixes for list %j and author %s",
+    async (ignoreAuthors, author) => {
+      const call = await invoke(
+        setup([result(1), result(0)]),
+        3,
+        false,
+        [["fixed.txt"], ["fixed.txt"]],
+        "linux",
+        3,
+        { ignoreAuthors },
+        author,
+      );
+      await expect(call.promise).resolves.toBeUndefined();
+      expect(call.outputs.get("changed")).toBe("true");
+      expect(call.outputs.get("artifact-name")).toBe("prek-autofix-42-3");
+    },
+  );
+
+  it.each(["someone, Custom-Bot[bot]", "someone\n Custom-Bot[bot]\n"])(
+    "matches custom author lists ignoring whitespace and case: %j",
+    async (ignoreAuthors) => {
+      const call = await invoke(
+        setup([result(1), result(0)]),
+        3,
+        false,
+        [["fixed.txt"], ["fixed.txt"]],
+        "linux",
+        3,
+        { ignoreAuthors },
+        "custom-bot[bot]",
+      );
+      await expect(call.promise).rejects.toThrow("autofix is disabled");
+      expect(await readdir(call.workspace)).toEqual([]);
+    },
+  );
+
+  it("rejects invalid author list entries before running hooks", async () => {
+    const execute = setup([result(0)]);
+    const call = await invoke(execute, 3, false, [[]], "linux", 3, {
+      ignoreAuthors: "*",
+    });
+    await expect(call.promise).rejects.toThrow("ignore-authors must contain");
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when a configured exclusion list has no PR author", async () => {
+    const execute = setup([result(0)]);
+    const call = await invoke(execute, 3, false, [[]], "linux", 3, {}, "");
+    await expect(call.promise).rejects.toThrow(
+      "pull request author is required",
+    );
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it("distinguishes a clean hard failure", async () => {
