@@ -18,9 +18,11 @@ code.
 2. **`prek-autofix fix`** runs on `workflow_run` from the base repository's
    default branch. It never checks out or runs pull-request code. It checks the
    artifact and the pull request's current head, then uses the required
-   `autofix-token` input only for the GitHub update. A configured personal
-   access token (PAT) is always preferred. When that input resolves empty, the
-   Action falls back to `GITHUB_TOKEN` for a same-repository pull request.
+   `autofix-token` input for the GitHub update. It also uses this input for
+   commit statuses after verifying the source run and pull request. A configured
+   personal access token (PAT) is always preferred. When that input resolves
+   empty, the Action falls back to `GITHUB_TOKEN` for a same-repository pull
+   request.
 
 Hooks are code supplied by the pull request, so they must never receive a token
 that can update the branch.
@@ -194,14 +196,15 @@ jobs:
 Keep this workflow on the default branch. A `workflow_run` workflow uses the
 base repository's trusted workflow definition even when the pull request comes
 from a fork. Do not add `actions/checkout` or `git` commands to this workflow.
-The `statuses: write` permission lets Stage 2 publish `prek-autofix/fix` on the
-validated pull-request head. Failures also update one persistent pull-request
-comment with a safe reason and links to the fix and source runs. Keep
-`contents: write` when same-repository pull requests may use the built-in token
-fallback. The existing `autofix-token` line does not change. A configured PAT is
-always used; otherwise, `contents: write` lets the fallback `GITHUB_TOKEN`
-update a branch in the same repository. The built-in token cannot update a head
-branch in another repository, so that case requires `PREK_AUTOFIX_TOKEN`.
+Stage 2 uses the configured PAT to publish `prek-autofix/fix` on the validated
+pull-request head. When the PAT is empty, `github-token` needs `statuses: write`
+for these statuses. Failures also update one persistent pull-request comment
+with a safe reason and links to the fix and source runs. Keep `contents: write`
+when same-repository pull requests may use the built-in token fallback. The
+existing `autofix-token` line does not change. A configured PAT is always used;
+otherwise, `contents: write` lets the fallback `GITHUB_TOKEN` update a branch in
+the same repository. The built-in token cannot update a head branch in another
+repository, so that case requires `PREK_AUTOFIX_TOKEN`.
 
 The complete, tested versions are also available as
 [`examples/prek-autofix-review.yml`](examples/prek-autofix-review.yml) and
@@ -290,14 +293,14 @@ For example, replace the `review` step in Stage 1 with:
 
 `fix` accepts these inputs:
 
-| Input             | Default                                | Meaning                                                                                                                                                      |
-| ----------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `github-token`    | `${{ github.token }}`                  | Built-in token used to validate the source run, download the artifact, and manage PR statuses and recovery comments                                          |
-| `autofix-token`   | Required                               | Mutation-token input used only after validation; a nonempty value is always used, while an empty value falls back to `github.token` for a same-repository PR |
-| `commit-message`  | `[prek-autofix] apply automatic fixes` | Commit message for the generated commit                                                                                                                      |
-| `source-workflow` | `prek-autofix`                         | Expected review workflow name                                                                                                                                |
-| `max-files`       | `100`                                  | Maximum trusted changed files                                                                                                                                |
-| `max-bytes`       | `10485760`                             | Maximum trusted total content bytes                                                                                                                          |
+| Input             | Default                                | Meaning                                                                                                                                          |
+| ----------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `github-token`    | `${{ github.token }}`                  | Token used to validate the source run, download the artifact, and manage recovery comments; also used for statuses when `autofix-token` is empty |
+| `autofix-token`   | Required                               | Token for commit statuses and validated branch updates; an empty value uses `github-token` for statuses and same-repository updates              |
+| `commit-message`  | `[prek-autofix] apply automatic fixes` | Commit message for the generated commit                                                                                                          |
+| `source-workflow` | `prek-autofix`                         | Expected review workflow name                                                                                                                    |
+| `max-files`       | `100`                                  | Maximum trusted changed files                                                                                                                    |
+| `max-bytes`       | `10485760`                             | Maximum trusted total content bytes                                                                                                              |
 
 To use a different commit message or tighter limits, extend the Stage 2 step:
 
@@ -335,9 +338,11 @@ changes only when exactly one review job succeeded and the run contains the
 expected artifact. It independently finds the open pull request and its current
 head from GitHub rather than trusting artifact-supplied target metadata or file
 content. It rejects stale or unsafe input, limits file count and content size,
-excludes `.github/workflows/**`, and uses the selected autofix token only for
-the validated Git Data API update. The built-in token is rejected for a
-cross-repository update before any branch mutation is attempted.
+excludes `.github/workflows/**`, and uses the selected autofix token for the
+validated Git Data API update. Commit statuses use that token after source run
+and pull-request verification, including when artifact validation fails. An
+invalid nonempty PAT never falls back to `github-token`. The built-in token is
+rejected for a cross-repository update before any branch mutation is attempted.
 
 The final branch update is atomic: if the contributor pushed a new commit,
 application stops instead of overwriting it. Stage 2 does not check out
@@ -351,7 +356,7 @@ same-repository update.
 | Symptom                                               | Check and recovery                                                                                                                                                                                                                                                                              |
 | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | No fix run or no artifact                             | Confirm both YAML files are on the default branch, the Stage 1 name is exactly `prek-autofix`, and the review log shows an artifact. Correct the configuration, then re-run Stage 1.                                                                                                            |
-| No `prek-autofix/fix` status on a PR with an artifact | Confirm Stage 2 grants `statuses: write` and `pull-requests: write`, then inspect the trusted fix run for reporting warnings.                                                                                                                                                                   |
+| No `prek-autofix/fix` status on a PR with an artifact | Confirm the PAT can write commit statuses in the base repository, or grant `statuses: write` to `github-token` when the PAT is empty. Inspect the trusted fix run for reporting warnings.                                                                                                       |
 | `Resource not accessible` or token failure            | For a same-repository PR, confirm Stage 2 grants `contents: write`. For a cross-repository PR, confirm the secret is named `PREK_AUTOFIX_TOKEN`, its account can update the head repository, and its classic scope is `public_repo` (public) or `repo` (private). Never add the PAT to Stage 1. |
 | Fork update denied                                    | Ask the contributor to enable **Allow edits from maintainers**. They can also run the repository's configured prek command locally and push the changes themselves.                                                                                                                             |
 | Branch protection blocks the update                   | Apply the artifact manually. Do not weaken protection or force-push for autofixes.                                                                                                                                                                                                              |

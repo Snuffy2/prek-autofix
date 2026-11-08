@@ -85,9 +85,17 @@ async function run(): Promise<void> {
   });
   const sourceRunUrl = `${github.context.serverUrl}/${baseRepository}/actions/runs/${runId}`;
   const fixRunUrl = `${github.context.serverUrl}/${baseRepository}/actions/runs/${github.context.runId}`;
+  const mutationCredential = selectMutationToken(
+    core.getInput("autofix-token"),
+    githubToken,
+  );
+  core.setSecret(mutationCredential.token);
+  // Statuses target the verified source head, including artifact failures.
+  // Branch mutation still waits for artifact and current-head validation.
+  const statusOctokit = github.getOctokit(mutationCredential.token);
   const reporter = createFixReporter(
     read,
-    createStatusClient(readOctokit, owner, repo),
+    createStatusClient(statusOctokit, owner, repo),
     { source, fixRunUrl, sourceRunUrl },
   );
   await reporter.pending();
@@ -112,11 +120,6 @@ async function run(): Promise<void> {
       throw new Error("artifact JSON is too large");
     const artifact = parseChangeArtifact(JSON.parse(raw), maxFiles, maxBytes);
 
-    const mutationCredential = selectMutationToken(
-      core.getInput("autofix-token"),
-      githubToken,
-    );
-    core.setSecret(mutationCredential.token);
     const mutationOctokit = github.getOctokit(mutationCredential.token);
     const mutation = createMutationClient(mutationOctokit);
     await applyArtifact(read, mutation, {

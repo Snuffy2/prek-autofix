@@ -6,13 +6,14 @@ inputs:
   github-token:
     description:
       Workflow token used to validate the source run, download the artifact, and
-      manage pull-request statuses and recovery comments
+      manage recovery comments; also used for statuses when autofix-token is
+      empty
     required: false
     default: ${{ github.token }}
   autofix-token:
     description:
-      Required mutation-token input; a nonempty token is always used, while an
-      empty value falls back to github.token for same-repository pull requests
+      Required token input for commit statuses and validated branch updates; an
+      empty value uses github-token for statuses and same-repository updates
     required: true
   commit-message:
     description: Commit message for the generated fix commit
