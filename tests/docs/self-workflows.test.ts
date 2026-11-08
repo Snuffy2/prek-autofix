@@ -20,6 +20,25 @@ interface WorkflowStep {
 }
 
 describe("repository maintenance workflows", () => {
+  it("allows dependency bots to receive generated bundle fixes", () => {
+    const review = workflow("prek-autofix-review.yml");
+    const reviewStep = review.jobs.review.steps.find(
+      (step: WorkflowStep) => step.uses === "./review",
+    );
+    const action = parse(
+      readFileSync(resolve(root, "review/action.yml"), "utf8"),
+    );
+    const ignoredAuthors = String(
+      reviewStep?.with?.["ignore-authors"] ??
+        action.inputs["ignore-authors"].default,
+    )
+      .split(/[,\r\n]/)
+      .map((author) => author.trim().toLowerCase());
+
+    expect(ignoredAuthors).not.toContain("dependabot[bot]");
+    expect(ignoredAuthors).not.toContain("renovate[bot]");
+  });
+
   it("reviews the exact pull request head without write credentials", () => {
     const review = workflow("prek-autofix-review.yml");
     const reviewJob = review.jobs.review;

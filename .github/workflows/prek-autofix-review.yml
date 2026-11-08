@@ -31,3 +31,6 @@ jobs:
 
       - name: Review pull request with prek
         uses: ./review
+        with:
+          # Dependency updates need regenerated bundles committed by Stage 2.
+          ignore-authors: ""
