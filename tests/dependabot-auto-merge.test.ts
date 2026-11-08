@@ -78,6 +78,16 @@ function dependabotCommit(sha = headSha, verified = true): Commit {
   };
 }
 
+function autofixCommit(sha = headSha, parent = dependabotSha): Commit {
+  return {
+    author: { login: "prek-autofix-bot" },
+    commit: { verification: { verified: false } },
+    committer: { login: "prek-autofix-bot" },
+    parents: [{ sha: parent }],
+    sha,
+  };
+}
+
 function updateCommit(sha: string, previous: string, base: string): Commit {
   return {
     author: { login: "maintainer" },
@@ -206,14 +216,77 @@ describe("Dependabot auto-merge authorization", () => {
     ).toBe("npm");
   });
 
-  it("rejects npm updates without a lockfile or with generated bundles", () => {
+  it("authorizes npm bundle regeneration by prek-autofix after Dependabot", () => {
+    expect(
+      authorize({
+        changedFiles: [
+          "package-lock.json",
+          "dist/apply/index.js",
+          "dist/collect/index.js",
+        ],
+        commits: [dependabotCommit(dependabotSha), autofixCommit()],
+        headRef: "dependabot/npm_and_yarn/undici-6.29.1",
+        trustedBaseDirectory: trustedBaseWith(
+          "package.json",
+          "package-lock.json",
+        ),
+      }),
+    ).toBe("npm");
+  });
+
+  it("authorizes autofixes between verified base updates", () => {
+    expect(
+      authorize({
+        ancestryProofs: updateChainProofs(),
+        changedFiles: ["package-lock.json", "dist/apply/index.js"],
+        commits: [
+          dependabotCommit(dependabotSha),
+          updateCommit(firstUpdateSha, dependabotSha, firstBaseSha),
+          autofixCommit("6".repeat(40), firstUpdateSha),
+          updateCommit(headSha, "6".repeat(40), currentBaseSha),
+        ],
+        headRef: "dependabot/npm_and_yarn/undici-6.29.1",
+        trustedBaseDirectory: trustedBaseWith(
+          "package.json",
+          "package-lock.json",
+        ),
+      }),
+    ).toBe("npm");
+  });
+
+  it("rejects unrecognized or disconnected autofix follow-ups", () => {
+    const valid = autofixCommit();
+    for (const followup of [
+      { ...valid, author: { login: "maintainer" } },
+      { ...valid, committer: { login: "maintainer" } },
+      { ...valid, committer: undefined },
+      { ...valid, parents: [] },
+      { ...valid, parents: [{ sha: "9".repeat(40) }] },
+      { ...valid, sha: "9".repeat(40) },
+    ])
+      expect(() =>
+        authorize({
+          changedFiles: ["package-lock.json", "dist/apply/index.js"],
+          commits: [dependabotCommit(dependabotSha), followup],
+          headRef: "dependabot/npm_and_yarn/undici-6.29.1",
+          trustedBaseDirectory: trustedBaseWith(
+            "package.json",
+            "package-lock.json",
+          ),
+        }),
+      ).toThrow();
+  });
+
+  it("rejects npm updates without a lockfile or outside the bundle scope", () => {
     const trustedBaseDirectory = trustedBaseWith(
       "package.json",
       "package-lock.json",
     );
     for (const changedFiles of [
       ["package.json"],
-      ["package-lock.json", "dist/apply/index.js"],
+      ["package-lock.json", "dist/other/index.js"],
+      ["package-lock.json", "packages/apply/src/index.ts"],
+      ["dist/apply/index.js"],
       ["package-lock.json", "package-lock.json"],
     ])
       expect(() =>
