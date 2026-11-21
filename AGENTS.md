@@ -160,3 +160,18 @@ Write for developers who are new to the project:
   release unless the user explicitly requests it.
 - Before handoff, inspect `git status`, review the complete diff, and report the
   validation performed.
+
+## Agent skills
+
+### Issue tracker
+
+For GitHub Issues operations, read `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+When applying a triage role, read `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Before modeling or exploring the domain, read `docs/agents/domain.md` for the
+single-context layout.
