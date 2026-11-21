@@ -1,14 +1,14 @@
 import * as core from "@actions/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  ApplyError,
-  FORK_AUTOFIX_TOKEN_REQUIRED,
-  SAFE_BRANCH_UPDATE_REJECTED,
-  type ReadClient,
+  ApplyOutcomeError,
   type ResolvedSource,
-  type StatusClient,
 } from "../../packages/apply/src/apply";
-import { createFixReporter } from "../../packages/apply/src/reporting";
+import {
+  createFixReporter,
+  type FixCommentClient,
+  type StatusClient,
+} from "../../packages/apply/src/reporting";
 
 vi.mock("@actions/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@actions/core")>();
@@ -36,9 +36,11 @@ function fixture() {
       headSha: "a".repeat(40),
     },
   };
-  const read = {
+  const read: FixCommentClient = {
     upsertComment: vi.fn(),
-  } as unknown as ReadClient;
+    markCommentObsolete: vi.fn(),
+    resolveComment: vi.fn(),
+  };
   const status: StatusClient = { setCommitStatus: vi.fn() };
   const reporter = createFixReporter(read, status, {
     source,
@@ -99,7 +101,9 @@ describe("fix result reporting", () => {
   it("explains how to recover when a fork token is not configured", async () => {
     const { read, reporter, source, status } = fixture();
 
-    await reporter.failure(new ApplyError(FORK_AUTOFIX_TOKEN_REQUIRED));
+    await reporter.failure(
+      new ApplyOutcomeError({ kind: "fork-token-required" }),
+    );
 
     expect(status.setCommitStatus).toHaveBeenCalledWith(
       source.run.headSha,
@@ -141,9 +145,7 @@ describe("fix result reporting", () => {
   it("reports a stale source head without replacing the obsolete comment", async () => {
     const { read, reporter, source, status } = fixture();
 
-    await reporter.failure(
-      new ApplyError("the pull request head changed after collection"),
-    );
+    await reporter.failure(new ApplyOutcomeError({ kind: "stale-head" }));
 
     expect(status.setCommitStatus).toHaveBeenCalledWith(
       source.run.headSha,
@@ -152,29 +154,32 @@ describe("fix result reporting", () => {
       "https://example/fix",
     );
     expect(read.upsertComment).not.toHaveBeenCalled();
+    expect(read.markCommentObsolete).toHaveBeenCalledWith(4);
   });
 
   it.each([
-    "the pull request is no longer eligible for autofix",
-    "the pull request source changed before autofix",
-    "the fork no longer allows maintainer edits",
-    SAFE_BRANCH_UPDATE_REJECTED,
-  ])("reports the controlled apply failure: %s", async (message) => {
-    const { read, reporter, source, status } = fixture();
+    ["source-ineligible", "the pull request is no longer eligible for autofix"],
+    ["source-changed", "the pull request source changed before autofix"],
+    ["fork-edits-revoked", "the fork no longer allows maintainer edits"],
+  ] as const)(
+    "reports the controlled apply failure: %s",
+    async (kind, message) => {
+      const { read, reporter, source, status } = fixture();
 
-    await reporter.failure(new ApplyError(message));
+      await reporter.failure(new ApplyOutcomeError({ kind }));
 
-    expect(status.setCommitStatus).toHaveBeenCalledWith(
-      source.run.headSha,
-      "failure",
-      message,
-      "https://example/fix",
-    );
-    expect(read.upsertComment).toHaveBeenCalledWith(
-      4,
-      expect.stringContaining(`**${message}.**`),
-    );
-  });
+      expect(status.setCommitStatus).toHaveBeenCalledWith(
+        source.run.headSha,
+        "failure",
+        message,
+        "https://example/fix",
+      );
+      expect(read.upsertComment).toHaveBeenCalledWith(
+        4,
+        expect.stringContaining(`**${message}.**`),
+      );
+    },
+  );
 
   it("keeps status and comment publication best effort", async () => {
     const { read, reporter, status } = fixture();
@@ -187,7 +192,9 @@ describe("fix result reporting", () => {
       new Error("comment denied"),
     );
 
-    await expect(reporter.failure(new Error("boom"))).resolves.toBeUndefined();
+    await expect(reporter.failure(new Error("boom"))).resolves.toMatchObject({
+      message: "the fix action failed unexpectedly",
+    });
     expect(warning).toHaveBeenCalledTimes(2);
     expect(warning).toHaveBeenCalledWith(
       "prek-autofix could not publish its pull request status",

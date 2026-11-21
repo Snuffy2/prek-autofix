@@ -325,7 +325,7 @@ describe("source run verification at the Fix Action entry point", () => {
     await import("../../packages/apply/src/index.js");
     await vi.waitFor(() =>
       expect(core.setFailed).toHaveBeenCalledWith(
-        "unsupported artifact schema version: undefined",
+        "the generated artifact failed security validation",
       ),
     );
     expect(

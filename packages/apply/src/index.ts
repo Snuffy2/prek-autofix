@@ -110,15 +110,13 @@ async function run(): Promise<void> {
       baseRepository,
       runAttempt,
       artifact,
-      sourceRunUrl,
       commitMessage,
       mutationTokenUsedGithubFallback:
         mutationCredential.usedGithubTokenFallback,
       source,
     });
   } catch (error) {
-    await reporter.failure(error);
-    throw error;
+    throw await reporter.failure(error);
   }
   await reporter.success();
 }
