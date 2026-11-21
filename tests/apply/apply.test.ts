@@ -4,9 +4,9 @@ import {
   ApplyError,
   applyArtifact,
   maximumRawArtifactBytes,
-  resolveSourcePullRequest,
   type MutationClient,
   type ReadClient,
+  type ResolvedSource,
 } from "../../packages/apply/src/apply";
 
 function fixture() {
@@ -27,27 +27,29 @@ function fixture() {
       { path: "gone.txt", operation: "delete", mode: "100644" },
     ],
   };
-  const read: ReadClient = {
-    getWorkflowRun: vi.fn().mockResolvedValue({
+  const source: ResolvedSource = {
+    run: {
       id: 7,
       name: "prek-autofix",
       event: "pull_request",
       headSha: "a".repeat(40),
       headBranch: "feature",
       headRepository: "user/repo",
-    }),
-    listAssociatedPullRequests: vi.fn().mockResolvedValue([
-      {
-        number: 4,
-        state: "open",
-        baseRepository: "base/repo",
-        headRepository: "user/repo",
-        headRepositoryNodeId: "R_head",
-        headRepositoryOwnerType: "User",
-        headRef: "feature",
-        headSha: "a".repeat(40),
-      },
-    ]),
+    },
+    pullRequest: {
+      number: 4,
+      state: "open",
+      baseRepository: "base/repo",
+      headRepository: "user/repo",
+      headRepositoryNodeId: "R_head",
+      headRepositoryOwnerType: "User",
+      headRef: "feature",
+      headSha: "a".repeat(40),
+    },
+  };
+  const read: ReadClient = {
+    getWorkflowRun: vi.fn().mockResolvedValue(source.run),
+    listAssociatedPullRequests: vi.fn().mockResolvedValue([source.pullRequest]),
     getMaintainerCanModify: vi.fn().mockResolvedValue(true),
     getCommitTreeSha: vi.fn().mockResolvedValue("base-tree"),
     getTreeEntries: vi.fn().mockResolvedValue([
@@ -67,46 +69,38 @@ function fixture() {
     createCommit: vi.fn().mockResolvedValue("commit"),
     updateRef: vi.fn(),
   };
-  return { artifact, read, mutation };
+  const request = () => ({
+    baseRepository: "base/repo",
+    runAttempt: 2,
+    artifact,
+    sourceRunUrl: "https://example/run",
+    commitMessage: "fix",
+    mutationTokenUsedGithubFallback: false,
+    source,
+  });
+  return { artifact, read, mutation, request, source };
 }
-
-const request = (artifact: ChangeArtifact) => ({
-  baseRepository: "base/repo",
-  runId: 7,
-  runAttempt: 2,
-  artifact,
-  sourceRunUrl: "https://example/run",
-  sourceWorkflow: "prek-autofix",
-  commitMessage: "fix",
-  mutationTokenUsedGithubFallback: false,
-});
 
 describe("applyArtifact", () => {
   it("revalidates a source resolved before artifact and token processing", async () => {
-    const { artifact, read, mutation } = fixture();
-    const source = await resolveSourcePullRequest(read, {
-      baseRepository: "base/repo",
-      runId: 7,
-      sourceWorkflow: "prek-autofix",
-    });
-    vi.mocked(read.getWorkflowRun).mockClear();
-    vi.mocked(read.listAssociatedPullRequests).mockClear();
+    const { read, mutation, request } = fixture();
 
-    await expect(
-      applyArtifact(read, mutation, { ...request(artifact), source }),
-    ).resolves.toEqual({ pullRequestNumber: 4, commitSha: "commit" });
-    expect(read.getWorkflowRun).toHaveBeenCalledWith(7);
+    await expect(applyArtifact(read, mutation, request())).resolves.toEqual({
+      pullRequestNumber: 4,
+      commitSha: "commit",
+    });
+    expect(read.getWorkflowRun).toHaveBeenCalledExactlyOnceWith(7);
     expect(read.listAssociatedPullRequests).toHaveBeenCalledWith(
       "a".repeat(40),
     );
   });
 
   it("rejects empty artifacts and unsafe raw-size arithmetic", async () => {
-    const { artifact, read, mutation } = fixture();
+    const { artifact, read, mutation, request } = fixture();
     artifact.operations = [];
-    await expect(
-      applyArtifact(read, mutation, request(artifact)),
-    ).rejects.toThrow("no file operations");
+    await expect(applyArtifact(read, mutation, request())).rejects.toThrow(
+      "no file operations",
+    );
     expect(read.getWorkflowRun).not.toHaveBeenCalled();
     expect(() => maximumRawArtifactBytes(Number.MAX_SAFE_INTEGER, 1)).toThrow(
       "too large",
@@ -114,10 +108,8 @@ describe("applyArtifact", () => {
   });
 
   it("creates blobs, one tree, one commit, and a non-forced ref update boundary", async () => {
-    const { artifact, read, mutation } = fixture();
-    await expect(
-      applyArtifact(read, mutation, request(artifact)),
-    ).resolves.toEqual({
+    const { read, mutation, request } = fixture();
+    await expect(applyArtifact(read, mutation, request())).resolves.toEqual({
       pullRequestNumber: 4,
       commitSha: "commit",
     });
@@ -157,13 +149,14 @@ describe("applyArtifact", () => {
   });
 
   it("returns success when marker cleanup fails after a successful CAS", async () => {
-    const { artifact, read, mutation } = fixture();
+    const { read, mutation, request } = fixture();
     vi.mocked(read.resolveComment).mockRejectedValue(
       new Error("comment permission denied"),
     );
-    await expect(
-      applyArtifact(read, mutation, request(artifact)),
-    ).resolves.toEqual({ pullRequestNumber: 4, commitSha: "commit" });
+    await expect(applyArtifact(read, mutation, request())).resolves.toEqual({
+      pullRequestNumber: 4,
+      commitSha: "commit",
+    });
     expect(mutation.updateRef).toHaveBeenCalledOnce();
     expect(read.resolveComment).toHaveBeenCalledWith(4);
     expect(read.upsertComment).not.toHaveBeenCalled();
@@ -177,73 +170,22 @@ describe("applyArtifact", () => {
     ["pullRequestNumber", 99],
     ["headSha", "b".repeat(40)],
   ] as const)("rejects a forged %s claim", async (field, value) => {
-    const { artifact, read, mutation } = fixture();
+    const { artifact, read, mutation, request } = fixture();
     Object.assign(artifact.source, { [field]: value });
-    await expect(
-      applyArtifact(read, mutation, request(artifact)),
-    ).rejects.toThrow("artifact source claims");
+    await expect(applyArtifact(read, mutation, request())).rejects.toThrow(
+      "artifact source claims",
+    );
     expect(read.getTreeEntries).not.toHaveBeenCalled();
     expect(mutation.createBlob).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ["wrong workflow", { name: "other" }],
-    ["wrong event", { event: "push" }],
-  ])("rejects %s", async (_name, override) => {
-    const { artifact, read, mutation } = fixture();
-    const run = await read.getWorkflowRun(7);
-    vi.mocked(read.getWorkflowRun).mockResolvedValue({ ...run, ...override });
-    await expect(
-      applyArtifact(read, mutation, request(artifact)),
-    ).rejects.toThrow("not eligible");
-    expect(mutation.createBlob).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ["zero", []],
-    ["closed", [{ state: "closed" }]],
-    ["multiple", [{}, {}]],
-  ])("rejects %s eligible PR candidates", async (_name, shapes) => {
-    const { artifact, read, mutation } = fixture();
-    const baseline = (await read.listAssociatedPullRequests("x"))[0]!;
-    vi.mocked(read.listAssociatedPullRequests).mockResolvedValue(
-      shapes.map((shape) => ({ ...baseline, ...shape })),
-    );
-    await expect(
-      applyArtifact(read, mutation, request(artifact)),
-    ).rejects.toThrow("exactly one");
-    expect(read.getMaintainerCanModify).not.toHaveBeenCalled();
-    expect(mutation.createBlob).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ["wrong ref", { headRef: "other" }],
-    ["wrong repo", { headRepository: "other/repo" }],
-  ])("rejects an associated PR with %s", async (_name, override) => {
-    const { artifact, read, mutation } = fixture();
-    const baseline = (await read.listAssociatedPullRequests("x"))[0]!;
-    vi.mocked(read.listAssociatedPullRequests).mockResolvedValue([
-      { ...baseline, ...override },
-    ]);
-    await expect(
-      applyArtifact(read, mutation, request(artifact)),
-    ).rejects.toThrow("exactly one");
-    expect(mutation.createBlob).not.toHaveBeenCalled();
-  });
-
   it("treats a duplicate run after a successful update as obsolete", async () => {
-    const { artifact, read, mutation } = fixture();
-    const baseline = (await read.listAssociatedPullRequests("x"))[0]!;
-    vi.mocked(read.listAssociatedPullRequests).mockResolvedValue([
-      {
-        ...baseline,
-        headSha: "b".repeat(40),
-        headRepositoryOwnerType: "Organization",
-      },
-    ]);
+    const { read, mutation, request, source } = fixture();
+    source.pullRequest.headSha = "b".repeat(40);
+    source.pullRequest.headRepositoryOwnerType = "Organization";
     await expect(
       applyArtifact(read, mutation, {
-        ...request(artifact),
+        ...request(),
         mutationTokenUsedGithubFallback: true,
       }),
     ).rejects.toThrow("head changed");
@@ -253,35 +195,13 @@ describe("applyArtifact", () => {
     expect(mutation.createBlob).not.toHaveBeenCalled();
   });
 
-  it("rejects a missing head repository node identity", async () => {
-    const { artifact, read, mutation } = fixture();
-    const baseline = (await read.listAssociatedPullRequests("x"))[0]!;
-    vi.mocked(read.listAssociatedPullRequests).mockResolvedValue([
-      { ...baseline, headRepositoryNodeId: "" },
-    ]);
-    await expect(
-      applyArtifact(read, mutation, request(artifact)),
-    ).rejects.toThrow("identity is missing");
-    expect(mutation.createBlob).not.toHaveBeenCalled();
-  });
-
   it("allows a same-repository PR without the maintainer flag", async () => {
-    const { artifact, read, mutation } = fixture();
-    const run = await read.getWorkflowRun(7);
-    vi.mocked(read.getWorkflowRun).mockResolvedValue({
-      ...run,
-      headRepository: "base/repo",
-    });
-    const pr = (await read.listAssociatedPullRequests("x"))[0]!;
-    vi.mocked(read.listAssociatedPullRequests).mockResolvedValue([
-      {
-        ...pr,
-        headRepository: "base/repo",
-      },
-    ]);
+    const { read, mutation, request, source } = fixture();
+    source.run.headRepository = "base/repo";
+    source.pullRequest.headRepository = "base/repo";
     await expect(
       applyArtifact(read, mutation, {
-        ...request(artifact),
+        ...request(),
         mutationTokenUsedGithubFallback: true,
       }),
     ).resolves.toBeDefined();
@@ -289,19 +209,14 @@ describe("applyArtifact", () => {
   });
 
   it("does not update a pull request that closes after initial validation", async () => {
-    const { artifact, read, mutation } = fixture();
-    const source = await resolveSourcePullRequest(read, {
-      baseRepository: "base/repo",
-      runId: 7,
-      sourceWorkflow: "prek-autofix",
-    });
+    const { read, mutation, request, source } = fixture();
     vi.mocked(read.listAssociatedPullRequests).mockResolvedValue([
       { ...source.pullRequest, state: "closed" },
     ]);
 
-    await expect(
-      applyArtifact(read, mutation, { ...request(artifact), source }),
-    ).rejects.toThrow("no longer eligible");
+    await expect(applyArtifact(read, mutation, request())).rejects.toThrow(
+      "no longer eligible",
+    );
     expect(mutation.createCommit).toHaveBeenCalledOnce();
     expect(mutation.updateRef).not.toHaveBeenCalled();
     expect(read.upsertComment).toHaveBeenCalledWith(
@@ -311,60 +226,50 @@ describe("applyArtifact", () => {
   });
 
   it("treats a head change during final revalidation as obsolete", async () => {
-    const { artifact, read, mutation } = fixture();
-    const source = await resolveSourcePullRequest(read, {
-      baseRepository: "base/repo",
-      runId: 7,
-      sourceWorkflow: "prek-autofix",
-    });
+    const { read, mutation, request, source } = fixture();
     vi.mocked(read.listAssociatedPullRequests).mockResolvedValue([
       { ...source.pullRequest, headSha: "b".repeat(40) },
     ]);
 
-    await expect(
-      applyArtifact(read, mutation, { ...request(artifact), source }),
-    ).rejects.toThrow("the pull request head changed after collection");
+    await expect(applyArtifact(read, mutation, request())).rejects.toThrow(
+      "the pull request head changed after collection",
+    );
     expect(read.markCommentObsolete).toHaveBeenCalledWith(4);
     expect(read.upsertComment).not.toHaveBeenCalled();
     expect(mutation.updateRef).not.toHaveBeenCalled();
   });
 
   it("revalidates that a fork remains user-owned", async () => {
-    const { artifact, read, mutation } = fixture();
-    const source = await resolveSourcePullRequest(read, {
-      baseRepository: "base/repo",
-      runId: 7,
-      sourceWorkflow: "prek-autofix",
-    });
+    const { read, mutation, request, source } = fixture();
     vi.mocked(read.listAssociatedPullRequests).mockResolvedValue([
       { ...source.pullRequest, headRepositoryOwnerType: "Organization" },
     ]);
 
-    await expect(
-      applyArtifact(read, mutation, { ...request(artifact), source }),
-    ).rejects.toThrow("source changed before autofix");
+    await expect(applyArtifact(read, mutation, request())).rejects.toThrow(
+      "source changed before autofix",
+    );
     expect(mutation.updateRef).not.toHaveBeenCalled();
   });
 
   it("does not update a fork after maintainer edits are revoked", async () => {
-    const { artifact, read, mutation } = fixture();
+    const { read, mutation, request } = fixture();
     vi.mocked(read.getMaintainerCanModify)
       .mockResolvedValueOnce(true)
       .mockResolvedValueOnce(false);
 
-    await expect(
-      applyArtifact(read, mutation, request(artifact)),
-    ).rejects.toThrow("no longer allows maintainer edits");
+    await expect(applyArtifact(read, mutation, request())).rejects.toThrow(
+      "no longer allows maintainer edits",
+    );
     expect(read.getMaintainerCanModify).toHaveBeenCalledTimes(2);
     expect(mutation.createCommit).toHaveBeenCalledOnce();
     expect(mutation.updateRef).not.toHaveBeenCalled();
   });
 
   it("rejects the built-in token for a cross-repository update", async () => {
-    const { artifact, read, mutation } = fixture();
+    const { read, mutation, request } = fixture();
     await expect(
       applyArtifact(read, mutation, {
-        ...request(artifact),
+        ...request(),
         mutationTokenUsedGithubFallback: true,
       }),
     ).rejects.toThrow(
@@ -384,17 +289,11 @@ describe("applyArtifact", () => {
   });
 
   it("rejects organization-owned forks with a persistent comment", async () => {
-    const { artifact, read, mutation } = fixture();
-    const pr = (await read.listAssociatedPullRequests("x"))[0]!;
-    vi.mocked(read.listAssociatedPullRequests).mockResolvedValue([
-      {
-        ...pr,
-        headRepositoryOwnerType: "Organization",
-      },
-    ]);
-    await expect(
-      applyArtifact(read, mutation, request(artifact)),
-    ).rejects.toThrow("user-owned");
+    const { read, mutation, request, source } = fixture();
+    source.pullRequest.headRepositoryOwnerType = "Organization";
+    await expect(applyArtifact(read, mutation, request())).rejects.toThrow(
+      "user-owned",
+    );
     expect(read.upsertComment).toHaveBeenCalledOnce();
     expect(read.getMaintainerCanModify).not.toHaveBeenCalled();
     expect(mutation.createBlob).not.toHaveBeenCalled();
@@ -417,39 +316,37 @@ describe("applyArtifact", () => {
       { path: "old.sh", mode: "100755", type: "blob" },
     ],
   ])("rejects %s", async (_name, _path, onlyEntry) => {
-    const { artifact, read, mutation } = fixture();
+    const { read, mutation, request } = fixture();
     vi.mocked(read.getTreeEntries).mockResolvedValue([onlyEntry]);
-    await expect(
-      applyArtifact(read, mutation, request(artifact)),
-    ).rejects.toThrow();
+    await expect(applyArtifact(read, mutation, request())).rejects.toThrow();
     expect(mutation.createBlob).not.toHaveBeenCalled();
   });
 
   it("rejects a non-directory ancestor", async () => {
-    const { artifact, read, mutation } = fixture();
+    const { artifact, read, mutation, request } = fixture();
     artifact.operations = [
       { path: "link/child", operation: "add", mode: "100644", content: "eA==" },
     ];
     vi.mocked(read.getTreeEntries).mockResolvedValue([
       { path: "link", mode: "120000", type: "blob" },
     ]);
-    await expect(
-      applyArtifact(read, mutation, request(artifact)),
-    ).rejects.toThrow("non-directory");
+    await expect(applyArtifact(read, mutation, request())).rejects.toThrow(
+      "non-directory",
+    );
     expect(mutation.createBlob).not.toHaveBeenCalled();
   });
 
   it("rejects symlink and gitlink source entries", async () => {
-    const { artifact, read, mutation } = fixture();
+    const { artifact, read, mutation, request } = fixture();
     artifact.operations = [
       { path: "link", operation: "modify", mode: "100644", content: "eA==" },
     ];
     vi.mocked(read.getTreeEntries).mockResolvedValue([
       { path: "link", mode: "120000", type: "blob" },
     ]);
-    await expect(
-      applyArtifact(read, mutation, request(artifact)),
-    ).rejects.toThrow("not an existing regular file");
+    await expect(applyArtifact(read, mutation, request())).rejects.toThrow(
+      "not an existing regular file",
+    );
     expect(mutation.createBlob).not.toHaveBeenCalled();
 
     artifact.operations = [
@@ -458,17 +355,17 @@ describe("applyArtifact", () => {
     vi.mocked(read.getTreeEntries).mockResolvedValue([
       { path: "module", mode: "160000", type: "commit" },
     ]);
-    await expect(
-      applyArtifact(read, mutation, request(artifact)),
-    ).rejects.toThrow("not an existing regular file");
+    await expect(applyArtifact(read, mutation, request())).rejects.toThrow(
+      "not an existing regular file",
+    );
   });
 
   it("comments once through the read client when an eligible fork cannot be updated", async () => {
-    const { artifact, read, mutation } = fixture();
+    const { read, mutation, request } = fixture();
     vi.mocked(read.getMaintainerCanModify).mockResolvedValue(false);
-    await expect(
-      applyArtifact(read, mutation, request(artifact)),
-    ).rejects.toThrow(ApplyError);
+    await expect(applyArtifact(read, mutation, request())).rejects.toThrow(
+      ApplyError,
+    );
     expect(read.getMaintainerCanModify).toHaveBeenCalledExactlyOnceWith(4);
     expect(read.upsertComment).toHaveBeenCalledWith(
       4,
@@ -478,11 +375,9 @@ describe("applyArtifact", () => {
   });
 
   it("treats a ref race as terminal and posts recovery instructions", async () => {
-    const { artifact, read, mutation } = fixture();
+    const { read, mutation, request } = fixture();
     vi.mocked(mutation.updateRef).mockRejectedValue({ status: 422 });
-    await expect(
-      applyArtifact(read, mutation, request(artifact)),
-    ).rejects.toThrow(
+    await expect(applyArtifact(read, mutation, request())).rejects.toThrow(
       "GitHub could not update the pull request branch because it changed or the update was not allowed",
     );
     expect(mutation.updateRef).toHaveBeenCalledTimes(1);
@@ -495,13 +390,13 @@ describe("applyArtifact", () => {
   it.each([409, 422])(
     "attempts the ref update exactly once for status %i",
     async (status) => {
-      const { artifact, read, mutation } = fixture();
+      const { read, mutation, request } = fixture();
       vi.mocked(mutation.updateRef).mockRejectedValue({
         status,
         message: "PAT=secret",
       });
       await expect(
-        applyArtifact(read, mutation, request(artifact)),
+        applyArtifact(read, mutation, request()),
       ).rejects.not.toThrow("secret");
       expect(mutation.updateRef).toHaveBeenCalledTimes(1);
       expect(read.upsertComment).toHaveBeenCalledOnce();
@@ -509,11 +404,11 @@ describe("applyArtifact", () => {
   );
 
   it("sanitizes a mutation failure and posts recovery", async () => {
-    const { artifact, read, mutation } = fixture();
+    const { read, mutation, request } = fixture();
     vi.mocked(mutation.createBlob)
       .mockReset()
       .mockRejectedValue(new Error("remote said token ghp_secret"));
-    const outcome = applyArtifact(read, mutation, request(artifact));
+    const outcome = applyArtifact(read, mutation, request());
     await expect(outcome).rejects.toThrow("GitHub rejected the fix commit");
     expect(read.upsertComment).toHaveBeenCalled();
     expect(vi.mocked(read.upsertComment).mock.calls[0]?.[1]).not.toContain(
@@ -522,28 +417,16 @@ describe("applyArtifact", () => {
   });
 
   it("explains a denied GITHUB_TOKEN fallback without exposing API details", async () => {
-    const { artifact, read, mutation } = fixture();
-    const run = await read.getWorkflowRun(7);
-    vi.mocked(read.getWorkflowRun).mockResolvedValue({
-      ...run,
-      headRepository: "base/repo",
-    });
-    const pullRequest = (await read.listAssociatedPullRequests("x"))[0]!;
-    vi.mocked(read.listAssociatedPullRequests).mockResolvedValue([
-      {
-        ...pullRequest,
-        baseRepository: "base/repo",
-        headRepository: "base/repo",
-      },
-    ]);
+    const { read, mutation, request, source } = fixture();
+    source.run.headRepository = "base/repo";
+    source.pullRequest.headRepository = "base/repo";
     vi.mocked(mutation.createBlob).mockReset().mockRejectedValue({
       status: 403,
       message: "remote included ghp_do_not_leak",
     });
-
     await expect(
       applyArtifact(read, mutation, {
-        ...request(artifact),
+        ...request(),
         mutationTokenUsedGithubFallback: true,
       }),
     ).rejects.toThrow("GITHUB_TOKEN could not update");

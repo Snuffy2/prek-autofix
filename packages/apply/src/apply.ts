@@ -3,6 +3,7 @@ import {
   type ChangeArtifact,
   type FileOperation,
 } from "../../shared/src/artifact";
+import { resolveSourcePullRequest } from "./source-verification";
 
 export interface WorkflowRun {
   id: number;
@@ -132,14 +133,6 @@ export function maximumRawArtifactBytes(
   return Math.max(65_536, encodedContent + operationOverhead);
 }
 
-function repositoryParts(repository: string): [string, string] {
-  const parts = repository.split("/");
-  if (parts.length !== 2 || !parts[0] || !parts[1]) {
-    throw new ApplyError(`invalid repository: ${repository}`);
-  }
-  return [parts[0], parts[1]];
-}
-
 function validateOperationAgainstTree(
   operation: FileOperation,
   entries: Map<string, TreeEntry>,
@@ -183,14 +176,12 @@ prek-autofix could not apply the generated changes: **${reason}**
 
 export interface ApplyRequest {
   baseRepository: string;
-  runId: number;
   runAttempt: number;
   artifact: ChangeArtifact;
   sourceRunUrl: string;
-  sourceWorkflow: string;
   commitMessage: string;
   mutationTokenUsedGithubFallback: boolean;
-  source?: ResolvedSource;
+  source: ResolvedSource;
 }
 
 export interface ApplyResult {
@@ -203,56 +194,18 @@ export interface ResolvedSource {
   pullRequest: PullRequest;
 }
 
-export interface ResolveSourceRequest {
-  baseRepository: string;
-  runId: number;
-  sourceWorkflow: string;
-}
-
-/** Resolve the trusted source run and its single associated open pull request. */
-export async function resolveSourcePullRequest(
-  read: ReadClient,
-  request: ResolveSourceRequest,
-): Promise<ResolvedSource> {
-  repositoryParts(request.baseRepository);
-  const run = await read.getWorkflowRun(request.runId);
-  if (
-    run.id !== request.runId ||
-    run.name !== request.sourceWorkflow ||
-    run.event !== "pull_request"
-  ) {
-    throw new ApplyError("source workflow run name or event is not eligible");
-  }
-
-  const candidates = (
-    await read.listAssociatedPullRequests(run.headSha)
-  ).filter(
-    (pr) =>
-      pr.state === "open" &&
-      pr.baseRepository === request.baseRepository &&
-      pr.headRepository === run.headRepository &&
-      pr.headRef === run.headBranch,
-  );
-  if (candidates.length !== 1) {
-    throw new ApplyError(
-      `expected exactly one associated open pull request; found ${candidates.length}`,
-    );
-  }
-  const pullRequest = candidates[0]!;
-  if (pullRequest.headRepositoryNodeId.length === 0) {
-    throw new ApplyError("pull request head repository identity is missing");
-  }
-  return { run, pullRequest };
-}
-
 async function revalidateSourcePullRequest(
   read: ReadClient,
-  request: ResolveSourceRequest,
+  baseRepository: string,
   expected: ResolvedSource,
 ): Promise<void> {
   let current: ResolvedSource;
   try {
-    current = await resolveSourcePullRequest(read, request);
+    current = await resolveSourcePullRequest(read, {
+      baseRepository,
+      runId: expected.run.id,
+      sourceWorkflow: expected.run.name,
+    });
   } catch {
     throw new ApplyError("the pull request is no longer eligible for autofix");
   }
@@ -286,7 +239,7 @@ async function revalidateSourcePullRequest(
   }
 
   if (
-    pullRequest.headRepository !== request.baseRepository &&
+    pullRequest.headRepository !== baseRepository &&
     !(await read.getMaintainerCanModify(pullRequest.number))
   ) {
     throw new ApplyError("the fork no longer allows maintainer edits");
@@ -298,17 +251,10 @@ export async function applyArtifact(
   mutation: MutationClient,
   request: ApplyRequest,
 ): Promise<ApplyResult> {
-  repositoryParts(request.baseRepository);
   if (request.artifact.operations.length === 0) {
     throw new ApplyError("artifact contains no file operations");
   }
-  const source =
-    request.source ??
-    (await resolveSourcePullRequest(read, {
-      baseRepository: request.baseRepository,
-      runId: request.runId,
-      sourceWorkflow: request.sourceWorkflow,
-    }));
+  const { source } = request;
   const { run, pullRequest: pr } = source;
 
   const claims = request.artifact.source;
@@ -395,15 +341,7 @@ export async function applyArtifact(
       tree,
       run.headSha,
     );
-    await revalidateSourcePullRequest(
-      read,
-      {
-        baseRepository: request.baseRepository,
-        runId: request.runId,
-        sourceWorkflow: request.sourceWorkflow,
-      },
-      source,
-    );
+    await revalidateSourcePullRequest(read, request.baseRepository, source);
     await mutation.updateRef(
       pr.headRepositoryNodeId,
       `refs/heads/${pr.headRef}`,
