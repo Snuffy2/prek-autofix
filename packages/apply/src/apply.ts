@@ -1,8 +1,4 @@
-import {
-  COMMENT_MARKER,
-  type ChangeArtifact,
-  type FileOperation,
-} from "../../shared/src/artifact";
+import type { ChangeArtifact, FileOperation } from "../../shared/src/artifact";
 
 export interface WorkflowRun {
   id: number;
@@ -30,12 +26,6 @@ export interface TreeEntry {
   type: string;
 }
 
-export interface ExistingComment {
-  id: number;
-  body?: string | null;
-  user?: { login?: string } | null;
-}
-
 export interface ReadClient {
   getWorkflowRun(runId: number): Promise<WorkflowRun>;
   listAssociatedPullRequests(sha: string): Promise<PullRequest[]>;
@@ -46,9 +36,6 @@ export interface ReadClient {
     treeSha: string,
     paths: string[],
   ): Promise<TreeEntry[]>;
-  upsertComment(prNumber: number, body: string): Promise<void>;
-  markCommentObsolete(prNumber: number): Promise<void>;
-  resolveComment(prNumber: number): Promise<void>;
 }
 
 export interface MutationClient {
@@ -72,17 +59,6 @@ export interface MutationClient {
   ): Promise<void>;
 }
 
-export type CommitStatusState = "pending" | "success" | "failure";
-
-export interface StatusClient {
-  setCommitStatus(
-    sha: string,
-    state: CommitStatusState,
-    description: string,
-    targetUrl: string,
-  ): Promise<void>;
-}
-
 export interface MutationTreeEntry {
   path: string;
   mode: "100644" | "100755";
@@ -97,21 +73,28 @@ export class ApplyError extends Error {
   }
 }
 
-export const FORK_AUTOFIX_TOKEN_REQUIRED =
-  "Cannot apply fixes to this fork because the GitHub PAT token PREK_AUTOFIX_TOKEN is not configured. The repo owner needs add that token before autofix will work. [See instructions here](https://github.com/Snuffy2/prek-autofix#1-create-the-cross-repository-token-when-needed)";
+type ApplyFailure =
+  | {
+      kind:
+        | "stale-head"
+        | "fork-token-required"
+        | "fork-owner-ineligible"
+        | "fork-edits-disabled"
+        | "source-ineligible"
+        | "source-changed"
+        | "fork-edits-revoked";
+    }
+  | {
+      kind: "mutation-rejected";
+      status: number | undefined;
+      usedGithubTokenFallback: boolean;
+    };
 
-export const SAFE_BRANCH_UPDATE_REJECTED =
-  "GitHub could not update the pull request branch because it changed or the update was not allowed";
-
-export function ownMarkerCommentIds(comments: ExistingComment[]): number[] {
-  return comments
-    .filter(
-      (comment) =>
-        comment.user?.login === "github-actions[bot]" &&
-        comment.body?.includes(COMMENT_MARKER),
-    )
-    .map((comment) => comment.id)
-    .sort((left, right) => left - right);
+export class ApplyOutcomeError extends Error {
+  public constructor(public readonly outcome: ApplyFailure) {
+    super(outcome.kind);
+    this.name = "ApplyOutcomeError";
+  }
 }
 
 export function maximumRawArtifactBytes(
@@ -174,19 +157,11 @@ function validateOperationAgainstTree(
   }
 }
 
-function recoveryComment(reason: string, sourceRunUrl: string): string {
-  return `${COMMENT_MARKER}
-prek-autofix could not apply the generated changes: **${reason}**
-
-[Inspect the source run](${sourceRunUrl}). To recover locally, run the repository's configured prek command (normally \`prek run -a\`), address any remaining issues, and push the changes.`;
-}
-
 export interface ApplyRequest {
   baseRepository: string;
   runId: number;
   runAttempt: number;
   artifact: ChangeArtifact;
-  sourceRunUrl: string;
   sourceWorkflow: string;
   commitMessage: string;
   mutationTokenUsedGithubFallback: boolean;
@@ -254,16 +229,14 @@ async function revalidateSourcePullRequest(
   try {
     current = await resolveSourcePullRequest(read, request);
   } catch {
-    throw new ApplyError("the pull request is no longer eligible for autofix");
+    throw new ApplyOutcomeError({ kind: "source-ineligible" });
   }
 
   const { run, pullRequest } = current;
   const expectedRun = expected.run;
   const expectedPullRequest = expected.pullRequest;
   if (pullRequest.headSha !== expectedPullRequest.headSha) {
-    const reason = "the pull request head changed after collection";
-    await read.markCommentObsolete(expectedPullRequest.number);
-    throw new ApplyError(reason);
+    throw new ApplyOutcomeError({ kind: "stale-head" });
   }
   if (
     run.id !== expectedRun.id ||
@@ -282,14 +255,14 @@ async function revalidateSourcePullRequest(
       expectedPullRequest.headRepositoryOwnerType ||
     pullRequest.headRef !== expectedPullRequest.headRef
   ) {
-    throw new ApplyError("the pull request source changed before autofix");
+    throw new ApplyOutcomeError({ kind: "source-changed" });
   }
 
   if (
     pullRequest.headRepository !== request.baseRepository &&
     !(await read.getMaintainerCanModify(pullRequest.number))
   ) {
-    throw new ApplyError("the fork no longer allows maintainer edits");
+    throw new ApplyOutcomeError({ kind: "fork-edits-revoked" });
   }
 }
 
@@ -327,33 +300,16 @@ export async function applyArtifact(
   }
   const sameRepository = pr.headRepository === request.baseRepository;
   if (pr.headSha !== run.headSha) {
-    const reason = "the pull request head changed after collection";
-    await read.markCommentObsolete(pr.number);
-    throw new ApplyError(reason);
+    throw new ApplyOutcomeError({ kind: "stale-head" });
   }
   if (!sameRepository && request.mutationTokenUsedGithubFallback) {
-    const reason = FORK_AUTOFIX_TOKEN_REQUIRED;
-    await read.upsertComment(
-      pr.number,
-      recoveryComment(reason, request.sourceRunUrl),
-    );
-    throw new ApplyError(reason);
+    throw new ApplyOutcomeError({ kind: "fork-token-required" });
   }
   if (!sameRepository && pr.headRepositoryOwnerType !== "User") {
-    const reason = "only user-owned forks are eligible";
-    await read.upsertComment(
-      pr.number,
-      recoveryComment(reason, request.sourceRunUrl),
-    );
-    throw new ApplyError(reason);
+    throw new ApplyOutcomeError({ kind: "fork-owner-ineligible" });
   }
   if (!sameRepository && !(await read.getMaintainerCanModify(pr.number))) {
-    const reason = "the fork does not allow maintainer edits";
-    await read.upsertComment(
-      pr.number,
-      recoveryComment(reason, request.sourceRunUrl),
-    );
-    throw new ApplyError(reason);
+    throw new ApplyOutcomeError({ kind: "fork-edits-disabled" });
   }
   const baseTree = await read.getCommitTreeSha(
     request.baseRepository,
@@ -411,35 +367,19 @@ export async function applyArtifact(
       run.headSha,
     );
   } catch (error) {
-    if (
-      error instanceof ApplyError &&
-      error.message === "the pull request head changed after collection"
-    ) {
-      throw error;
-    }
+    if (error instanceof ApplyOutcomeError) throw error;
     const status =
-      typeof error === "object" && error !== null && "status" in error
-        ? Number(error.status)
+      typeof error === "object" &&
+      error !== null &&
+      "status" in error &&
+      typeof error.status === "number"
+        ? error.status
         : undefined;
-    const reason =
-      error instanceof ApplyError
-        ? error.message
-        : status === 409 || status === 422
-          ? SAFE_BRANCH_UPDATE_REJECTED
-          : status === 403 && request.mutationTokenUsedGithubFallback
-            ? "GITHUB_TOKEN could not update the pull request branch; grant contents: write or configure PREK_AUTOFIX_TOKEN"
-            : "GitHub rejected the fix commit";
-    await read.upsertComment(
-      pr.number,
-      recoveryComment(reason, request.sourceRunUrl),
-    );
-    throw new ApplyError(reason);
-  }
-  try {
-    await read.resolveComment(pr.number);
-  } catch {
-    // The branch update already succeeded. Marker cleanup is best-effort so a
-    // transient comment failure cannot invite a misleading mutation retry.
+    throw new ApplyOutcomeError({
+      kind: "mutation-rejected",
+      status,
+      usedGithubTokenFallback: request.mutationTokenUsedGithubFallback,
+    });
   }
   return { pullRequestNumber: pr.number, commitSha: commit };
 }

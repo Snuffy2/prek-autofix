@@ -351,6 +351,13 @@ for reads and PR comments. When the required `autofix-token` input resolves
 empty, the Action may also select that built-in token internally for a validated
 same-repository update.
 
+After verifying the source run and pull request, Stage 2 attempts to publish one
+recovery comment for a failed fix. The comment explains the failure and links to
+both workflow runs. For a stale artifact, Stage 2 only marks an existing
+recovery comment obsolete. A successful fix resolves any existing recovery
+comment. Comment and status publication failures produce warnings and preserve
+the fix result.
+
 ## Troubleshooting and recovery
 
 | Symptom                                               | Check and recovery                                                                                                                                                                                                                                                                              |

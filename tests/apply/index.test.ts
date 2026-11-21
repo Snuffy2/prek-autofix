@@ -94,6 +94,7 @@ describe("apply entrypoint validation", () => {
       run_attempt: 3,
     };
     vi.mocked(core.getInput).mockReturnValue("");
+    mocks.reporter.failure.mockImplementation((error: unknown) => error);
     mocks.applyArtifact.mockImplementation(async () => {
       return {
         pullRequestNumber: 4,

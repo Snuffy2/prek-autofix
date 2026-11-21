@@ -4,14 +4,13 @@ import {
   validatePathComponentBudget,
 } from "../../shared/src/artifact";
 import {
-  ownMarkerCommentIds,
   type MutationClient,
   type PullRequest,
   type ReadClient,
-  type StatusClient,
   type TreeEntry,
   type WorkflowRun,
 } from "./apply";
+import type { FixCommentClient, StatusClient } from "./reporting";
 
 type Octokit = ReturnType<typeof getOctokit>;
 type AssociatedPullRequest = Awaited<
@@ -57,7 +56,7 @@ export function createReadClient(
   octokit: Octokit,
   owner: string,
   repo: string,
-): ReadClient {
+): ReadClient & FixCommentClient {
   const reconcileMarkerComments = async (
     prNumber: number,
     body: string,
@@ -69,7 +68,14 @@ export function createReadClient(
       issue_number: prNumber,
       per_page: 100,
     });
-    const [canonicalId, ...duplicateIds] = ownMarkerCommentIds(comments);
+    const [canonicalId, ...duplicateIds] = comments
+      .filter(
+        (comment) =>
+          comment.user?.login === "github-actions[bot]" &&
+          comment.body?.includes(COMMENT_MARKER),
+      )
+      .map((comment) => comment.id)
+      .sort((left, right) => left - right);
     if (canonicalId === undefined) {
       if (createWhenAbsent) {
         await octokit.rest.issues.createComment({

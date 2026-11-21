@@ -127,7 +127,6 @@ async function run(): Promise<void> {
       runId,
       runAttempt,
       artifact,
-      sourceRunUrl,
       sourceWorkflow,
       commitMessage,
       mutationTokenUsedGithubFallback:
@@ -135,8 +134,7 @@ async function run(): Promise<void> {
       source,
     });
   } catch (error) {
-    await reporter.failure(error);
-    throw error;
+    throw await reporter.failure(error);
   }
   await reporter.success();
 }
