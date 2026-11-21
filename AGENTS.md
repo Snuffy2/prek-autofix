@@ -29,7 +29,8 @@ violates a security invariant.
 - `examples/` contains the canonical consumer workflows.
 - `tests/` mirrors the source areas and includes documentation and workflow
   contract tests.
-- `docs/implementation-plan.md` records the detailed design and security model.
+- For the workflow trust boundary and token requirements, see the
+  [Safety model](README.md#safety-model).
 
 ## Development environment
 
@@ -71,8 +72,12 @@ Treat these rules as part of the product contract:
 - Review runs pull-request-controlled code with read-only repository permission
   and without the autofix token.
 - Fix never checks out pull-request code, invokes `git`, or runs hooks.
-- The autofix token is used only after the workflow run, artifact, pull
-  request, current head, paths, file modes, and limits have been validated.
+- The fix workflow may use the autofix token to report commit status after
+  verifying the source workflow run and pull request, including when artifact
+  validation fails.
+- Branch mutations require a validated source run, pull request, current head,
+  and artifact, including its paths, file modes, and limits. Revalidate the
+  pull request and current head before updating the branch ref.
 - Branch updates remain non-force, atomic, and tied to the validated source
   commit.
 - Workflow files, unsafe paths, symlinks, and submodules are never applied.
@@ -108,8 +113,6 @@ Write for developers who are new to the project:
 - Use clear English and short, direct sentences.
 - Put setup steps before implementation details.
 - Define unavoidable GitHub Actions or security terminology.
-- Keep low-level implementation details in the implementation plan unless they
-  help users configure, operate, or recover the Action.
 - Do not make claims that are broader than the tested behavior.
 
 ## Git practices
