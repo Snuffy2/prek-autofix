@@ -1,29 +1,12 @@
 import { spawn } from "node:child_process";
 import type { Readable } from "node:stream";
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute } from "node:path";
 import { StringDecoder } from "node:string_decoder";
-import type { FileOperation } from "../../shared/src/artifact";
-import {
-  ARTIFACT_SCHEMA_VERSION,
-  artifactName,
-  parseChangeArtifact,
-  validatePathComponentBudget,
-} from "../../shared/src/artifact";
-import { HOOK_SUPERVISOR_SCRIPT } from "./hook-supervisor";
+import { artifactName, type FileOperation } from "../../shared/src/artifact";
 import { parseExtraArgs } from "./args";
-import {
-  assertExactCleanCheckout,
-  assertExactHead,
-  assertRootIdentity,
-  assertTrustedPython,
-  captureRootIdentity,
-  captureTrustedPython,
-  collectOperations,
-  type CommandResult,
-  type Execute,
-  type RootIdentity,
-  writeArtifact,
-} from "./git";
+import { openCheckout, type CheckoutDeps } from "./checkout";
+import type { CommandResult, Execute } from "./git";
+import { HOOK_SUPERVISOR_SCRIPT } from "./hook-supervisor";
 
 export interface CollectContext {
   eventName: string;
@@ -49,19 +32,8 @@ export interface CollectInputs {
   passTimeoutSeconds: number;
 }
 
-export interface CollectDeps {
-  execute: Execute;
-  env: NodeJS.ProcessEnv;
+export interface CollectDeps extends CheckoutDeps {
   setOutput(name: string, value: string): void;
-  collectChanges?: (
-    root: string,
-    execute: Execute,
-    env: NodeJS.ProcessEnv,
-    expectedRoot: RootIdentity,
-    maxFiles: number,
-    maxBytes: number,
-  ) => Promise<FileOperation[]>;
-  persistArtifact?: typeof writeArtifact;
   platform?: NodeJS.Platform;
 }
 
@@ -463,42 +435,28 @@ export async function runCollect(
   const autofixIgnored = ignoredAuthors.includes(
     context.pullRequestAuthor?.toLowerCase() ?? "",
   );
-  const workspace = resolve(context.workspace);
-  const workspaceIdentity = await captureRootIdentity(workspace);
-  const artifactRoot = resolve(context.artifactDirectory);
-  const artifactRootIdentity = await captureRootIdentity(artifactRoot);
-  const trustedPython = await captureTrustedPython();
-  const canonicalWorkspace = workspaceIdentity.canonicalPath;
-  const rootPathname = resolve(canonicalWorkspace, inputs.workingDirectory);
-  const rel = relative(canonicalWorkspace, rootPathname);
-  if (rel === ".." || rel.startsWith("../") || rel.startsWith("..\\")) {
-    throw new Error("working-directory must be inside the workspace");
-  }
-  const workingRootIdentity = await captureRootIdentity(rootPathname);
-  const canonicalRoot = workingRootIdentity.canonicalPath;
-  const canonicalRel = relative(canonicalWorkspace, canonicalRoot);
-  if (
-    canonicalRel === ".." ||
-    canonicalRel.startsWith("../") ||
-    canonicalRel.startsWith("..\\")
-  ) {
-    throw new Error("working-directory must resolve inside the workspace");
-  }
-  const childEnv = sanitizedEnvironment(deps.env);
-  await assertTrustedPython(trustedPython);
-  const python = await deps.execute(
-    trustedPython.canonicalPath,
-    ["-I", "-c", "import os, stat"],
-    { cwd: canonicalWorkspace, env: childEnv, captureLimitBytes: 4096 },
-  );
-  if (python.exitCode !== 0) {
-    throw new Error("secure collection requires Python 3");
-  }
-  await assertExactCleanCheckout(
-    canonicalWorkspace,
-    context.headSha,
-    deps.execute,
-    childEnv,
+  const checkout = await openCheckout(
+    {
+      workspace: context.workspace,
+      workingDirectory: inputs.workingDirectory,
+      artifactDirectory: context.artifactDirectory,
+      source: {
+        runId: context.runId,
+        runAttempt: context.runAttempt,
+        repository: context.repository,
+        workflow: context.workflow,
+        event: "pull_request",
+        pullRequestNumber: context.pullRequestNumber,
+        headSha: context.headSha,
+      },
+      maxFiles: inputs.maxFiles,
+      maxBytes: inputs.maxBytes,
+    },
+    {
+      execute: deps.execute,
+      env: sanitizedEnvironment(deps.env),
+      collectChanges: deps.collectChanges,
+    },
   );
   const args = [
     "run",
@@ -512,43 +470,12 @@ export async function runCollect(
   let hardFailure: Error | undefined;
   let converged = false;
   for (let pass = 1; pass <= inputs.maxPasses; pass += 1) {
-    await assertTrustedPython(trustedPython);
-    const result = await deps.execute("prek", args, {
-      cwd: canonicalRoot,
-      env: childEnv,
-      streamUntrustedOutput: true,
-      streamLimitBytes: inputs.maxLogBytes,
-      superviseProcessTree: true,
-      trustedPythonPath: trustedPython.canonicalPath,
-      timeoutMs: inputs.passTimeoutSeconds * 1000,
-    });
-    await assertRootIdentity(workspace, workspaceIdentity);
-    await assertRootIdentity(rootPathname, workingRootIdentity);
-    await assertExactHead(
-      canonicalWorkspace,
-      context.headSha,
-      deps.execute,
-      childEnv,
+    const result = await checkout.runPass(
+      args,
+      inputs.maxLogBytes,
+      inputs.passTimeoutSeconds * 1000,
     );
-    operations = deps.collectChanges
-      ? await deps.collectChanges(
-          canonicalWorkspace,
-          deps.execute,
-          childEnv,
-          workspaceIdentity,
-          inputs.maxFiles,
-          inputs.maxBytes,
-        )
-      : await collectOperations(
-          canonicalWorkspace,
-          deps.execute,
-          childEnv,
-          inputs.maxFiles,
-          inputs.maxBytes,
-          0,
-          workspaceIdentity,
-          trustedPython,
-        );
+    operations = result.operations;
     const snapshot = JSON.stringify(operations);
     if (operations.length === 0 || snapshot === previous) {
       if (result.exitCode === 0) {
@@ -581,46 +508,7 @@ export async function runCollect(
     return;
   }
   if (operations.length > 0) {
-    await assertRootIdentity(workspace, workspaceIdentity);
-    await assertRootIdentity(artifactRoot, artifactRootIdentity);
-    await assertTrustedPython(trustedPython);
-    await assertExactHead(
-      canonicalWorkspace,
-      context.headSha,
-      deps.execute,
-      childEnv,
-    );
-    validatePathComponentBudget(operations.map(({ path }) => path));
-    const artifact = parseChangeArtifact(
-      {
-        schemaVersion: ARTIFACT_SCHEMA_VERSION,
-        source: {
-          runId: context.runId,
-          runAttempt: context.runAttempt,
-          repository: context.repository,
-          workflow: context.workflow,
-          event: "pull_request",
-          pullRequestNumber: context.pullRequestNumber,
-          headSha: context.headSha,
-        },
-        operations,
-      },
-      inputs.maxFiles,
-      inputs.maxBytes,
-    );
-    const file = await (deps.persistArtifact ?? writeArtifact)(
-      context.artifactDirectory,
-      artifact,
-      artifactRootIdentity,
-    );
-    await assertRootIdentity(workspace, workspaceIdentity);
-    await assertRootIdentity(artifactRoot, artifactRootIdentity);
-    await assertExactHead(
-      canonicalWorkspace,
-      context.headSha,
-      deps.execute,
-      childEnv,
-    );
+    const file = await checkout.persist(operations);
     deps.setOutput(
       "artifact-name",
       artifactName(context.runId, context.runAttempt),

@@ -1,8 +1,5 @@
-import {
-  COMMENT_MARKER,
-  type ChangeArtifact,
-  type FileOperation,
-} from "../../shared/src/artifact";
+import type { ChangeArtifact, FileOperation } from "../../shared/src/artifact";
+import { resolveSourcePullRequest } from "./source-verification";
 
 export interface WorkflowRun {
   id: number;
@@ -30,12 +27,6 @@ export interface TreeEntry {
   type: string;
 }
 
-export interface ExistingComment {
-  id: number;
-  body?: string | null;
-  user?: { login?: string } | null;
-}
-
 export interface ReadClient {
   getWorkflowRun(runId: number): Promise<WorkflowRun>;
   listAssociatedPullRequests(sha: string): Promise<PullRequest[]>;
@@ -46,9 +37,6 @@ export interface ReadClient {
     treeSha: string,
     paths: string[],
   ): Promise<TreeEntry[]>;
-  upsertComment(prNumber: number, body: string): Promise<void>;
-  markCommentObsolete(prNumber: number): Promise<void>;
-  resolveComment(prNumber: number): Promise<void>;
 }
 
 export interface MutationClient {
@@ -72,17 +60,6 @@ export interface MutationClient {
   ): Promise<void>;
 }
 
-export type CommitStatusState = "pending" | "success" | "failure";
-
-export interface StatusClient {
-  setCommitStatus(
-    sha: string,
-    state: CommitStatusState,
-    description: string,
-    targetUrl: string,
-  ): Promise<void>;
-}
-
 export interface MutationTreeEntry {
   path: string;
   mode: "100644" | "100755";
@@ -97,21 +74,36 @@ export class ApplyError extends Error {
   }
 }
 
-export const FORK_AUTOFIX_TOKEN_REQUIRED =
-  "Cannot apply fixes to this fork because the GitHub PAT token PREK_AUTOFIX_TOKEN is not configured. The repo owner needs add that token before autofix will work. [See instructions here](https://github.com/Snuffy2/prek-autofix#1-create-the-cross-repository-token-when-needed)";
+export class ArtifactLimitConfigurationError extends Error {
+  public constructor() {
+    super("configured limits are too large to safely bound artifact JSON");
+    this.name = "ArtifactLimitConfigurationError";
+  }
+}
 
-export const SAFE_BRANCH_UPDATE_REJECTED =
-  "GitHub could not update the pull request branch because it changed or the update was not allowed";
+type ApplyFailure =
+  | {
+      kind:
+        | "stale-head"
+        | "fork-token-required"
+        | "fork-owner-ineligible"
+        | "fork-edits-disabled"
+        | "source-ineligible"
+        | "source-changed"
+        | "fork-edits-revoked"
+        | "artifact-source-mismatch";
+    }
+  | {
+      kind: "mutation-rejected";
+      status: number | undefined;
+      usedGithubTokenFallback: boolean;
+    };
 
-export function ownMarkerCommentIds(comments: ExistingComment[]): number[] {
-  return comments
-    .filter(
-      (comment) =>
-        comment.user?.login === "github-actions[bot]" &&
-        comment.body?.includes(COMMENT_MARKER),
-    )
-    .map((comment) => comment.id)
-    .sort((left, right) => left - right);
+export class ApplyOutcomeError extends Error {
+  public constructor(public readonly outcome: ApplyFailure) {
+    super(outcome.kind);
+    this.name = "ApplyOutcomeError";
+  }
 }
 
 export function maximumRawArtifactBytes(
@@ -125,19 +117,9 @@ export function maximumRawArtifactBytes(
     !Number.isSafeInteger(operationOverhead) ||
     encodedContent > Number.MAX_SAFE_INTEGER - operationOverhead
   ) {
-    throw new ApplyError(
-      "configured limits are too large to safely bound artifact JSON",
-    );
+    throw new ArtifactLimitConfigurationError();
   }
   return Math.max(65_536, encodedContent + operationOverhead);
-}
-
-function repositoryParts(repository: string): [string, string] {
-  const parts = repository.split("/");
-  if (parts.length !== 2 || !parts[0] || !parts[1]) {
-    throw new ApplyError(`invalid repository: ${repository}`);
-  }
-  return [parts[0], parts[1]];
 }
 
 function validateOperationAgainstTree(
@@ -174,23 +156,13 @@ function validateOperationAgainstTree(
   }
 }
 
-function recoveryComment(reason: string, sourceRunUrl: string): string {
-  return `${COMMENT_MARKER}
-prek-autofix could not apply the generated changes: **${reason}**
-
-[Inspect the source run](${sourceRunUrl}). To recover locally, run the repository's configured prek command (normally \`prek run -a\`), address any remaining issues, and push the changes.`;
-}
-
 export interface ApplyRequest {
   baseRepository: string;
-  runId: number;
   runAttempt: number;
   artifact: ChangeArtifact;
-  sourceRunUrl: string;
-  sourceWorkflow: string;
   commitMessage: string;
   mutationTokenUsedGithubFallback: boolean;
-  source?: ResolvedSource;
+  source: ResolvedSource;
 }
 
 export interface ApplyResult {
@@ -203,67 +175,27 @@ export interface ResolvedSource {
   pullRequest: PullRequest;
 }
 
-export interface ResolveSourceRequest {
-  baseRepository: string;
-  runId: number;
-  sourceWorkflow: string;
-}
-
-/** Resolve the trusted source run and its single associated open pull request. */
-export async function resolveSourcePullRequest(
-  read: ReadClient,
-  request: ResolveSourceRequest,
-): Promise<ResolvedSource> {
-  repositoryParts(request.baseRepository);
-  const run = await read.getWorkflowRun(request.runId);
-  if (
-    run.id !== request.runId ||
-    run.name !== request.sourceWorkflow ||
-    run.event !== "pull_request"
-  ) {
-    throw new ApplyError("source workflow run name or event is not eligible");
-  }
-
-  const candidates = (
-    await read.listAssociatedPullRequests(run.headSha)
-  ).filter(
-    (pr) =>
-      pr.state === "open" &&
-      pr.baseRepository === request.baseRepository &&
-      pr.headRepository === run.headRepository &&
-      pr.headRef === run.headBranch,
-  );
-  if (candidates.length !== 1) {
-    throw new ApplyError(
-      `expected exactly one associated open pull request; found ${candidates.length}`,
-    );
-  }
-  const pullRequest = candidates[0]!;
-  if (pullRequest.headRepositoryNodeId.length === 0) {
-    throw new ApplyError("pull request head repository identity is missing");
-  }
-  return { run, pullRequest };
-}
-
 async function revalidateSourcePullRequest(
   read: ReadClient,
-  request: ResolveSourceRequest,
+  baseRepository: string,
   expected: ResolvedSource,
 ): Promise<void> {
   let current: ResolvedSource;
   try {
-    current = await resolveSourcePullRequest(read, request);
+    current = await resolveSourcePullRequest(read, {
+      baseRepository,
+      runId: expected.run.id,
+      sourceWorkflow: expected.run.name,
+    });
   } catch {
-    throw new ApplyError("the pull request is no longer eligible for autofix");
+    throw new ApplyOutcomeError({ kind: "source-ineligible" });
   }
 
   const { run, pullRequest } = current;
   const expectedRun = expected.run;
   const expectedPullRequest = expected.pullRequest;
   if (pullRequest.headSha !== expectedPullRequest.headSha) {
-    const reason = "the pull request head changed after collection";
-    await read.markCommentObsolete(expectedPullRequest.number);
-    throw new ApplyError(reason);
+    throw new ApplyOutcomeError({ kind: "stale-head" });
   }
   if (
     run.id !== expectedRun.id ||
@@ -282,14 +214,14 @@ async function revalidateSourcePullRequest(
       expectedPullRequest.headRepositoryOwnerType ||
     pullRequest.headRef !== expectedPullRequest.headRef
   ) {
-    throw new ApplyError("the pull request source changed before autofix");
+    throw new ApplyOutcomeError({ kind: "source-changed" });
   }
 
   if (
-    pullRequest.headRepository !== request.baseRepository &&
+    pullRequest.headRepository !== baseRepository &&
     !(await read.getMaintainerCanModify(pullRequest.number))
   ) {
-    throw new ApplyError("the fork no longer allows maintainer edits");
+    throw new ApplyOutcomeError({ kind: "fork-edits-revoked" });
   }
 }
 
@@ -298,17 +230,10 @@ export async function applyArtifact(
   mutation: MutationClient,
   request: ApplyRequest,
 ): Promise<ApplyResult> {
-  repositoryParts(request.baseRepository);
   if (request.artifact.operations.length === 0) {
     throw new ApplyError("artifact contains no file operations");
   }
-  const source =
-    request.source ??
-    (await resolveSourcePullRequest(read, {
-      baseRepository: request.baseRepository,
-      runId: request.runId,
-      sourceWorkflow: request.sourceWorkflow,
-    }));
+  const { source } = request;
   const { run, pullRequest: pr } = source;
 
   const claims = request.artifact.source;
@@ -321,39 +246,20 @@ export async function applyArtifact(
     claims.pullRequestNumber !== pr.number ||
     claims.headSha !== run.headSha
   ) {
-    throw new ApplyError(
-      "artifact source claims do not match the workflow run",
-    );
+    throw new ApplyOutcomeError({ kind: "artifact-source-mismatch" });
   }
   const sameRepository = pr.headRepository === request.baseRepository;
   if (pr.headSha !== run.headSha) {
-    const reason = "the pull request head changed after collection";
-    await read.markCommentObsolete(pr.number);
-    throw new ApplyError(reason);
+    throw new ApplyOutcomeError({ kind: "stale-head" });
   }
   if (!sameRepository && request.mutationTokenUsedGithubFallback) {
-    const reason = FORK_AUTOFIX_TOKEN_REQUIRED;
-    await read.upsertComment(
-      pr.number,
-      recoveryComment(reason, request.sourceRunUrl),
-    );
-    throw new ApplyError(reason);
+    throw new ApplyOutcomeError({ kind: "fork-token-required" });
   }
   if (!sameRepository && pr.headRepositoryOwnerType !== "User") {
-    const reason = "only user-owned forks are eligible";
-    await read.upsertComment(
-      pr.number,
-      recoveryComment(reason, request.sourceRunUrl),
-    );
-    throw new ApplyError(reason);
+    throw new ApplyOutcomeError({ kind: "fork-owner-ineligible" });
   }
   if (!sameRepository && !(await read.getMaintainerCanModify(pr.number))) {
-    const reason = "the fork does not allow maintainer edits";
-    await read.upsertComment(
-      pr.number,
-      recoveryComment(reason, request.sourceRunUrl),
-    );
-    throw new ApplyError(reason);
+    throw new ApplyOutcomeError({ kind: "fork-edits-disabled" });
   }
   const baseTree = await read.getCommitTreeSha(
     request.baseRepository,
@@ -395,15 +301,7 @@ export async function applyArtifact(
       tree,
       run.headSha,
     );
-    await revalidateSourcePullRequest(
-      read,
-      {
-        baseRepository: request.baseRepository,
-        runId: request.runId,
-        sourceWorkflow: request.sourceWorkflow,
-      },
-      source,
-    );
+    await revalidateSourcePullRequest(read, request.baseRepository, source);
     await mutation.updateRef(
       pr.headRepositoryNodeId,
       `refs/heads/${pr.headRef}`,
@@ -411,35 +309,19 @@ export async function applyArtifact(
       run.headSha,
     );
   } catch (error) {
-    if (
-      error instanceof ApplyError &&
-      error.message === "the pull request head changed after collection"
-    ) {
-      throw error;
-    }
+    if (error instanceof ApplyOutcomeError) throw error;
     const status =
-      typeof error === "object" && error !== null && "status" in error
-        ? Number(error.status)
+      typeof error === "object" &&
+      error !== null &&
+      "status" in error &&
+      typeof error.status === "number"
+        ? error.status
         : undefined;
-    const reason =
-      error instanceof ApplyError
-        ? error.message
-        : status === 409 || status === 422
-          ? SAFE_BRANCH_UPDATE_REJECTED
-          : status === 403 && request.mutationTokenUsedGithubFallback
-            ? "GITHUB_TOKEN could not update the pull request branch; grant contents: write or configure PREK_AUTOFIX_TOKEN"
-            : "GitHub rejected the fix commit";
-    await read.upsertComment(
-      pr.number,
-      recoveryComment(reason, request.sourceRunUrl),
-    );
-    throw new ApplyError(reason);
-  }
-  try {
-    await read.resolveComment(pr.number);
-  } catch {
-    // The branch update already succeeded. Marker cleanup is best-effort so a
-    // transient comment failure cannot invite a misleading mutation retry.
+    throw new ApplyOutcomeError({
+      kind: "mutation-rejected",
+      status,
+      usedGithubTokenFallback: request.mutationTokenUsedGithubFallback,
+    });
   }
   return { pullRequestNumber: pr.number, commitSha: commit };
 }

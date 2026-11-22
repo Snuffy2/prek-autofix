@@ -54,6 +54,6 @@ async function main(): Promise<void> {
   );
 }
 
-main().catch((error: unknown) => {
+export const completion = main().catch((error: unknown) => {
   core.setFailed(error instanceof Error ? error.message : String(error));
 });

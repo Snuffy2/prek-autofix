@@ -13,7 +13,6 @@ const mocks = vi.hoisted(() => ({
     pending: vi.fn(),
     success: vi.fn(),
   },
-  resolveSourcePullRequest: vi.fn(),
   setFailed: vi.fn(),
   stat: vi.fn(),
   verifySourceJobs: vi.fn(),
@@ -45,7 +44,6 @@ vi.mock("../../packages/apply/src/apply", async (importOriginal) => {
   return {
     ...actual,
     applyArtifact: mocks.applyArtifact,
-    resolveSourcePullRequest: mocks.resolveSourcePullRequest,
   };
 });
 
@@ -84,6 +82,40 @@ vi.mock("../../packages/apply/src/source-jobs", async (importOriginal) => {
   };
 });
 
+const readOctokit = {
+  rest: {
+    actions: {
+      getWorkflowRun: vi.fn().mockResolvedValue({
+        data: {
+          id: 7,
+          name: "prek-autofix",
+          event: "pull_request",
+          head_sha: "a".repeat(40),
+          head_branch: "feature",
+          head_repository: { full_name: "base/repo" },
+        },
+      }),
+    },
+    repos: { listPullRequestsAssociatedWithCommit: vi.fn() },
+  },
+  paginate: vi.fn().mockResolvedValue([
+    {
+      number: 4,
+      state: "open",
+      base: { repo: { full_name: "base/repo" } },
+      head: {
+        ref: "feature",
+        sha: "a".repeat(40),
+        repo: {
+          full_name: "base/repo",
+          node_id: "R_base",
+          owner: { type: "User" },
+        },
+      },
+    },
+  ]),
+};
+
 describe("apply entrypoint validation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -94,31 +126,12 @@ describe("apply entrypoint validation", () => {
       run_attempt: 3,
     };
     vi.mocked(core.getInput).mockReturnValue("");
+    mocks.reporter.failure.mockImplementation((error: unknown) => error);
     mocks.applyArtifact.mockImplementation(async () => {
       return {
         pullRequestNumber: 4,
         commitSha: "commit",
       };
-    });
-    mocks.resolveSourcePullRequest.mockResolvedValue({
-      run: {
-        id: 7,
-        name: "prek-autofix",
-        event: "pull_request",
-        headSha: "a".repeat(40),
-        headBranch: "feature",
-        headRepository: "fork/repo",
-      },
-      pullRequest: {
-        number: 4,
-        state: "open",
-        baseRepository: "base/repo",
-        headRepository: "fork/repo",
-        headRepositoryNodeId: "R_fork",
-        headRepositoryOwnerType: "User",
-        headRef: "feature",
-        headSha: "a".repeat(40),
-      },
     });
   });
 
@@ -165,7 +178,6 @@ describe("apply entrypoint validation", () => {
 
   it("uses the built-in token for read access and artifact retrieval", async () => {
     const githubToken = "built-in-token-sentinel";
-    const readOctokit = { rest: {} };
     const artifactClient = {
       getArtifact: vi.fn().mockResolvedValue({
         artifact: {
@@ -280,7 +292,7 @@ describe("apply entrypoint validation", () => {
         if (name === "autofix-token") return autofixToken;
         return "";
       });
-      vi.mocked(github.getOctokit).mockReturnValue({ rest: {} } as never);
+      vi.mocked(github.getOctokit).mockReturnValue(readOctokit as never);
       mocks.artifactClient.mockImplementation(function ArtifactClient() {
         return artifactClient;
       });

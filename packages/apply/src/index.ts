@@ -10,19 +10,14 @@ import {
   parseChangeArtifact,
 } from "../../shared/src/artifact";
 import { versionBanner } from "../../shared/src/version";
-import { getArtifactIfPresent } from "./artifact-lookup";
-import {
-  applyArtifact,
-  maximumRawArtifactBytes,
-  resolveSourcePullRequest,
-} from "./apply";
+import { applyArtifact, maximumRawArtifactBytes } from "./apply";
 import {
   createMutationClient,
   createReadClient,
   createStatusClient,
 } from "./github";
 import { createFixReporter } from "./reporting";
-import { IneligibleSourceJobsError, verifySourceJobs } from "./source-jobs";
+import { verifySourceRun } from "./source-verification";
 import { selectMutationToken } from "./token";
 
 function nonnegativeInput(name: string, fallback: number): number {
@@ -61,28 +56,17 @@ async function run(): Promise<void> {
 
   const artifactClient = new DefaultArtifactClient();
   const readOctokit = github.getOctokit(githubToken);
-  const lookup = await getArtifactIfPresent(
-    artifactClient,
-    runId,
-    runAttempt,
+  const read = createReadClient(readOctokit, owner, repo);
+  const verified = await verifySourceRun(artifactClient, readOctokit, read, {
     owner,
     repo,
-    githubToken,
-  );
-  if (!lookup) return;
-  try {
-    await verifySourceJobs(readOctokit, owner, repo, runId, runAttempt);
-  } catch (error) {
-    if (!(error instanceof IneligibleSourceJobsError)) throw error;
-    core.info(`${error.message}; nothing to fix.`);
-    return;
-  }
-  const read = createReadClient(readOctokit, owner, repo);
-  const source = await resolveSourcePullRequest(read, {
-    baseRepository,
     runId,
+    runAttempt,
     sourceWorkflow,
+    githubToken,
   });
+  if (!verified) return;
+  const { artifactId, source } = verified;
   const sourceRunUrl = `${github.context.serverUrl}/${baseRepository}/actions/runs/${runId}`;
   const fixRunUrl = `${github.context.serverUrl}/${baseRepository}/actions/runs/${github.context.runId}`;
   const mutationCredential = selectMutationToken(
@@ -101,7 +85,7 @@ async function run(): Promise<void> {
   await reporter.pending();
 
   try {
-    const download = await artifactClient.downloadArtifact(lookup.artifact.id, {
+    const download = await artifactClient.downloadArtifact(artifactId, {
       findBy: {
         token: githubToken,
         workflowRunId: runId,
@@ -124,23 +108,19 @@ async function run(): Promise<void> {
     const mutation = createMutationClient(mutationOctokit);
     await applyArtifact(read, mutation, {
       baseRepository,
-      runId,
       runAttempt,
       artifact,
-      sourceRunUrl,
-      sourceWorkflow,
       commitMessage,
       mutationTokenUsedGithubFallback:
         mutationCredential.usedGithubTokenFallback,
       source,
     });
   } catch (error) {
-    await reporter.failure(error);
-    throw error;
+    throw await reporter.failure(error);
   }
   await reporter.success();
 }
 
-void run().catch((error: unknown) => {
+export const completion = run().catch((error: unknown) => {
   core.setFailed(error instanceof Error ? error.message : String(error));
 });

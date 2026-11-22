@@ -351,6 +351,15 @@ for reads and PR comments. When the required `autofix-token` input resolves
 empty, the Action may also select that built-in token internally for a validated
 same-repository update.
 
+After verifying the source run and pull request, Stage 2 attempts to publish one
+recovery comment for a failed fix. The comment explains the failure and links to
+both workflow runs. If Stage 2 detects an advanced pull request head before the
+final branch update, it only marks an existing recovery comment obsolete. If
+GitHub rejects the final branch update, Stage 2 reports the failure and attempts
+a recovery comment. A successful fix resolves any existing recovery comment.
+Comment and status publication failures produce warnings and preserve the fix
+result.
+
 ## Troubleshooting and recovery
 
 | Symptom                                               | Check and recovery                                                                                                                                                                                                                                                                              |

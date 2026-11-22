@@ -7,7 +7,6 @@ const mocks = vi.hoisted(() => ({
   downloadArtifact: vi.fn(),
   getArtifact: vi.fn(),
   readFile: vi.fn(),
-  resolveSourcePullRequest: vi.fn(),
   verifySourceJobs: vi.fn(),
 }));
 
@@ -41,7 +40,6 @@ vi.mock("node:fs/promises", () => ({
 vi.mock("../../packages/apply/src/apply", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../packages/apply/src/apply")>()),
   applyArtifact: mocks.applyArtifact,
-  resolveSourcePullRequest: mocks.resolveSourcePullRequest,
 }));
 vi.mock("../../packages/apply/src/source-jobs", () => ({
   IneligibleSourceJobsError: class extends Error {},
@@ -65,25 +63,51 @@ const artifact = {
   ],
 };
 
-function client(): {
-  rest: {
-    repos: { createCommitStatus: ReturnType<typeof vi.fn> };
-    issues: {
-      createComment: ReturnType<typeof vi.fn>;
-      listComments: ReturnType<typeof vi.fn>;
-    };
-  };
-  paginate: ReturnType<typeof vi.fn>;
-} {
+function client() {
+  const listPullRequestsAssociatedWithCommit = vi.fn();
   return {
     rest: {
-      repos: { createCommitStatus: vi.fn().mockResolvedValue({}) },
+      actions: {
+        getWorkflowRun: vi.fn().mockResolvedValue({
+          data: {
+            id: 7,
+            name: "prek-autofix",
+            event: "pull_request",
+            head_sha: headSha,
+            head_branch: "feature",
+            head_repository: { full_name: "base/repo" },
+          },
+        }),
+      },
+      repos: {
+        createCommitStatus: vi.fn().mockResolvedValue({}),
+        listPullRequestsAssociatedWithCommit,
+      },
       issues: {
         createComment: vi.fn().mockResolvedValue({}),
         listComments: vi.fn(),
       },
     },
-    paginate: vi.fn().mockResolvedValue([]),
+    paginate: vi.fn().mockImplementation(async (endpoint) =>
+      endpoint === listPullRequestsAssociatedWithCommit
+        ? [
+            {
+              number: 4,
+              state: "open",
+              base: { repo: { full_name: "base/repo" } },
+              head: {
+                ref: "feature",
+                sha: headSha,
+                repo: {
+                  full_name: "base/repo",
+                  node_id: "R_base",
+                  owner: { type: "User" },
+                },
+              },
+            },
+          ]
+        : [],
+    ),
   };
 }
 
@@ -96,10 +120,6 @@ describe("status reporting credentials at the action entrypoint", () => {
     mocks.readFile.mockResolvedValue(JSON.stringify(artifact));
     mocks.verifySourceJobs.mockResolvedValue(undefined);
     mocks.applyArtifact.mockResolvedValue(undefined);
-    mocks.resolveSourcePullRequest.mockResolvedValue({
-      run: { headSha },
-      pullRequest: { number: 4 },
-    });
   });
 
   it.each([

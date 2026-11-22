@@ -44,6 +44,21 @@ export class ArtifactValidationError extends Error {
   }
 }
 
+export class ArtifactLimitError extends ArtifactValidationError {
+  public constructor(
+    limit:
+      | { kind: "files"; count: number; maximum: number }
+      | { kind: "bytes"; maximum: number },
+  ) {
+    super(
+      limit.kind === "files"
+        ? `artifact has ${limit.count} files; maximum is ${limit.maximum}`
+        : `artifact content exceeds maximum of ${limit.maximum} bytes`,
+    );
+    this.name = "ArtifactLimitError";
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -231,9 +246,11 @@ export function parseChangeArtifact(
     throw new ArtifactValidationError("artifact operations must be an array");
   }
   if (value.operations.length > maxFiles) {
-    throw new ArtifactValidationError(
-      `artifact has ${value.operations.length} files; maximum is ${maxFiles}`,
-    );
+    throw new ArtifactLimitError({
+      kind: "files",
+      count: value.operations.length,
+      maximum: maxFiles,
+    });
   }
 
   const operations = value.operations.map(parseOperation);
@@ -251,9 +268,7 @@ export function parseChangeArtifact(
       const remainingBytes = maxBytes - totalBytes;
       const maximumEncodedLength = Math.ceil(remainingBytes / 3) * 4;
       if (operation.content.length > maximumEncodedLength) {
-        throw new ArtifactValidationError(
-          `artifact content exceeds maximum of ${maxBytes} bytes`,
-        );
+        throw new ArtifactLimitError({ kind: "bytes", maximum: maxBytes });
       }
       const content = Buffer.from(operation.content, "base64");
       if (content.toString("base64") !== operation.content) {
@@ -263,9 +278,7 @@ export function parseChangeArtifact(
       }
       totalBytes += content.byteLength;
       if (totalBytes > maxBytes) {
-        throw new ArtifactValidationError(
-          `artifact content exceeds maximum of ${maxBytes} bytes`,
-        );
+        throw new ArtifactLimitError({ kind: "bytes", maximum: maxBytes });
       }
     }
   }

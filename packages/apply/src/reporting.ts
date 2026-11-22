@@ -1,26 +1,51 @@
 import * as core from "@actions/core";
 import {
+  ArtifactLimitError,
   ArtifactValidationError,
   COMMENT_MARKER,
 } from "../../shared/src/artifact";
 import {
   ApplyError,
-  FORK_AUTOFIX_TOKEN_REQUIRED,
-  SAFE_BRANCH_UPDATE_REJECTED,
-  type CommitStatusState,
-  type ReadClient,
+  ApplyOutcomeError,
+  ArtifactLimitConfigurationError,
   type ResolvedSource,
-  type StatusClient,
 } from "./apply";
 
-const UNEXPECTED_FAILURE = "the fix action failed unexpectedly";
-const STALE_PULL_REQUEST_HEAD =
-  "the pull request head changed after collection";
+const FORK_AUTOFIX_TOKEN_REQUIRED =
+  "Cannot apply fixes to this fork because the GitHub PAT token PREK_AUTOFIX_TOKEN is not configured. The repo owner needs add that token before autofix will work. [See instructions here](https://github.com/Snuffy2/prek-autofix#1-create-the-cross-repository-token-when-needed)";
+const SAFE_BRANCH_UPDATE_REJECTED =
+  "GitHub could not update the pull request branch because it changed or the update was not allowed";
+
+const applicationReasons = {
+  "fork-owner-ineligible": "only user-owned forks are eligible",
+  "fork-edits-disabled": "the fork does not allow maintainer edits",
+  "source-ineligible": "the pull request is no longer eligible for autofix",
+  "source-changed": "the pull request source changed before autofix",
+  "fork-edits-revoked": "the fork no longer allows maintainer edits",
+  "artifact-source-mismatch": "the generated fixes could not be applied safely",
+};
+
+type CommitStatusState = "pending" | "success" | "failure";
+
+export interface StatusClient {
+  setCommitStatus(
+    sha: string,
+    state: CommitStatusState,
+    description: string,
+    targetUrl: string,
+  ): Promise<void>;
+}
+
+export interface FixCommentClient {
+  upsertComment(prNumber: number, body: string): Promise<void>;
+  markCommentObsolete(prNumber: number): Promise<void>;
+  resolveComment(prNumber: number): Promise<void>;
+}
 
 export interface FixReporter {
   pending(): Promise<void>;
   success(): Promise<void>;
-  failure(error: unknown): Promise<void>;
+  failure(error: unknown): Promise<Error>;
 }
 
 export interface FixReporterRequest {
@@ -32,6 +57,8 @@ export interface FixReporterRequest {
 interface PublicFailure {
   description: string;
   reason: string;
+  obsolete?: boolean;
+  actionMessage?: string;
 }
 
 function publicFailure(error: unknown): PublicFailure {
@@ -42,32 +69,55 @@ function publicFailure(error: unknown): PublicFailure {
     return {
       description: "Generated artifact failed validation",
       reason: "the generated artifact failed security validation",
+      actionMessage:
+        error instanceof ArtifactLimitError ? error.message : undefined,
     };
   }
+  if (error instanceof ArtifactLimitConfigurationError) {
+    return {
+      description: "Configured artifact limits are too large",
+      reason: `the ${error.message}. Reduce the \`max-files\` or \`max-bytes\` input`,
+      actionMessage: error.message,
+    };
+  }
+  if (error instanceof ApplyOutcomeError) {
+    const outcome = error.outcome;
+    switch (outcome.kind) {
+      case "stale-head":
+        return {
+          description: "Pull request head changed",
+          reason: "the pull request head changed after collection",
+          obsolete: true,
+        };
+      case "fork-token-required":
+        return {
+          description:
+            "Cannot update fork: PREK_AUTOFIX_TOKEN is not configured",
+          reason: FORK_AUTOFIX_TOKEN_REQUIRED,
+        };
+      case "artifact-source-mismatch":
+        return {
+          description: "Generated fixes could not be applied safely",
+          reason: "the generated fixes could not be applied safely",
+          actionMessage: "artifact source claims do not match the workflow run",
+        };
+      case "mutation-rejected": {
+        const { status, usedGithubTokenFallback } = outcome;
+        const reason =
+          status === 409 || status === 422
+            ? SAFE_BRANCH_UPDATE_REJECTED
+            : status === 403 && usedGithubTokenFallback
+              ? "GITHUB_TOKEN could not update the pull request branch; grant contents: write or configure PREK_AUTOFIX_TOKEN"
+              : "GitHub rejected the fix commit";
+        return { description: reason, reason };
+      }
+      default: {
+        const reason = applicationReasons[outcome.kind];
+        return { description: reason, reason };
+      }
+    }
+  }
   if (error instanceof ApplyError) {
-    const message = error.message;
-    if (message === STALE_PULL_REQUEST_HEAD) {
-      return { description: "Pull request head changed", reason: message };
-    }
-    if (message === FORK_AUTOFIX_TOKEN_REQUIRED) {
-      return {
-        description: "Cannot update fork: PREK_AUTOFIX_TOKEN is not configured",
-        reason: message,
-      };
-    }
-    if (
-      message === "only user-owned forks are eligible" ||
-      message === "the fork does not allow maintainer edits" ||
-      message === "the pull request is no longer eligible for autofix" ||
-      message === "the pull request source changed before autofix" ||
-      message === "the fork no longer allows maintainer edits" ||
-      message === "GitHub rejected the fix commit" ||
-      message ===
-        "GITHUB_TOKEN could not update the pull request branch; grant contents: write or configure PREK_AUTOFIX_TOKEN" ||
-      message === SAFE_BRANCH_UPDATE_REJECTED
-    ) {
-      return { description: message.slice(0, 140), reason: message };
-    }
     return {
       description: "Generated fixes could not be applied safely",
       reason: "the generated fixes could not be applied safely",
@@ -91,11 +141,12 @@ function publicFailure(error: unknown): PublicFailure {
     return {
       description: "Generated artifact could not be read safely",
       reason: "the generated artifact could not be read safely",
+      actionMessage: error.message,
     };
   }
   return {
     description: "Fix action failed unexpectedly",
-    reason: UNEXPECTED_FAILURE,
+    reason: "the fix action failed unexpectedly",
   };
 }
 
@@ -111,7 +162,7 @@ async function bestEffort(
 }
 
 export function createFixReporter(
-  read: ReadClient,
+  comments: FixCommentClient,
   status: StatusClient,
   request: FixReporterRequest,
 ): FixReporter {
@@ -131,27 +182,30 @@ export function createFixReporter(
       await setStatus("pending", "Applying generated prek fixes");
     },
     async success() {
-      await setStatus("success", "Generated prek fixes were applied");
+      await Promise.all([
+        setStatus("success", "Generated prek fixes were applied"),
+        bestEffort("resolved pull request recovery comment", () =>
+          comments.resolveComment(pullRequest.number),
+        ),
+      ]);
     },
     async failure(error) {
       const failure = publicFailure(error);
-      const publications = [setStatus("failure", failure.description)];
-      if (!(
-        error instanceof ApplyError && error.message === STALE_PULL_REQUEST_HEAD
-      )) {
-        publications.push(
-          bestEffort("pull request recovery comment", () =>
-            read.upsertComment(
+      const comment = failure.obsolete
+        ? bestEffort("obsolete pull request recovery comment", () =>
+            comments.markCommentObsolete(pullRequest.number),
+          )
+        : bestEffort("pull request recovery comment", () =>
+            comments.upsertComment(
               pullRequest.number,
               `${COMMENT_MARKER}
 prek-autofix could not apply the generated changes: **${failure.reason}.**
 
 [Inspect the fix run](${request.fixRunUrl}) or [inspect the source run](${request.sourceRunUrl}). To recover locally, run the repository's configured prek command (normally \`prek run -a\`), address any remaining issues, and push the changes.`,
             ),
-          ),
-        );
-      }
-      await Promise.all(publications);
+          );
+      await Promise.all([setStatus("failure", failure.description), comment]);
+      return new Error(failure.actionMessage ?? failure.reason);
     },
   };
 }
