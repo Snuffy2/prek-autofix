@@ -318,29 +318,6 @@ describe("source run verification at the Fix Action entry point", () => {
     },
   );
 
-  it("reports an invalid artifact on the verified source commit", async () => {
-    const action = setup();
-    mocks.readFile.mockResolvedValue("{}");
-
-    await import("../../packages/apply/src/index.js");
-    await vi.waitFor(() =>
-      expect(core.setFailed).toHaveBeenCalledWith(
-        "the generated artifact failed security validation",
-      ),
-    );
-    expect(
-      action.createCommitStatus.mock.calls.map(([status]) => [
-        status.sha,
-        status.state,
-      ]),
-    ).toEqual([
-      [sourceSha, "pending"],
-      [sourceSha, "failure"],
-    ]);
-    expect(action.createBlob).not.toHaveBeenCalled();
-    expect(action.updateRefs).not.toHaveBeenCalled();
-  });
-
   it("applies the artifact from an eligible attempt to the verified head", async () => {
     const action = setup();
     action.reviewJobs.mockImplementation(async ({ run_id, attempt_number }) =>

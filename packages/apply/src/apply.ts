@@ -74,6 +74,13 @@ export class ApplyError extends Error {
   }
 }
 
+export class ArtifactLimitConfigurationError extends Error {
+  public constructor() {
+    super("configured limits are too large to safely bound artifact JSON");
+    this.name = "ArtifactLimitConfigurationError";
+  }
+}
+
 type ApplyFailure =
   | {
       kind:
@@ -109,9 +116,7 @@ export function maximumRawArtifactBytes(
     !Number.isSafeInteger(operationOverhead) ||
     encodedContent > Number.MAX_SAFE_INTEGER - operationOverhead
   ) {
-    throw new ApplyError(
-      "configured limits are too large to safely bound artifact JSON",
-    );
+    throw new ArtifactLimitConfigurationError();
   }
   return Math.max(65_536, encodedContent + operationOverhead);
 }

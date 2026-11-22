@@ -430,8 +430,101 @@ describe("fix Action reporting", () => {
         ),
       }),
     );
+    expect(write.rest.git.createBlob).not.toHaveBeenCalled();
     expect(write.graphql).not.toHaveBeenCalled();
   });
+
+  it("reports when configured limits cannot safely bound artifact JSON", async () => {
+    const { read, write } = githubFixture();
+    vi.mocked(core.getInput).mockImplementation((name) => {
+      if (name === "github-token") return "read-credential";
+      if (name === "autofix-token") return "autofix-credential";
+      if (name === "max-bytes") return "9007199254740991";
+      return "";
+    });
+
+    await import("../../packages/apply/src/index.js");
+    await vi.waitFor(() => {
+      expect(core.setFailed).toHaveBeenCalledWith(
+        "configured limits are too large to safely bound artifact JSON",
+      );
+    });
+
+    expect(
+      write.rest.repos.createCommitStatus.mock.calls.map(([status]) => status),
+    ).toEqual([
+      expect.objectContaining({ state: "pending", sha: sourceSha }),
+      expect.objectContaining({ state: "failure", sha: sourceSha }),
+    ]);
+    expect(read.rest.issues.createComment).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        issue_number: 4,
+        body: expect.stringContaining(
+          "Reduce the `max-files` or `max-bytes` input",
+        ),
+      }),
+    );
+    expect(write.rest.git.createBlob).not.toHaveBeenCalled();
+    expect(write.graphql).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      input: "max-files",
+      operations: [
+        artifact.operations[0],
+        { ...artifact.operations[0], path: "second.txt" },
+      ],
+      message: "artifact has 2 files; maximum is 1",
+    },
+    {
+      input: "max-bytes",
+      operations: [{ ...artifact.operations[0], content: "eHk=" }],
+      message: "artifact content exceeds maximum of 1 bytes",
+    },
+  ])(
+    "reports an artifact that exceeds $input",
+    async ({ input, operations, message }) => {
+      const { read, write } = githubFixture();
+      vi.mocked(core.getInput).mockImplementation((name) => {
+        if (name === "github-token") return "read-credential";
+        if (name === "autofix-token") return "autofix-credential";
+        if (name === input) return "1";
+        return "";
+      });
+      vi.mocked(readFile).mockResolvedValue(
+        JSON.stringify({ ...artifact, operations }),
+      );
+
+      await import("../../packages/apply/src/index.js");
+      await vi.waitFor(() => {
+        expect(core.setFailed).toHaveBeenCalledWith(message);
+      });
+
+      expect(
+        write.rest.repos.createCommitStatus.mock.calls.map(
+          ([status]) => status,
+        ),
+      ).toEqual([
+        expect.objectContaining({ state: "pending", sha: sourceSha }),
+        expect.objectContaining({
+          state: "failure",
+          sha: sourceSha,
+          description: "Generated artifact failed validation",
+        }),
+      ]);
+      expect(read.rest.issues.createComment).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          issue_number: 4,
+          body: expect.stringContaining(
+            "the generated artifact failed security validation",
+          ),
+        }),
+      );
+      expect(write.rest.git.createBlob).not.toHaveBeenCalled();
+      expect(write.graphql).not.toHaveBeenCalled();
+    },
+  );
 
   it("reports missing write permission when the built-in credential is selected", async () => {
     const { read, write } = githubFixture(true);

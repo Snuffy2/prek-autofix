@@ -1,9 +1,15 @@
 import * as core from "@actions/core";
 import {
+  ArtifactLimitError,
   ArtifactValidationError,
   COMMENT_MARKER,
 } from "../../shared/src/artifact";
-import { ApplyError, ApplyOutcomeError, type ResolvedSource } from "./apply";
+import {
+  ApplyError,
+  ApplyOutcomeError,
+  ArtifactLimitConfigurationError,
+  type ResolvedSource,
+} from "./apply";
 
 const FORK_AUTOFIX_TOKEN_REQUIRED =
   "Cannot apply fixes to this fork because the GitHub PAT token PREK_AUTOFIX_TOKEN is not configured. The repo owner needs add that token before autofix will work. [See instructions here](https://github.com/Snuffy2/prek-autofix#1-create-the-cross-repository-token-when-needed)";
@@ -62,6 +68,15 @@ function publicFailure(error: unknown): PublicFailure {
     return {
       description: "Generated artifact failed validation",
       reason: "the generated artifact failed security validation",
+      actionMessage:
+        error instanceof ArtifactLimitError ? error.message : undefined,
+    };
+  }
+  if (error instanceof ArtifactLimitConfigurationError) {
+    return {
+      description: "Configured artifact limits are too large",
+      reason: `the ${error.message}. Reduce the \`max-files\` or \`max-bytes\` input`,
+      actionMessage: error.message,
     };
   }
   if (error instanceof ApplyOutcomeError) {
