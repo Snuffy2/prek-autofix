@@ -182,7 +182,8 @@ describe("source run verification at the Fix Action entry point", () => {
       throw new ArtifactNotFoundError(name);
     });
 
-    await import("../../packages/apply/src/index.js");
+    const entrypoint = await import("../../packages/apply/src/index.js");
+    await entrypoint.completion;
     await vi.waitFor(() =>
       expect(core.info).toHaveBeenCalledWith(
         "No prek-autofix-7-3 artifact was produced; nothing to apply.",
@@ -219,7 +220,8 @@ describe("source run verification at the Fix Action entry point", () => {
       attempt_number === 3 ? jobs : [{ name: "review", conclusion: "success" }],
     );
 
-    await import("../../packages/apply/src/index.js");
+    const entrypoint = await import("../../packages/apply/src/index.js");
+    await entrypoint.completion;
     await vi.waitFor(() =>
       expect(core.info).toHaveBeenCalledWith(`${reason}; nothing to fix.`),
     );
@@ -236,7 +238,8 @@ describe("source run verification at the Fix Action entry point", () => {
         lookup === "artifact" ? mocks.getArtifact : action.reviewJobs;
       endpoint.mockRejectedValue(new Error("source lookup unavailable"));
 
-      await import("../../packages/apply/src/index.js");
+      const entrypoint = await import("../../packages/apply/src/index.js");
+      await entrypoint.completion;
       await vi.waitFor(() =>
         expect(core.setFailed).toHaveBeenCalledWith(
           "source lookup unavailable",
@@ -293,7 +296,8 @@ describe("source run verification at the Fix Action entry point", () => {
     const action = setup();
     action.associatedPullRequests.mockResolvedValue(candidates);
 
-    await import("../../packages/apply/src/index.js");
+    const entrypoint = await import("../../packages/apply/src/index.js");
+    await entrypoint.completion;
     await vi.waitFor(() => expect(core.setFailed).toHaveBeenCalledWith(reason));
     expect(mocks.downloadArtifact).not.toHaveBeenCalled();
     action.expectNoWrites();
@@ -307,7 +311,8 @@ describe("source run verification at the Fix Action entry point", () => {
         data: { ...workflowRun, ...override },
       });
 
-      await import("../../packages/apply/src/index.js");
+      const entrypoint = await import("../../packages/apply/src/index.js");
+      await entrypoint.completion;
       await vi.waitFor(() =>
         expect(core.setFailed).toHaveBeenCalledWith(
           "source workflow run name or event is not eligible",
@@ -326,7 +331,8 @@ describe("source run verification at the Fix Action entry point", () => {
         : [],
     );
 
-    await import("../../packages/apply/src/index.js");
+    const entrypoint = await import("../../packages/apply/src/index.js");
+    await entrypoint.completion;
     await vi.waitFor(() =>
       expect(action.createCommitStatus).toHaveBeenCalledWith(
         expect.objectContaining({ sha: sourceSha, state: "success" }),
@@ -368,7 +374,8 @@ describe("source run verification at the Fix Action entry point", () => {
       return { data: { sha: "fix-commit" } };
     });
 
-    await import("../../packages/apply/src/index.js");
+    const entrypoint = await import("../../packages/apply/src/index.js");
+    await entrypoint.completion;
     await vi.waitFor(() =>
       expect(core.setFailed).toHaveBeenCalledWith(
         "the pull request head changed after collection",

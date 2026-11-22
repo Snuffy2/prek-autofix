@@ -90,7 +90,8 @@ type ApplyFailure =
         | "fork-edits-disabled"
         | "source-ineligible"
         | "source-changed"
-        | "fork-edits-revoked";
+        | "fork-edits-revoked"
+        | "artifact-source-mismatch";
     }
   | {
       kind: "mutation-rejected";
@@ -245,9 +246,7 @@ export async function applyArtifact(
     claims.pullRequestNumber !== pr.number ||
     claims.headSha !== run.headSha
   ) {
-    throw new ApplyError(
-      "artifact source claims do not match the workflow run",
-    );
+    throw new ApplyOutcomeError({ kind: "artifact-source-mismatch" });
   }
   const sameRepository = pr.headRepository === request.baseRepository;
   if (pr.headSha !== run.headSha) {

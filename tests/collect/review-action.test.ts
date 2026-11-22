@@ -60,6 +60,7 @@ async function review(hook: string): Promise<string> {
     await mkdir(path, { recursive: true });
   }
   vi.stubEnv("HOME", directory);
+  vi.stubEnv("XDG_CONFIG_HOME", join(directory, "xdg-config"));
   function git(...args: string[]): string {
     return execFileSync("/usr/bin/git", args, {
       cwd: checkout,
@@ -69,6 +70,7 @@ async function review(hook: string): Promise<string> {
   git("init", "-q");
   git("config", "user.name", "Fixture");
   git("config", "user.email", "fixture@example.invalid");
+  git("config", "commit.gpgSign", "false");
   await writeFile(join(workingDirectory, "note.txt"), "original\n");
   git("add", "docs/note.txt");
   git("commit", "-qm", "Source commit");

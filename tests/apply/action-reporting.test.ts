@@ -169,7 +169,8 @@ describe("fix Action reporting", () => {
       data: { maintainer_can_modify: false },
     });
 
-    await import("../../packages/apply/src/index.js");
+    const entrypoint = await import("../../packages/apply/src/index.js");
+    await entrypoint.completion;
     await vi.waitFor(() => {
       expect(core.setFailed).toHaveBeenCalledWith(
         "the fork does not allow maintainer edits",
@@ -204,7 +205,8 @@ describe("fix Action reporting", () => {
       new Error("comment API denied"),
     );
 
-    await import("../../packages/apply/src/index.js");
+    const entrypoint = await import("../../packages/apply/src/index.js");
+    await entrypoint.completion;
     await vi.waitFor(() => {
       expect(core.setFailed).toHaveBeenCalledWith(
         "the pull request head changed after collection",
@@ -238,12 +240,16 @@ describe("fix Action reporting", () => {
       .mockResolvedValueOnce({})
       .mockRejectedValueOnce(new Error("status API denied"));
 
-    await import("../../packages/apply/src/index.js");
+    const entrypoint = await import("../../packages/apply/src/index.js");
+    await entrypoint.completion;
     await vi.waitFor(() => {
       expect(core.warning).toHaveBeenCalledWith(
         "prek-autofix could not publish its resolved pull request recovery comment",
       );
     });
+    expect(core.warning).toHaveBeenCalledWith(
+      "prek-autofix could not publish its pull request status",
+    );
 
     expect(core.setFailed).not.toHaveBeenCalled();
     expect(write.graphql).toHaveBeenCalledExactlyOnceWith(expect.any(String), {
@@ -286,7 +292,8 @@ describe("fix Action reporting", () => {
       new Error("upstream comment response"),
     );
 
-    await import("../../packages/apply/src/index.js");
+    const entrypoint = await import("../../packages/apply/src/index.js");
+    await entrypoint.completion;
     await vi.waitFor(() => {
       expect(core.setFailed).toHaveBeenCalledWith(
         "GitHub could not update the pull request branch because it changed or the update was not allowed",
@@ -314,7 +321,8 @@ describe("fix Action reporting", () => {
       new Error("private upstream download details"),
     );
 
-    await import("../../packages/apply/src/index.js");
+    const entrypoint = await import("../../packages/apply/src/index.js");
+    await entrypoint.completion;
     await vi.waitFor(() => {
       expect(core.setFailed).toHaveBeenCalledWith(
         "the fix action failed unexpectedly",
@@ -351,7 +359,8 @@ describe("fix Action reporting", () => {
       if (hasMarker)
         read.rest.issues.listComments.mockResolvedValue([existingComment]);
 
-      await import("../../packages/apply/src/index.js");
+      const entrypoint = await import("../../packages/apply/src/index.js");
+      await entrypoint.completion;
       await vi.waitFor(() => {
         expect(write.rest.repos.createCommitStatus).toHaveBeenCalledWith(
           expect.objectContaining({ state: "success", sha: sourceSha }),
@@ -382,7 +391,8 @@ describe("fix Action reporting", () => {
       { ...pullRequest, head: { ...pullRequest.head, sha: fixSha } },
     ]);
 
-    await import("../../packages/apply/src/index.js");
+    const entrypoint = await import("../../packages/apply/src/index.js");
+    await entrypoint.completion;
     await vi.waitFor(() => {
       expect(core.setFailed).toHaveBeenCalledWith(
         "the pull request head changed after collection",
@@ -405,7 +415,8 @@ describe("fix Action reporting", () => {
       }),
     );
 
-    await import("../../packages/apply/src/index.js");
+    const entrypoint = await import("../../packages/apply/src/index.js");
+    await entrypoint.completion;
     await vi.waitFor(() => {
       expect(core.setFailed).toHaveBeenCalledWith(
         "the generated artifact failed security validation",
@@ -434,6 +445,38 @@ describe("fix Action reporting", () => {
     expect(write.graphql).not.toHaveBeenCalled();
   });
 
+  it("reports mismatched artifact source claims without mutating the branch", async () => {
+    const { read, write } = githubFixture();
+    vi.mocked(readFile).mockResolvedValue(
+      JSON.stringify({
+        ...artifact,
+        source: { ...artifact.source, pullRequestNumber: 5 },
+      }),
+    );
+
+    const entrypoint = await import("../../packages/apply/src/index.js");
+    await entrypoint.completion;
+
+    expect(core.setFailed).toHaveBeenCalledWith(
+      "artifact source claims do not match the workflow run",
+    );
+    expect(write.rest.git.createBlob).not.toHaveBeenCalled();
+    expect(write.rest.git.createTree).not.toHaveBeenCalled();
+    expect(write.rest.git.createCommit).not.toHaveBeenCalled();
+    expect(write.graphql).not.toHaveBeenCalled();
+    expect(read.rest.git.getTree).not.toHaveBeenCalled();
+    expect(read.rest.issues.createComment).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        body: expect.stringContaining(
+          "the generated fixes could not be applied safely",
+        ),
+      }),
+    );
+    const recoveryComment =
+      read.rest.issues.createComment.mock.calls[0]![0].body;
+    expect(recoveryComment).not.toContain("artifact source claims");
+  });
+
   it("reports when configured limits cannot safely bound artifact JSON", async () => {
     const { read, write } = githubFixture();
     vi.mocked(core.getInput).mockImplementation((name) => {
@@ -443,7 +486,8 @@ describe("fix Action reporting", () => {
       return "";
     });
 
-    await import("../../packages/apply/src/index.js");
+    const entrypoint = await import("../../packages/apply/src/index.js");
+    await entrypoint.completion;
     await vi.waitFor(() => {
       expect(core.setFailed).toHaveBeenCalledWith(
         "configured limits are too large to safely bound artifact JSON",
@@ -496,7 +540,8 @@ describe("fix Action reporting", () => {
         JSON.stringify({ ...artifact, operations }),
       );
 
-      await import("../../packages/apply/src/index.js");
+      const entrypoint = await import("../../packages/apply/src/index.js");
+      await entrypoint.completion;
       await vi.waitFor(() => {
         expect(core.setFailed).toHaveBeenCalledWith(message);
       });
@@ -536,7 +581,8 @@ describe("fix Action reporting", () => {
       message: "private upstream permission details",
     });
 
-    await import("../../packages/apply/src/index.js");
+    const entrypoint = await import("../../packages/apply/src/index.js");
+    await entrypoint.completion;
     await vi.waitFor(() => {
       expect(core.setFailed).toHaveBeenCalledWith(
         "GITHUB_TOKEN could not update the pull request branch; grant contents: write or configure PREK_AUTOFIX_TOKEN",

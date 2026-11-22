@@ -152,9 +152,9 @@ describe("applyArtifact", () => {
   ] as const)("rejects a forged %s claim", async (field, value) => {
     const { artifact, read, mutation, request } = fixture();
     Object.assign(artifact.source, { [field]: value });
-    await expect(applyArtifact(read, mutation, request())).rejects.toThrow(
-      "artifact source claims",
-    );
+    await expect(
+      applyArtifact(read, mutation, request()),
+    ).rejects.toMatchObject({ outcome: { kind: "artifact-source-mismatch" } });
     expect(read.getTreeEntries).not.toHaveBeenCalled();
     expect(mutation.createBlob).not.toHaveBeenCalled();
   });

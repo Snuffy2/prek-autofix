@@ -22,6 +22,7 @@ const applicationReasons = {
   "source-ineligible": "the pull request is no longer eligible for autofix",
   "source-changed": "the pull request source changed before autofix",
   "fork-edits-revoked": "the fork no longer allows maintainer edits",
+  "artifact-source-mismatch": "the generated fixes could not be applied safely",
 };
 
 type CommitStatusState = "pending" | "success" | "failure";
@@ -93,6 +94,12 @@ function publicFailure(error: unknown): PublicFailure {
           description:
             "Cannot update fork: PREK_AUTOFIX_TOKEN is not configured",
           reason: FORK_AUTOFIX_TOKEN_REQUIRED,
+        };
+      case "artifact-source-mismatch":
+        return {
+          description: "Generated fixes could not be applied safely",
+          reason: "the generated fixes could not be applied safely",
+          actionMessage: "artifact source claims do not match the workflow run",
         };
       case "mutation-rejected": {
         const { status, usedGithubTokenFallback } = outcome;

@@ -157,6 +157,30 @@ describe("fix result reporting", () => {
     expect(read.markCommentObsolete).toHaveBeenCalledWith(4);
   });
 
+  it("gives artifact source mismatches a fixed Action message", async () => {
+    const { read, reporter, source, status } = fixture();
+
+    await expect(
+      reporter.failure(
+        new ApplyOutcomeError({ kind: "artifact-source-mismatch" }),
+      ),
+    ).resolves.toMatchObject({
+      message: "artifact source claims do not match the workflow run",
+    });
+    expect(status.setCommitStatus).toHaveBeenCalledWith(
+      source.run.headSha,
+      "failure",
+      "Generated fixes could not be applied safely",
+      "https://example/fix",
+    );
+    expect(read.upsertComment).toHaveBeenCalledWith(
+      4,
+      expect.stringContaining(
+        "the generated fixes could not be applied safely",
+      ),
+    );
+  });
+
   it.each([
     ["source-ineligible", "the pull request is no longer eligible for autofix"],
     ["source-changed", "the pull request source changed before autofix"],

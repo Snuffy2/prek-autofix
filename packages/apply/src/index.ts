@@ -121,6 +121,6 @@ async function run(): Promise<void> {
   await reporter.success();
 }
 
-void run().catch((error: unknown) => {
+export const completion = run().catch((error: unknown) => {
   core.setFailed(error instanceof Error ? error.message : String(error));
 });
