@@ -134,7 +134,8 @@ Write for developers who are new to the project:
 
 ### Issue tracker
 
-For GitHub Issues operations, read `docs/agents/issue-tracker.md`.
+Before publishing or reading local specs and tickets, read
+`docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
