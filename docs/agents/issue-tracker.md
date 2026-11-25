@@ -1,38 +1,25 @@
-# Issue tracker
+# Issue tracker in local Markdown
 
-Issues and specs live in GitHub Issues for `Snuffy2/prek-autofix`.
+Issues and specs live in `.scratch/`, with one directory per feature. Create the
+feature directory when publishing its first spec or ticket.
 
-- Prefer the PAT-backed GitHub MCP for supported operations. Use `gh` for gaps
-  in MCP coverage and pass `--repo Snuffy2/prek-autofix` on issue commands.
-- Publish to the tracker by creating a GitHub issue. Fetch a ticket by reading
-  its body, labels, and comments. Filter issue lists by state and label.
-- Apply labels using the mapping in `triage-labels.md`. When closing an issue,
-  post the explanation as a comment before closing it.
-- Use GitHub sub-issues for parent-child relationships. With `gh`, use
-  `issue create --parent <parent>` or
-  `issue edit <parent> --add-sub-issue <child>`. If sub-issues are unavailable,
-  use `Part of #<parent>` in the child body.
-- Use GitHub issue dependencies for blockers. With `gh`, use
-  `issue create --blocked-by <blocker>` or
-  `issue edit <child> --add-blocked-by <blocker>`. If dependencies are
-  unavailable, use `Blocked by: #<blocker>` in the child body. A ticket is ready
-  when all its blockers are closed.
+- Write the spec to `.scratch/<feature>/spec.md`.
+- Write one file per ticket at `.scratch/<feature>/issues/<NN>-<slug>.md`.
+  Number tickets from `01` in dependency order. List each ticket's blockers by
+  number on a `Blocked by:` line.
+- Record triage state as `Status:` near the top of the spec or ticket. Use the
+  values in [Triage labels](triage-labels.md).
+- Append comments and conversation history under `## Comments` in the file.
 
-## Pull requests as a triage surface
-
-**PRs as a request surface: no.**
-
-When enabled, use the same triage labels and states for external pull requests.
-Issues and pull requests share a number space. Resolve the item type before
-applying changes.
+To fetch a ticket, read its file by path or by number within its feature.
 
 ## Wayfinding
 
-Use an issue labeled `wayfinder:map` for the map. Link its tickets as sub-issues
-and label each `wayfinder:<type>` (`research`, `prototype`, `grilling`, or
-`task`). If sub-issues are unavailable, list the tickets in a task list on the
-map issue and use `Part of #<map>` in each ticket.
+Write the map to `.scratch/<effort>/map.md` and put each ticket in
+`.scratch/<effort>/issues/<NN>-<slug>.md`. Record its question in the body and
+its `Type:` as `research`, `prototype`, `grilling`, or `task`.
 
-Pick the first open, unassigned ticket in map order with no open blockers.
-Assign it to yourself before starting. To resolve it, comment with the answer,
-close the ticket, and add a summary and link to the map's Decisions-so-far.
+Pick the lowest-numbered open, unclaimed ticket whose blockers are all
+`resolved`. Set `Status: claimed` before starting. To resolve the ticket, add
+the answer under `## Answer`, set `Status: resolved`, and add a summary and link
+to the map's Decisions-so-far section.

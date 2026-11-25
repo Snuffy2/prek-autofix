@@ -1,8 +1,8 @@
 # Triage labels
 
-Apply the GitHub label that corresponds to the skill's triage role.
+Record the triage role in the Markdown `Status:` field.
 
-| Triage role       | GitHub label      | Meaning                                  |
+| Triage role       | Status value      | Meaning                                  |
 | ----------------- | ----------------- | ---------------------------------------- |
 | `needs-triage`    | `needs-triage`    | A maintainer needs to evaluate the issue |
 | `needs-info`      | `needs-info`      | The reporter needs to provide details    |
