@@ -15,10 +15,13 @@ import {
   type ChangeArtifact,
   type FileOperation,
 } from "../../shared/src/artifact";
-import type { Execute } from "./command-execution";
+import {
+  executeGitWorktreeInspection,
+  GIT_CAPTURE_LIMIT_BYTES,
+  type CommandResult,
+  type Execute,
+} from "./command-execution";
 
-export const GIT_CAPTURE_LIMIT_BYTES = DEFAULT_MAX_BYTES;
-export const GIT_INSPECTION_TIMEOUT_MS = 30_000;
 export const TRUSTED_GIT_PATH = "/usr/bin/git";
 const GIT_SAFE_CONFIG = ["-c", "core.fsmonitor=false"];
 
@@ -314,15 +317,26 @@ export async function collectOperations(
   componentDelayMs = 0,
   expectedRoot?: RootIdentity,
   trustedPython?: TrustedExecutableIdentity,
-  gitInspectionTimeoutMs = GIT_INSPECTION_TIMEOUT_MS,
+  gitInspectionTimeoutMs?: number,
 ): Promise<FileOperation[]> {
-  const superviseGitInspection = trustedPython !== undefined;
   const rootIdentity = expectedRoot ?? (await captureRootIdentity(root));
   const pythonIdentity = trustedPython ?? (await captureTrustedPython());
   await assertRootIdentity(root, rootIdentity);
+  const inspectWorktree = (args: string[]): Promise<CommandResult> =>
+    trustedPython
+      ? executeGitWorktreeInspection(execute, TRUSTED_GIT_PATH, args, {
+          cwd: root,
+          env,
+          trustedPythonPath: trustedPython.canonicalPath,
+          timeoutMs: gitInspectionTimeoutMs,
+        })
+      : execute(TRUSTED_GIT_PATH, args, {
+          cwd: root,
+          env,
+          captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES,
+        });
   const [diff, untracked] = await Promise.all([
-    execute(
-      TRUSTED_GIT_PATH,
+    inspectWorktree(
       gitArgs(
         "diff",
         "--no-ext-diff",
@@ -332,32 +346,9 @@ export async function collectOperations(
         "HEAD",
         "--",
       ),
-      {
-        cwd: root,
-        env,
-        captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES,
-        superviseProcessTree: superviseGitInspection,
-        trustedPythonPath: superviseGitInspection
-          ? pythonIdentity.canonicalPath
-          : undefined,
-        timeoutDescription: "git worktree inspection",
-        timeoutMs: superviseGitInspection ? gitInspectionTimeoutMs : undefined,
-      },
     ),
-    execute(
-      TRUSTED_GIT_PATH,
+    inspectWorktree(
       gitArgs("ls-files", "--others", "--exclude-standard", "-z"),
-      {
-        cwd: root,
-        env,
-        captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES,
-        superviseProcessTree: superviseGitInspection,
-        trustedPythonPath: superviseGitInspection
-          ? pythonIdentity.canonicalPath
-          : undefined,
-        timeoutDescription: "git worktree inspection",
-        timeoutMs: superviseGitInspection ? gitInspectionTimeoutMs : undefined,
-      },
     ),
   ]);
   if (diff.exitCode !== 0 || untracked.exitCode !== 0) {

@@ -88,7 +88,7 @@ async function review(hook: string, passTimeoutSeconds = 5): Promise<string> {
   vi.stubEnv("PREK_AUTOFIX_IGNORE_AUTHORS", "");
   vi.stubEnv("PREK_AUTOFIX_MAX_PASSES", "2");
   vi.stubEnv("PREK_AUTOFIX_MAX_LOG_BYTES", "1024");
-  vi.stubEnv("PREK_AUTOFIX_MAX_FILES", "1");
+  vi.stubEnv("PREK_AUTOFIX_MAX_FILES", "2");
   vi.stubEnv("PREK_AUTOFIX_MAX_BYTES", "32");
   vi.stubEnv("PREK_AUTOFIX_PASS_TIMEOUT_SECONDS", String(passTimeoutSeconds));
   vi.resetModules();
@@ -109,7 +109,9 @@ describe.skipIf(process.platform !== "linux")("review Action checkout", () => {
   });
 
   it("publishes stable fixes alongside remaining hook findings", async () => {
-    await review("printf 'tidy\\n' > note.txt\nexit 1");
+    await review(
+      "printf 'tidy\\n' > note.txt\nprintf 'added\\n' > new.txt\nexit 1",
+    );
 
     expect(action.setFailed).not.toHaveBeenCalled();
     expect(action.outputs.get("changed")).toBe("true");
@@ -121,6 +123,12 @@ describe.skipIf(process.platform !== "linux")("review Action checkout", () => {
       source: { headSha: action.head.sha, runAttempt: 3 },
       operations: [
         {
+          path: "docs/new.txt",
+          operation: "add",
+          mode: "100644",
+          content: Buffer.from("added\n").toString("base64"),
+        },
+        {
           path: "docs/note.txt",
           operation: "modify",
           mode: "100644",
@@ -128,6 +136,18 @@ describe.skipIf(process.platform !== "linux")("review Action checkout", () => {
         },
       ],
     });
+  });
+
+  it("fails without publishing when Git cannot inspect the checkout", async () => {
+    const artifacts = await review(`
+      printf 'tidy\\n' > note.txt
+      printf 'invalid index\\n' > ../.git/index
+    `);
+
+    expect(action.setFailed).toHaveBeenCalledWith("could not inspect changes");
+    expect(action.outputs.has("artifact-name")).toBe(false);
+    expect(action.outputs.has("artifact-path")).toBe(false);
+    expect(await readdir(artifacts)).toEqual([]);
   });
 
   it("prefixes hook log lines and truncates output at the configured cap", async () => {

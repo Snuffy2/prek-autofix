@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import {
   executeCommand,
+  executeGitWorktreeInspection,
   streamUntrustedOutput,
   type Execute,
 } from "../../packages/collect/src/command-execution";
@@ -15,6 +16,7 @@ import {
   sanitizedEnvironment,
   type CollectInputs,
 } from "../../packages/collect/src/runner";
+import { DEFAULT_MAX_BYTES } from "../../packages/shared/src/artifact";
 
 const SHA = "a".repeat(40);
 const directories: string[] = [];
@@ -727,7 +729,7 @@ describe("executeCommand", () => {
   });
 
   it.skipIf(process.platform !== "linux")(
-    "reaps descendants before returning a successful hook result",
+    "reaps descendants before returning captured inspection output",
     async () => {
       const command = [
         'const { spawn } = require("node:child_process")',
@@ -736,13 +738,16 @@ describe("executeCommand", () => {
         "child.unref()",
       ].join(";");
 
-      const response = await executeCommand(process.execPath, ["-e", command], {
-        cwd: process.cwd(),
-        env: process.env,
-        superviseProcessTree: true,
-        trustedPythonPath: "/usr/bin/python3",
-        timeoutMs: 5000,
-      });
+      const response = await executeGitWorktreeInspection(
+        executeCommand,
+        process.execPath,
+        ["-e", command],
+        {
+          cwd: process.cwd(),
+          env: process.env,
+          trustedPythonPath: "/usr/bin/python3",
+        },
+      );
 
       expect(response.exitCode).toBe(0);
       const pid = response.stdout.toString("ascii");
@@ -750,6 +755,29 @@ describe("executeCommand", () => {
       await expect(readFile(`/proc/${pid}/stat`)).rejects.toMatchObject({
         code: "ENOENT",
       });
+    },
+  );
+
+  it.skipIf(process.platform !== "linux")(
+    "rejects inspection when combined stdout and stderr exceed the capture ceiling",
+    async () => {
+      await expect(
+        executeGitWorktreeInspection(
+          executeCommand,
+          process.execPath,
+          [
+            "-e",
+            `process.stdout.write(Buffer.alloc(${DEFAULT_MAX_BYTES})); process.stderr.write("x");`,
+          ],
+          {
+            cwd: process.cwd(),
+            env: process.env,
+            trustedPythonPath: "/usr/bin/python3",
+          },
+        ),
+      ).rejects.toThrow(
+        `command output exceeded capture limit of ${DEFAULT_MAX_BYTES} bytes`,
+      );
     },
   );
 
@@ -867,22 +895,20 @@ for target in (${JSON.stringify(workspaceMutation)}, ${JSON.stringify(artifactMu
   );
 
   it.skipIf(process.platform !== "linux")(
-    "fails closed when the trusted supervisor cannot establish",
+    "rejects inspection output when the supervisor cannot confirm cleanup",
     async () => {
       const directory = await mkdtemp(join(tmpdir(), "collect-fake-python-"));
       directories.push(directory);
       const fakePython = join(directory, "python3");
       const { chmod, writeFile } = await import("node:fs/promises");
-      await writeFile(fakePython, "#!/bin/sh\nexit 0\n");
+      await writeFile(fakePython, "#!/bin/sh\nprintf 'incomplete output'\n");
       await chmod(fakePython, 0o755);
 
       await expect(
-        executeCommand(process.execPath, ["-e", ""], {
+        executeGitWorktreeInspection(executeCommand, process.execPath, [], {
           cwd: directory,
           env: { PATH: directory },
-          superviseProcessTree: true,
           trustedPythonPath: fakePython,
-          timeoutMs: 1000,
         }),
       ).rejects.toThrow(
         "hook supervisor failed to establish the Linux subreaper boundary",

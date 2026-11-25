@@ -2,7 +2,11 @@ import { spawn } from "node:child_process";
 import { isAbsolute } from "node:path";
 import type { Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
+import { DEFAULT_MAX_BYTES } from "../../shared/src/artifact";
 import { HOOK_SUPERVISOR_SCRIPT } from "./hook-supervisor";
+
+export const GIT_CAPTURE_LIMIT_BYTES = DEFAULT_MAX_BYTES;
+const GIT_INSPECTION_TIMEOUT_MS = 30_000;
 
 export interface CommandResult {
   exitCode: number;
@@ -46,6 +50,35 @@ export function executePrekPass(
     streamLimitBytes: maxLogBytes,
     superviseProcessTree: true,
     trustedPythonPath,
+    timeoutMs,
+  });
+}
+
+interface GitWorktreeInspectionOptions {
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  trustedPythonPath: string;
+  timeoutMs?: number;
+}
+
+export function executeGitWorktreeInspection(
+  execute: Execute,
+  command: string,
+  args: string[],
+  {
+    cwd,
+    env,
+    trustedPythonPath,
+    timeoutMs = GIT_INSPECTION_TIMEOUT_MS,
+  }: GitWorktreeInspectionOptions,
+): Promise<CommandResult> {
+  return execute(command, args, {
+    cwd,
+    env,
+    captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES,
+    superviseProcessTree: true,
+    trustedPythonPath,
+    timeoutDescription: "git worktree inspection",
     timeoutMs,
   });
 }
