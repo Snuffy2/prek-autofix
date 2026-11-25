@@ -4,15 +4,17 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import {
+  executeCommand,
+  streamUntrustedOutput,
+  type Execute,
+} from "../../packages/collect/src/command-execution";
+import {
   HardFailureError,
   NonConvergenceError,
-  executeCommand,
   runCollect,
   sanitizedEnvironment,
-  streamUntrustedOutput,
+  type CollectInputs,
 } from "../../packages/collect/src/runner";
-import type { CollectInputs } from "../../packages/collect/src/runner";
-import type { Execute } from "../../packages/collect/src/git";
 
 const SHA = "a".repeat(40);
 const directories: string[] = [];
@@ -190,14 +192,6 @@ describe("runCollect", () => {
     const execute = setup([result(0)]);
     const call = await invoke(execute);
     await expect(call.promise).resolves.toBeUndefined();
-    expect(execute).toHaveBeenCalledWith(
-      "prek",
-      expect.anything(),
-      expect.objectContaining({
-        superviseProcessTree: true,
-        streamUntrustedOutput: true,
-      }),
-    );
     expect(call.outputs.get("changed")).toBe("false");
     expect(call.outputs.get("artifact-name")).toBe("");
     expect(call.outputs.get("artifact-path")).toBe("");
@@ -733,30 +727,29 @@ describe("executeCommand", () => {
   });
 
   it.skipIf(process.platform !== "linux")(
-    "terminates descendants after a successful hook process",
+    "reaps descendants before returning a successful hook result",
     async () => {
-      const directory = await mkdtemp(join(tmpdir(), "collect-tree-success-"));
-      directories.push(directory);
-      const descendantMutation = join(directory, "descendant-mutation");
       const command = [
-        'const {spawn}=require("node:child_process")',
-        'const child=spawn(process.execPath,["-e","setTimeout(()=>require(\\"node:fs\\").writeFileSync(process.env.DESCENDANT_MUTATION,\\"escaped\\"),500);setInterval(()=>{},1000)"],{stdio:"ignore"})',
+        'const { spawn } = require("node:child_process")',
+        'const child = spawn("/usr/bin/sleep", ["5"], { stdio: "ignore" })',
+        "process.stdout.write(String(child.pid))",
         "child.unref()",
       ].join(";");
 
-      await executeCommand(process.execPath, ["-e", command], {
+      const response = await executeCommand(process.execPath, ["-e", command], {
         cwd: process.cwd(),
-        env: {
-          ...process.env,
-          DESCENDANT_MUTATION: descendantMutation,
-        },
+        env: process.env,
         superviseProcessTree: true,
         trustedPythonPath: "/usr/bin/python3",
         timeoutMs: 5000,
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 700));
-      await expect(readFile(descendantMutation)).rejects.toThrow();
+      expect(response.exitCode).toBe(0);
+      const pid = response.stdout.toString("ascii");
+      expect(pid).toMatch(/^\d+$/);
+      await expect(readFile(`/proc/${pid}/stat`)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     },
   );
 

@@ -6,6 +6,7 @@ import {
   type ArtifactSource,
   type FileOperation,
 } from "../../shared/src/artifact";
+import { executePrekPass, type Execute } from "./command-execution";
 import {
   assertExactCleanCheckout,
   assertExactHead,
@@ -15,7 +16,6 @@ import {
   captureTrustedPython,
   collectOperations,
   writeArtifact,
-  type Execute,
   type RootIdentity,
 } from "./git";
 
@@ -96,13 +96,11 @@ export async function openCheckout(
     async runPass(args, maxLogBytes, timeoutMs) {
       await assertTrustedPython(trustedPython);
       // A returned result confirms descendant cleanup before checkout inspection.
-      const result = await execute("prek", args, {
+      const result = await executePrekPass(execute, args, {
         cwd: canonicalRoot,
         env,
-        streamUntrustedOutput: true,
-        streamLimitBytes: maxLogBytes,
-        superviseProcessTree: true,
         trustedPythonPath: trustedPython.canonicalPath,
+        maxLogBytes,
         timeoutMs,
       });
       await assertRootIdentity(workspace, workspaceIdentity);

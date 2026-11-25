@@ -11,14 +11,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  executeCommand,
+  type Execute,
+} from "../../packages/collect/src/command-execution";
+import {
   collectOperations,
   assertRootIdentity,
   captureRootIdentity,
   captureTrustedPython,
   writeArtifact,
-  type Execute,
 } from "../../packages/collect/src/git";
-import { executeCommand } from "../../packages/collect/src/runner";
 import {
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_FILES,

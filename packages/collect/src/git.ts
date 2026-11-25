@@ -15,6 +15,7 @@ import {
   type ChangeArtifact,
   type FileOperation,
 } from "../../shared/src/artifact";
+import type { Execute } from "./command-execution";
 
 export const GIT_CAPTURE_LIMIT_BYTES = DEFAULT_MAX_BYTES;
 export const GIT_INSPECTION_TIMEOUT_MS = 30_000;
@@ -35,28 +36,6 @@ export interface TrustedExecutableIdentity extends RootIdentity {
   mode: string;
   uid: string;
 }
-
-export interface CommandResult {
-  exitCode: number;
-  stdout: Buffer;
-  stderr: Buffer;
-}
-
-export type Execute = (
-  command: string,
-  args: string[],
-  options: {
-    cwd: string;
-    env: NodeJS.ProcessEnv;
-    streamUntrustedOutput?: boolean;
-    streamLimitBytes?: number;
-    captureLimitBytes?: number;
-    superviseProcessTree?: boolean;
-    trustedPythonPath?: string;
-    timeoutDescription?: string;
-    timeoutMs?: number;
-  },
-) => Promise<CommandResult>;
 
 function fields(output: Buffer): string[] {
   return output.toString("utf8").split("\0").filter(Boolean);

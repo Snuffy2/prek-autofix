@@ -45,12 +45,13 @@ let directory: string | undefined;
 afterEach(async () => {
   action.outputs.clear();
   action.setFailed.mockClear();
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   if (directory) await rm(directory, { recursive: true, force: true });
   directory = undefined;
 });
 
-async function review(hook: string): Promise<string> {
+async function review(hook: string, passTimeoutSeconds = 5): Promise<string> {
   directory = await mkdtemp(join(tmpdir(), "review-action-"));
   const checkout = join(directory, "checkout");
   const workingDirectory = join(checkout, "docs");
@@ -89,7 +90,7 @@ async function review(hook: string): Promise<string> {
   vi.stubEnv("PREK_AUTOFIX_MAX_LOG_BYTES", "1024");
   vi.stubEnv("PREK_AUTOFIX_MAX_FILES", "1");
   vi.stubEnv("PREK_AUTOFIX_MAX_BYTES", "32");
-  vi.stubEnv("PREK_AUTOFIX_PASS_TIMEOUT_SECONDS", "5");
+  vi.stubEnv("PREK_AUTOFIX_PASS_TIMEOUT_SECONDS", String(passTimeoutSeconds));
   vi.resetModules();
   const { completion } = await import("../../packages/collect/src/index.js");
   await completion;
@@ -127,6 +128,34 @@ describe.skipIf(process.platform !== "linux")("review Action checkout", () => {
         },
       ],
     });
+  });
+
+  it("prefixes hook log lines and truncates output at the configured cap", async () => {
+    const stdout = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+
+    await review(
+      "printf '::notice::fixture\\n%01024d\\n' 0\nprintf 'hook diagnostic\\n' >&2",
+    );
+
+    expect(action.setFailed).not.toHaveBeenCalled();
+    expect(stdout.mock.calls.map(([chunk]) => String(chunk)).join("")).toBe(
+      `[prek] ::notice::fixture\n[prek] ${"0".repeat(1006)}\n[prek] output truncated after 1024 bytes\n`,
+    );
+    expect(stderr.mock.calls.map(([chunk]) => String(chunk)).join("")).toBe(
+      "[prek] hook diagnostic\n",
+    );
+  });
+
+  it("reports a timed-out pass without publishing its changes", async () => {
+    const artifacts = await review("printf 'tidy\\n' > note.txt\nsleep 3", 1);
+
+    expect(action.setFailed).toHaveBeenCalledWith(
+      "prek pass timed out after 1 seconds; terminated hook process tree",
+    );
+    expect(action.outputs.has("artifact-name")).toBe(false);
+    expect(action.outputs.has("artifact-path")).toBe(false);
+    expect(await readdir(artifacts)).toEqual([]);
   });
 
   it("fails without publishing continually changing fixes", async () => {
