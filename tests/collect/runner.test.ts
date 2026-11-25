@@ -646,33 +646,24 @@ describe("executeCommand", () => {
     },
   );
 
-  it.skipIf(process.platform !== "linux")(
-    "prefixes lone CR boundaries without double-prefixing split CRLF",
-    async () => {
-      const stdout = vi
-        .spyOn(process.stdout, "write")
-        .mockImplementation(() => true);
-      const command = [
-        'process.stdout.write("first\\r")',
-        'setTimeout(() => process.stdout.write("\\nsecond\\r"), 10)',
-        'setTimeout(() => process.stdout.write("::warning::bad"), 20)',
-      ].join(";");
+  it("prefixes lone CR boundaries without double-prefixing split CRLF", () => {
+    const source = { pause: vi.fn(), resume: vi.fn() };
+    const write = vi.fn<(chunk: string) => boolean>(() => true);
+    const stream = streamUntrustedOutput(
+      source,
+      { write, once: vi.fn() },
+      1024,
+    );
 
-      const response = await executeCommand(process.execPath, ["-e", command], {
-        cwd: process.cwd(),
-        env: process.env,
-        kind: "prek-pass",
-        trustedPythonPath: "/usr/bin/python3",
-        maxLogBytes: 1048576,
-        timeoutMs: 5000,
-      });
+    stream.write(Buffer.from("first\r"));
+    stream.write(Buffer.from("\nsecond\r"));
+    stream.write(Buffer.from("::warning::bad"));
+    stream.end();
 
-      expect(response.stdout).toEqual(Buffer.alloc(0));
-      expect(stdout.mock.calls.map(([chunk]) => String(chunk)).join("")).toBe(
-        "[prek] first\r\n[prek] second\r[prek] ::warning::bad\n",
-      );
-    },
-  );
+    expect(write.mock.calls.map(([chunk]) => chunk).join("")).toBe(
+      "[prek] first\r\n[prek] second\r[prek] ::warning::bad\n",
+    );
+  });
 
   it.skipIf(process.platform !== "linux")(
     "does not retain large streamed hook output",
