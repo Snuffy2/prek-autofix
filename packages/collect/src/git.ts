@@ -15,9 +15,12 @@ import {
   type ChangeArtifact,
   type FileOperation,
 } from "../../shared/src/artifact";
+import {
+  GIT_CAPTURE_LIMIT_BYTES,
+  type CommandResult,
+  type Execute,
+} from "./command-execution";
 
-export const GIT_CAPTURE_LIMIT_BYTES = DEFAULT_MAX_BYTES;
-export const GIT_INSPECTION_TIMEOUT_MS = 30_000;
 export const TRUSTED_GIT_PATH = "/usr/bin/git";
 const GIT_SAFE_CONFIG = ["-c", "core.fsmonitor=false"];
 
@@ -35,28 +38,6 @@ export interface TrustedExecutableIdentity extends RootIdentity {
   mode: string;
   uid: string;
 }
-
-export interface CommandResult {
-  exitCode: number;
-  stdout: Buffer;
-  stderr: Buffer;
-}
-
-export type Execute = (
-  command: string,
-  args: string[],
-  options: {
-    cwd: string;
-    env: NodeJS.ProcessEnv;
-    streamUntrustedOutput?: boolean;
-    streamLimitBytes?: number;
-    captureLimitBytes?: number;
-    superviseProcessTree?: boolean;
-    trustedPythonPath?: string;
-    timeoutDescription?: string;
-    timeoutMs?: number;
-  },
-) => Promise<CommandResult>;
 
 function fields(output: Buffer): string[] {
   return output.toString("utf8").split("\0").filter(Boolean);
@@ -152,9 +133,10 @@ export async function assertExactHead(
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
   const head = await execute(TRUSTED_GIT_PATH, gitArgs("rev-parse", "HEAD"), {
+    kind: "direct",
     cwd: root,
     env,
-    captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES,
+    maxCaptureBytes: GIT_CAPTURE_LIMIT_BYTES,
   });
   if (
     head.exitCode !== 0 ||
@@ -175,9 +157,10 @@ export async function assertExactCleanCheckout(
     TRUSTED_GIT_PATH,
     gitArgs("status", "--porcelain=v1", "-z"),
     {
+      kind: "direct",
       cwd: root,
       env,
-      captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES,
+      maxCaptureBytes: GIT_CAPTURE_LIMIT_BYTES,
     },
   );
   if (status.exitCode !== 0)
@@ -197,9 +180,10 @@ async function trackedModes(
     TRUSTED_GIT_PATH,
     gitArgs("ls-tree", "-z", "HEAD", "--", ...paths),
     {
+      kind: "direct",
       cwd: root,
       env,
-      captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES,
+      maxCaptureBytes: GIT_CAPTURE_LIMIT_BYTES,
     },
   );
   if (result.exitCode !== 0) throw new Error("could not inspect tracked files");
@@ -293,9 +277,10 @@ async function readStableFile(
       expectedRoot.inode,
     ],
     {
+      kind: "direct",
       cwd: root,
       env,
-      captureLimitBytes: remainingBytes + 4096,
+      maxCaptureBytes: remainingBytes + 4096,
     },
   );
   if (result.exitCode !== 0) {
@@ -335,15 +320,25 @@ export async function collectOperations(
   componentDelayMs = 0,
   expectedRoot?: RootIdentity,
   trustedPython?: TrustedExecutableIdentity,
-  gitInspectionTimeoutMs = GIT_INSPECTION_TIMEOUT_MS,
+  gitInspectionTimeoutMs?: number,
 ): Promise<FileOperation[]> {
-  const superviseGitInspection = trustedPython !== undefined;
   const rootIdentity = expectedRoot ?? (await captureRootIdentity(root));
   const pythonIdentity = trustedPython ?? (await captureTrustedPython());
   await assertRootIdentity(root, rootIdentity);
+  const inspectWorktree = (args: string[]): Promise<CommandResult> =>
+    execute(TRUSTED_GIT_PATH, args, {
+      cwd: root,
+      env,
+      ...(trustedPython
+        ? {
+            kind: "git-worktree-inspection",
+            trustedPythonPath: trustedPython.canonicalPath,
+            timeoutMs: gitInspectionTimeoutMs,
+          }
+        : { kind: "direct", maxCaptureBytes: GIT_CAPTURE_LIMIT_BYTES }),
+    });
   const [diff, untracked] = await Promise.all([
-    execute(
-      TRUSTED_GIT_PATH,
+    inspectWorktree(
       gitArgs(
         "diff",
         "--no-ext-diff",
@@ -353,32 +348,9 @@ export async function collectOperations(
         "HEAD",
         "--",
       ),
-      {
-        cwd: root,
-        env,
-        captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES,
-        superviseProcessTree: superviseGitInspection,
-        trustedPythonPath: superviseGitInspection
-          ? pythonIdentity.canonicalPath
-          : undefined,
-        timeoutDescription: "git worktree inspection",
-        timeoutMs: superviseGitInspection ? gitInspectionTimeoutMs : undefined,
-      },
     ),
-    execute(
-      TRUSTED_GIT_PATH,
+    inspectWorktree(
       gitArgs("ls-files", "--others", "--exclude-standard", "-z"),
-      {
-        cwd: root,
-        env,
-        captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES,
-        superviseProcessTree: superviseGitInspection,
-        trustedPythonPath: superviseGitInspection
-          ? pythonIdentity.canonicalPath
-          : undefined,
-        timeoutDescription: "git worktree inspection",
-        timeoutMs: superviseGitInspection ? gitInspectionTimeoutMs : undefined,
-      },
     ),
   ]);
   if (diff.exitCode !== 0 || untracked.exitCode !== 0) {

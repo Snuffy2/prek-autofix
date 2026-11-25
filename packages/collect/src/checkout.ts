@@ -6,6 +6,7 @@ import {
   type ArtifactSource,
   type FileOperation,
 } from "../../shared/src/artifact";
+import type { Execute } from "./command-execution";
 import {
   assertExactCleanCheckout,
   assertExactHead,
@@ -15,7 +16,6 @@ import {
   captureTrustedPython,
   collectOperations,
   writeArtifact,
-  type Execute,
   type RootIdentity,
 } from "./git";
 
@@ -79,7 +79,7 @@ export async function openCheckout(
   const python = await execute(
     trustedPython.canonicalPath,
     ["-I", "-c", "import os, stat"],
-    { cwd: canonicalWorkspace, env, captureLimitBytes: 4096 },
+    { kind: "direct", cwd: canonicalWorkspace, env, maxCaptureBytes: 4096 },
   );
   if (python.exitCode !== 0) {
     throw new Error("secure collection requires Python 3");
@@ -97,12 +97,11 @@ export async function openCheckout(
       await assertTrustedPython(trustedPython);
       // A returned result confirms descendant cleanup before checkout inspection.
       const result = await execute("prek", args, {
+        kind: "prek-pass",
         cwd: canonicalRoot,
         env,
-        streamUntrustedOutput: true,
-        streamLimitBytes: maxLogBytes,
-        superviseProcessTree: true,
         trustedPythonPath: trustedPython.canonicalPath,
+        maxLogBytes,
         timeoutMs,
       });
       await assertRootIdentity(workspace, workspaceIdentity);

@@ -11,14 +11,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  executeCommand,
+  type Execute,
+} from "../../packages/collect/src/command-execution";
+import {
   collectOperations,
   assertRootIdentity,
   captureRootIdentity,
   captureTrustedPython,
   writeArtifact,
-  type Execute,
 } from "../../packages/collect/src/git";
-import { executeCommand } from "../../packages/collect/src/runner";
 import {
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_FILES,
@@ -61,7 +63,12 @@ function gitSubcommand(args: string[]): string | undefined {
 }
 
 async function git(root: string, ...args: string[]): Promise<void> {
-  const response = await executeCommand("git", args, { cwd: root, env });
+  const response = await executeCommand("git", args, {
+    kind: "direct",
+    cwd: root,
+    env,
+    maxCaptureBytes: DEFAULT_MAX_BYTES,
+  });
   if (response.exitCode !== 0) throw new Error(response.stderr.toString());
 }
 
@@ -452,8 +459,10 @@ describe("trusted collector helpers", () => {
       directories.push(root);
       const fifo = join(root, "prek-autofix.json");
       const made = await executeCommand("mkfifo", [fifo], {
+        kind: "direct",
         cwd: root,
         env,
+        maxCaptureBytes: 4096,
       });
       expect(made.exitCode).toBe(0);
 

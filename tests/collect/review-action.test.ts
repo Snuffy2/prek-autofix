@@ -45,12 +45,16 @@ let directory: string | undefined;
 afterEach(async () => {
   action.outputs.clear();
   action.setFailed.mockClear();
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   if (directory) await rm(directory, { recursive: true, force: true });
   directory = undefined;
 });
 
-async function review(hook: string): Promise<string> {
+async function review(
+  hook: string,
+  { passTimeoutSeconds = 5, initiallyDirty = false } = {},
+): Promise<string> {
   directory = await mkdtemp(join(tmpdir(), "review-action-"));
   const checkout = join(directory, "checkout");
   const workingDirectory = join(checkout, "docs");
@@ -75,6 +79,9 @@ async function review(hook: string): Promise<string> {
   git("add", "docs/note.txt");
   git("commit", "-qm", "Source commit");
   action.head.sha = git("rev-parse", "HEAD");
+  if (initiallyDirty) {
+    await writeFile(join(workingDirectory, "note.txt"), "uncommitted\n");
+  }
   await writeFile(join(bin, "prek"), `#!/bin/sh\nset -eu\n${hook}\n`, {
     mode: 0o755,
   });
@@ -87,9 +94,9 @@ async function review(hook: string): Promise<string> {
   vi.stubEnv("PREK_AUTOFIX_IGNORE_AUTHORS", "");
   vi.stubEnv("PREK_AUTOFIX_MAX_PASSES", "2");
   vi.stubEnv("PREK_AUTOFIX_MAX_LOG_BYTES", "1024");
-  vi.stubEnv("PREK_AUTOFIX_MAX_FILES", "1");
+  vi.stubEnv("PREK_AUTOFIX_MAX_FILES", "2");
   vi.stubEnv("PREK_AUTOFIX_MAX_BYTES", "32");
-  vi.stubEnv("PREK_AUTOFIX_PASS_TIMEOUT_SECONDS", "5");
+  vi.stubEnv("PREK_AUTOFIX_PASS_TIMEOUT_SECONDS", String(passTimeoutSeconds));
   vi.resetModules();
   const { completion } = await import("../../packages/collect/src/index.js");
   await completion;
@@ -107,8 +114,26 @@ describe.skipIf(process.platform !== "linux")("review Action checkout", () => {
     expect(await readdir(artifacts)).toEqual([]);
   });
 
+  it("rejects a dirty checkout before running hooks or publishing an artifact", async () => {
+    const stdout = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const artifacts = await review("printf 'hook ran\\n'", {
+      initiallyDirty: true,
+    });
+
+    expect(action.setFailed).toHaveBeenCalledWith(
+      "initial checkout is not clean",
+    );
+    expect(
+      stdout.mock.calls.map(([chunk]) => String(chunk)).join(""),
+    ).not.toContain("hook ran");
+    expect(action.outputs.has("artifact-path")).toBe(false);
+    expect(await readdir(artifacts)).toEqual([]);
+  });
+
   it("publishes stable fixes alongside remaining hook findings", async () => {
-    await review("printf 'tidy\\n' > note.txt\nexit 1");
+    await review(
+      "printf 'tidy\\n' > note.txt\nprintf 'added\\n' > new.txt\nexit 1",
+    );
 
     expect(action.setFailed).not.toHaveBeenCalled();
     expect(action.outputs.get("changed")).toBe("true");
@@ -120,6 +145,12 @@ describe.skipIf(process.platform !== "linux")("review Action checkout", () => {
       source: { headSha: action.head.sha, runAttempt: 3 },
       operations: [
         {
+          path: "docs/new.txt",
+          operation: "add",
+          mode: "100644",
+          content: Buffer.from("added\n").toString("base64"),
+        },
+        {
           path: "docs/note.txt",
           operation: "modify",
           mode: "100644",
@@ -127,6 +158,48 @@ describe.skipIf(process.platform !== "linux")("review Action checkout", () => {
         },
       ],
     });
+  });
+
+  it("fails without publishing when Git cannot inspect the checkout", async () => {
+    const artifacts = await review(`
+      printf 'tidy\\n' > note.txt
+      printf 'invalid index\\n' > ../.git/index
+    `);
+
+    expect(action.setFailed).toHaveBeenCalledWith("could not inspect changes");
+    expect(action.outputs.has("artifact-name")).toBe(false);
+    expect(action.outputs.has("artifact-path")).toBe(false);
+    expect(await readdir(artifacts)).toEqual([]);
+  });
+
+  it("prefixes hook log lines and truncates output at the configured cap", async () => {
+    const stdout = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+
+    await review(
+      "printf '::notice::fixture\\n%01024d\\n' 0\nprintf 'hook diagnostic\\n' >&2",
+    );
+
+    expect(action.setFailed).not.toHaveBeenCalled();
+    expect(stdout.mock.calls.map(([chunk]) => String(chunk)).join("")).toBe(
+      `[prek] ::notice::fixture\n[prek] ${"0".repeat(1006)}\n[prek] output truncated after 1024 bytes\n`,
+    );
+    expect(stderr.mock.calls.map(([chunk]) => String(chunk)).join("")).toBe(
+      "[prek] hook diagnostic\n",
+    );
+  });
+
+  it("reports a timed-out pass without publishing its changes", async () => {
+    const artifacts = await review("printf 'tidy\\n' > note.txt\nsleep 3", {
+      passTimeoutSeconds: 1,
+    });
+
+    expect(action.setFailed).toHaveBeenCalledWith(
+      "prek pass timed out after 1 seconds; terminated hook process tree",
+    );
+    expect(action.outputs.has("artifact-name")).toBe(false);
+    expect(action.outputs.has("artifact-path")).toBe(false);
+    expect(await readdir(artifacts)).toEqual([]);
   });
 
   it("fails without publishing continually changing fixes", async () => {

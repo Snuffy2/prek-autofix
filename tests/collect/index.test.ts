@@ -3,7 +3,6 @@ import { runCollect } from "../../packages/collect/src/runner";
 
 vi.mock("../../packages/collect/src/runner", () => ({
   runCollect: vi.fn().mockResolvedValue(undefined),
-  executeCommand: vi.fn(),
 }));
 
 vi.mock("@actions/core", () => ({
