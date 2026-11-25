@@ -14,74 +14,33 @@ export interface CommandResult {
   stderr: Buffer;
 }
 
+type CommandOptions = {
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+} & (
+  | {
+      kind: "direct";
+      maxCaptureBytes: number;
+      timeoutMs?: number;
+    }
+  | {
+      kind: "git-worktree-inspection";
+      trustedPythonPath: string;
+      timeoutMs?: number;
+    }
+  | {
+      kind: "prek-pass";
+      trustedPythonPath: string;
+      maxLogBytes: number;
+      timeoutMs: number;
+    }
+);
+
 export type Execute = (
   command: string,
   args: string[],
-  options: {
-    cwd: string;
-    env: NodeJS.ProcessEnv;
-    streamUntrustedOutput?: boolean;
-    streamLimitBytes?: number;
-    captureLimitBytes?: number;
-    superviseProcessTree?: boolean;
-    trustedPythonPath?: string;
-    timeoutDescription?: string;
-    timeoutMs?: number;
-  },
+  options: CommandOptions,
 ) => Promise<CommandResult>;
-
-interface PrekPassOptions {
-  cwd: string;
-  env: NodeJS.ProcessEnv;
-  trustedPythonPath: string;
-  maxLogBytes: number;
-  timeoutMs: number;
-}
-
-export function executePrekPass(
-  execute: Execute,
-  args: string[],
-  { cwd, env, trustedPythonPath, maxLogBytes, timeoutMs }: PrekPassOptions,
-): Promise<CommandResult> {
-  return execute("prek", args, {
-    cwd,
-    env,
-    streamUntrustedOutput: true,
-    streamLimitBytes: maxLogBytes,
-    superviseProcessTree: true,
-    trustedPythonPath,
-    timeoutMs,
-  });
-}
-
-interface GitWorktreeInspectionOptions {
-  cwd: string;
-  env: NodeJS.ProcessEnv;
-  trustedPythonPath: string;
-  timeoutMs?: number;
-}
-
-export function executeGitWorktreeInspection(
-  execute: Execute,
-  command: string,
-  args: string[],
-  {
-    cwd,
-    env,
-    trustedPythonPath,
-    timeoutMs = GIT_INSPECTION_TIMEOUT_MS,
-  }: GitWorktreeInspectionOptions,
-): Promise<CommandResult> {
-  return execute(command, args, {
-    cwd,
-    env,
-    captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES,
-    superviseProcessTree: true,
-    trustedPythonPath,
-    timeoutDescription: "git worktree inspection",
-    timeoutMs,
-  });
-}
 
 export function streamUntrustedOutput(
   source: Pick<Readable, "pause" | "resume">,
@@ -162,11 +121,11 @@ export function streamUntrustedOutput(
 export const executeCommand: Execute = async (command, args, options) =>
   await new Promise<CommandResult>((finish, reject) => {
     const useProcessGroup = process.platform === "linux";
-    if (options.superviseProcessTree && !useProcessGroup) {
+    const supervised = options.kind !== "direct";
+    if (supervised && !useProcessGroup) {
       reject(new Error("secure hook process cleanup requires Linux"));
       return;
     }
-    const supervised = options.superviseProcessTree === true;
     if (
       supervised &&
       (!options.trustedPythonPath || !isAbsolute(options.trustedPythonPath))
@@ -176,13 +135,23 @@ export const executeCommand: Execute = async (command, args, options) =>
       );
       return;
     }
-    const spawnedCommand = supervised ? options.trustedPythonPath! : command;
+    const inspection = options.kind === "git-worktree-inspection";
+    const timeoutMs = inspection
+      ? (options.timeoutMs ?? GIT_INSPECTION_TIMEOUT_MS)
+      : options.timeoutMs;
+    const captureLimit =
+      options.kind === "direct"
+        ? options.maxCaptureBytes
+        : inspection
+          ? GIT_CAPTURE_LIMIT_BYTES
+          : undefined;
+    const spawnedCommand = supervised ? options.trustedPythonPath : command;
     const spawnedArgs = supervised
       ? [
           "-I",
           "-c",
           HOOK_SUPERVISOR_SCRIPT,
-          String((options.timeoutMs ?? 0) / 1000),
+          String((timeoutMs ?? 0) / 1000),
           command,
           ...args,
         ]
@@ -209,25 +178,26 @@ export const executeCommand: Execute = async (command, args, options) =>
         if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
       }
     };
-    const streamedStdout = options.streamUntrustedOutput
-      ? streamUntrustedOutput(
-          child.stdout!,
-          process.stdout,
-          options.streamLimitBytes ?? 1048576,
-        )
-      : undefined;
-    const streamedStderr = options.streamUntrustedOutput
-      ? streamUntrustedOutput(
-          child.stderr!,
-          process.stderr,
-          options.streamLimitBytes ?? 1048576,
-        )
-      : undefined;
+    const streamedStdout =
+      options.kind === "prek-pass"
+        ? streamUntrustedOutput(
+            child.stdout!,
+            process.stdout,
+            options.maxLogBytes,
+          )
+        : undefined;
+    const streamedStderr =
+      options.kind === "prek-pass"
+        ? streamUntrustedOutput(
+            child.stderr!,
+            process.stderr,
+            options.maxLogBytes,
+          )
+        : undefined;
     const capture = (chunks: Buffer[], chunk: Buffer): void => {
-      const limit = options.captureLimitBytes;
       if (
-        limit !== undefined &&
-        (captureOverflow || chunk.byteLength > limit - capturedBytes)
+        captureLimit !== undefined &&
+        (captureOverflow || chunk.byteLength > captureLimit - capturedBytes)
       ) {
         if (!captureOverflow) {
           captureOverflow = true;
@@ -253,10 +223,10 @@ export const executeCommand: Execute = async (command, args, options) =>
     let timedOut = false;
     const timeoutError = (): Error =>
       new Error(
-        `${options.timeoutDescription ?? "prek pass"} timed out after ${Math.ceil((options.timeoutMs ?? 0) / 1000)} seconds; terminated ${options.timeoutDescription ? "process" : "hook process"}${supervised || useProcessGroup ? " tree" : ""}`,
+        `${inspection ? "git worktree inspection" : "prek pass"} timed out after ${Math.ceil((timeoutMs ?? 0) / 1000)} seconds; terminated ${inspection ? "process" : "hook process"}${supervised || useProcessGroup ? " tree" : ""}`,
       );
     const timeout =
-      options.timeoutMs === undefined || supervised
+      timeoutMs === undefined || supervised
         ? undefined
         : setTimeout(() => {
             timedOut = true;
@@ -265,7 +235,7 @@ export const executeCommand: Execute = async (command, args, options) =>
               terminate("SIGKILL");
               reject(timeoutError());
             }, 2000);
-          }, options.timeoutMs);
+          }, timeoutMs);
     timeout?.unref();
     if (supervised) {
       const protocolStream = child.stdio[3];
@@ -312,7 +282,7 @@ export const executeCommand: Execute = async (command, args, options) =>
       if (captureOverflow) {
         reject(
           new Error(
-            `command output exceeded capture limit of ${options.captureLimitBytes} bytes`,
+            `command output exceeded capture limit of ${captureLimit} bytes`,
           ),
         );
         return;

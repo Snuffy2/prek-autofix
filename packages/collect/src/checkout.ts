@@ -6,7 +6,7 @@ import {
   type ArtifactSource,
   type FileOperation,
 } from "../../shared/src/artifact";
-import { executePrekPass, type Execute } from "./command-execution";
+import type { Execute } from "./command-execution";
 import {
   assertExactCleanCheckout,
   assertExactHead,
@@ -79,7 +79,7 @@ export async function openCheckout(
   const python = await execute(
     trustedPython.canonicalPath,
     ["-I", "-c", "import os, stat"],
-    { cwd: canonicalWorkspace, env, captureLimitBytes: 4096 },
+    { kind: "direct", cwd: canonicalWorkspace, env, maxCaptureBytes: 4096 },
   );
   if (python.exitCode !== 0) {
     throw new Error("secure collection requires Python 3");
@@ -96,7 +96,8 @@ export async function openCheckout(
     async runPass(args, maxLogBytes, timeoutMs) {
       await assertTrustedPython(trustedPython);
       // A returned result confirms descendant cleanup before checkout inspection.
-      const result = await executePrekPass(execute, args, {
+      const result = await execute("prek", args, {
+        kind: "prek-pass",
         cwd: canonicalRoot,
         env,
         trustedPythonPath: trustedPython.canonicalPath,

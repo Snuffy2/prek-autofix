@@ -16,7 +16,6 @@ import {
   type FileOperation,
 } from "../../shared/src/artifact";
 import {
-  executeGitWorktreeInspection,
   GIT_CAPTURE_LIMIT_BYTES,
   type CommandResult,
   type Execute,
@@ -134,9 +133,10 @@ export async function assertExactHead(
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
   const head = await execute(TRUSTED_GIT_PATH, gitArgs("rev-parse", "HEAD"), {
+    kind: "direct",
     cwd: root,
     env,
-    captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES,
+    maxCaptureBytes: GIT_CAPTURE_LIMIT_BYTES,
   });
   if (
     head.exitCode !== 0 ||
@@ -157,9 +157,10 @@ export async function assertExactCleanCheckout(
     TRUSTED_GIT_PATH,
     gitArgs("status", "--porcelain=v1", "-z"),
     {
+      kind: "direct",
       cwd: root,
       env,
-      captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES,
+      maxCaptureBytes: GIT_CAPTURE_LIMIT_BYTES,
     },
   );
   if (status.exitCode !== 0)
@@ -179,9 +180,10 @@ async function trackedModes(
     TRUSTED_GIT_PATH,
     gitArgs("ls-tree", "-z", "HEAD", "--", ...paths),
     {
+      kind: "direct",
       cwd: root,
       env,
-      captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES,
+      maxCaptureBytes: GIT_CAPTURE_LIMIT_BYTES,
     },
   );
   if (result.exitCode !== 0) throw new Error("could not inspect tracked files");
@@ -275,9 +277,10 @@ async function readStableFile(
       expectedRoot.inode,
     ],
     {
+      kind: "direct",
       cwd: root,
       env,
-      captureLimitBytes: remainingBytes + 4096,
+      maxCaptureBytes: remainingBytes + 4096,
     },
   );
   if (result.exitCode !== 0) {
@@ -323,18 +326,17 @@ export async function collectOperations(
   const pythonIdentity = trustedPython ?? (await captureTrustedPython());
   await assertRootIdentity(root, rootIdentity);
   const inspectWorktree = (args: string[]): Promise<CommandResult> =>
-    trustedPython
-      ? executeGitWorktreeInspection(execute, TRUSTED_GIT_PATH, args, {
-          cwd: root,
-          env,
-          trustedPythonPath: trustedPython.canonicalPath,
-          timeoutMs: gitInspectionTimeoutMs,
-        })
-      : execute(TRUSTED_GIT_PATH, args, {
-          cwd: root,
-          env,
-          captureLimitBytes: GIT_CAPTURE_LIMIT_BYTES,
-        });
+    execute(TRUSTED_GIT_PATH, args, {
+      cwd: root,
+      env,
+      ...(trustedPython
+        ? {
+            kind: "git-worktree-inspection",
+            trustedPythonPath: trustedPython.canonicalPath,
+            timeoutMs: gitInspectionTimeoutMs,
+          }
+        : { kind: "direct", maxCaptureBytes: GIT_CAPTURE_LIMIT_BYTES }),
+    });
   const [diff, untracked] = await Promise.all([
     inspectWorktree(
       gitArgs(

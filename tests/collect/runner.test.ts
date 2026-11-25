@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import {
   executeCommand,
-  executeGitWorktreeInspection,
   streamUntrustedOutput,
   type Execute,
 } from "../../packages/collect/src/command-execution";
@@ -36,7 +35,7 @@ function setup(prekResults: ReturnType<typeof result>[]) {
   let prek = 0;
   const execute: Execute = vi.fn(async (command, args, options) => {
     seenEnvironments.push(options.env);
-    if (command === "prek") return prekResults[prek++] ?? result();
+    if (options.kind === "prek-pass") return prekResults[prek++] ?? result();
     if (command.includes("python3")) return result();
     const subcommand = gitSubcommand(args);
     if (subcommand === "rev-parse") return result(0, `${SHA}\n`);
@@ -404,9 +403,9 @@ describe("runCollect", () => {
 
   it("stops before change collection when a hook changes HEAD", async () => {
     let headChecks = 0;
-    const execute: Execute = vi.fn(async (command, args) => {
+    const execute: Execute = vi.fn(async (command, args, options) => {
       if (command.includes("python3")) return result();
-      if (command === "prek") return result();
+      if (options.kind === "prek-pass") return result();
       const subcommand = gitSubcommand(args);
       if (subcommand === "rev-parse") {
         headChecks += 1;
@@ -427,7 +426,7 @@ describe("runCollect", () => {
     let substituted = false;
     const execute: Execute = vi.fn(async (command, args, options) => {
       if (command.includes("python3")) return result();
-      if (command === "prek") {
+      if (options.kind === "prek-pass") {
         const parked = `${options.cwd}-parked`;
         directories.push(parked);
         const { mkdir, rename } = await import("node:fs/promises");
@@ -571,15 +570,19 @@ describe("runCollect", () => {
 });
 
 describe("executeCommand", () => {
-  it("rejects captured command output above its ceiling", async () => {
+  it("rejects direct commands whose combined output exceeds the ceiling", async () => {
     await expect(
       executeCommand(
         process.execPath,
-        ["-e", 'process.stdout.write(Buffer.alloc(1025, "x"))'],
+        [
+          "-e",
+          'process.stdout.write(Buffer.alloc(1024)); process.stderr.write("x")',
+        ],
         {
+          kind: "direct",
           cwd: process.cwd(),
           env: process.env,
-          captureLimitBytes: 1024,
+          maxCaptureBytes: 1024,
         },
       ),
     ).rejects.toThrow("command output exceeded capture limit of 1024 bytes");
@@ -595,7 +598,8 @@ describe("executeCommand", () => {
       executeCommand(process.execPath, ["-e", command], {
         cwd: process.cwd(),
         env: process.env,
-        captureLimitBytes: 1024,
+        kind: "direct",
+        maxCaptureBytes: 1024,
       }),
     ).rejects.toThrow("command output exceeded capture limit of 1024 bytes");
   });
@@ -607,73 +611,92 @@ describe("executeCommand", () => {
       {
         cwd: process.cwd(),
         env: process.env,
-        captureLimitBytes: 1024,
+        kind: "direct",
+        maxCaptureBytes: 1024,
       },
     );
 
     expect(response.stdout).toHaveLength(1024);
   });
 
-  it("streams chunked untrusted output with safe line prefixes", async () => {
-    const stdout = vi
-      .spyOn(process.stdout, "write")
-      .mockImplementation(() => true);
-    const command = [
-      'process.stdout.write(":")',
-      'setTimeout(() => process.stdout.write(":set-output name=x::bad\\nnext"), 10)',
-    ].join(";");
+  it.skipIf(process.platform !== "linux")(
+    "streams chunked untrusted output with safe line prefixes",
+    async () => {
+      const stdout = vi
+        .spyOn(process.stdout, "write")
+        .mockImplementation(() => true);
+      const command = [
+        'process.stdout.write(":")',
+        'setTimeout(() => process.stdout.write(":set-output name=x::bad\\nnext"), 10)',
+      ].join(";");
 
-    const response = await executeCommand(process.execPath, ["-e", command], {
-      cwd: process.cwd(),
-      env: process.env,
-      streamUntrustedOutput: true,
-    });
-
-    expect(response.stdout).toEqual(Buffer.alloc(0));
-    expect(stdout.mock.calls.map(([chunk]) => String(chunk)).join("")).toBe(
-      "[prek] ::set-output name=x::bad\n[prek] next\n",
-    );
-  });
-
-  it("prefixes lone CR boundaries without double-prefixing split CRLF", async () => {
-    const stdout = vi
-      .spyOn(process.stdout, "write")
-      .mockImplementation(() => true);
-    const command = [
-      'process.stdout.write("first\\r")',
-      'setTimeout(() => process.stdout.write("\\nsecond\\r"), 10)',
-      'setTimeout(() => process.stdout.write("::warning::bad"), 20)',
-    ].join(";");
-
-    const response = await executeCommand(process.execPath, ["-e", command], {
-      cwd: process.cwd(),
-      env: process.env,
-      streamUntrustedOutput: true,
-    });
-
-    expect(response.stdout).toEqual(Buffer.alloc(0));
-    expect(stdout.mock.calls.map(([chunk]) => String(chunk)).join("")).toBe(
-      "[prek] first\r\n[prek] second\r[prek] ::warning::bad\n",
-    );
-  });
-
-  it("does not retain large streamed hook output", async () => {
-    const stdout = vi
-      .spyOn(process.stdout, "write")
-      .mockImplementation(() => true);
-    const response = await executeCommand(
-      process.execPath,
-      ["-e", 'process.stdout.write("x".repeat(1024 * 1024))'],
-      {
+      const response = await executeCommand(process.execPath, ["-e", command], {
         cwd: process.cwd(),
         env: process.env,
-        streamUntrustedOutput: true,
-      },
-    );
+        kind: "prek-pass",
+        trustedPythonPath: "/usr/bin/python3",
+        maxLogBytes: 1048576,
+        timeoutMs: 5000,
+      });
 
-    expect(response.stdout).toEqual(Buffer.alloc(0));
-    expect(stdout).toHaveBeenCalled();
-  });
+      expect(response.stdout).toEqual(Buffer.alloc(0));
+      expect(stdout.mock.calls.map(([chunk]) => String(chunk)).join("")).toBe(
+        "[prek] ::set-output name=x::bad\n[prek] next\n",
+      );
+    },
+  );
+
+  it.skipIf(process.platform !== "linux")(
+    "prefixes lone CR boundaries without double-prefixing split CRLF",
+    async () => {
+      const stdout = vi
+        .spyOn(process.stdout, "write")
+        .mockImplementation(() => true);
+      const command = [
+        'process.stdout.write("first\\r")',
+        'setTimeout(() => process.stdout.write("\\nsecond\\r"), 10)',
+        'setTimeout(() => process.stdout.write("::warning::bad"), 20)',
+      ].join(";");
+
+      const response = await executeCommand(process.execPath, ["-e", command], {
+        cwd: process.cwd(),
+        env: process.env,
+        kind: "prek-pass",
+        trustedPythonPath: "/usr/bin/python3",
+        maxLogBytes: 1048576,
+        timeoutMs: 5000,
+      });
+
+      expect(response.stdout).toEqual(Buffer.alloc(0));
+      expect(stdout.mock.calls.map(([chunk]) => String(chunk)).join("")).toBe(
+        "[prek] first\r\n[prek] second\r[prek] ::warning::bad\n",
+      );
+    },
+  );
+
+  it.skipIf(process.platform !== "linux")(
+    "does not retain large streamed hook output",
+    async () => {
+      const stdout = vi
+        .spyOn(process.stdout, "write")
+        .mockImplementation(() => true);
+      const response = await executeCommand(
+        process.execPath,
+        ["-e", 'process.stdout.write("x".repeat(1024 * 1024))'],
+        {
+          cwd: process.cwd(),
+          env: process.env,
+          kind: "prek-pass",
+          trustedPythonPath: "/usr/bin/python3",
+          maxLogBytes: 1048576,
+          timeoutMs: 5000,
+        },
+      );
+
+      expect(response.stdout).toEqual(Buffer.alloc(0));
+      expect(stdout).toHaveBeenCalled();
+    },
+  );
 
   it("caps each stream exactly and emits one safe truncation notice", () => {
     const source = { pause: vi.fn(), resume: vi.fn() };
@@ -714,11 +737,13 @@ describe("executeCommand", () => {
     expect(source.resume).toHaveBeenCalled();
   });
 
-  it("times out a hook and reports process-tree termination", async () => {
+  it("times out a direct command and reports termination", async () => {
     await expect(
       executeCommand(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
         cwd: process.cwd(),
         env: process.env,
+        kind: "direct",
+        maxCaptureBytes: 1024,
         timeoutMs: 25,
       }),
     ).rejects.toThrow(
@@ -738,16 +763,12 @@ describe("executeCommand", () => {
         "child.unref()",
       ].join(";");
 
-      const response = await executeGitWorktreeInspection(
-        executeCommand,
-        process.execPath,
-        ["-e", command],
-        {
-          cwd: process.cwd(),
-          env: process.env,
-          trustedPythonPath: "/usr/bin/python3",
-        },
-      );
+      const response = await executeCommand(process.execPath, ["-e", command], {
+        cwd: process.cwd(),
+        env: process.env,
+        kind: "git-worktree-inspection",
+        trustedPythonPath: "/usr/bin/python3",
+      });
 
       expect(response.exitCode).toBe(0);
       const pid = response.stdout.toString("ascii");
@@ -762,8 +783,7 @@ describe("executeCommand", () => {
     "rejects inspection when combined stdout and stderr exceed the capture ceiling",
     async () => {
       await expect(
-        executeGitWorktreeInspection(
-          executeCommand,
+        executeCommand(
           process.execPath,
           [
             "-e",
@@ -772,6 +792,7 @@ describe("executeCommand", () => {
           {
             cwd: process.cwd(),
             env: process.env,
+            kind: "git-worktree-inspection",
             trustedPythonPath: "/usr/bin/python3",
           },
         ),
@@ -809,7 +830,8 @@ with open(${JSON.stringify(observation)}, "w", encoding="ascii") as output:
         {
           cwd: directory,
           env: { PATH: process.env.PATH },
-          superviseProcessTree: true,
+          kind: "prek-pass",
+          maxLogBytes: 1024,
           trustedPythonPath: "/usr/bin/python3",
           timeoutMs: 5000,
         },
@@ -840,7 +862,8 @@ with open(${JSON.stringify(observation)}, "w", encoding="ascii") as output:
             DESCENDANT_MUTATION: descendantMutation,
           },
           timeoutMs: 100,
-          superviseProcessTree: true,
+          kind: "prek-pass",
+          maxLogBytes: 1024,
           trustedPythonPath: "/usr/bin/python3",
         }),
       ).rejects.toThrow("terminated hook process tree");
@@ -881,7 +904,8 @@ for target in (${JSON.stringify(workspaceMutation)}, ${JSON.stringify(artifactMu
       const response = await executeCommand("python3", ["-I", "-c", script], {
         cwd: directory,
         env: process.env,
-        superviseProcessTree: true,
+        kind: "prek-pass",
+        maxLogBytes: 1024,
         trustedPythonPath: "/usr/bin/python3",
         timeoutMs: 5000,
       });
@@ -905,9 +929,10 @@ for target in (${JSON.stringify(workspaceMutation)}, ${JSON.stringify(artifactMu
       await chmod(fakePython, 0o755);
 
       await expect(
-        executeGitWorktreeInspection(executeCommand, process.execPath, [], {
+        executeCommand(process.execPath, [], {
           cwd: directory,
           env: { PATH: directory },
+          kind: "git-worktree-inspection",
           trustedPythonPath: fakePython,
         }),
       ).rejects.toThrow(
@@ -934,7 +959,8 @@ for target in (${JSON.stringify(workspaceMutation)}, ${JSON.stringify(artifactMu
         const response = await executeCommand(process.execPath, ["-e", ""], {
           cwd: directory,
           env: { ...process.env, PATH: directory },
-          superviseProcessTree: true,
+          kind: "prek-pass",
+          maxLogBytes: 1024,
           trustedPythonPath: "/usr/bin/python3",
           timeoutMs: 1000,
         });

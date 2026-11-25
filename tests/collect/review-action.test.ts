@@ -51,7 +51,10 @@ afterEach(async () => {
   directory = undefined;
 });
 
-async function review(hook: string, passTimeoutSeconds = 5): Promise<string> {
+async function review(
+  hook: string,
+  { passTimeoutSeconds = 5, initiallyDirty = false } = {},
+): Promise<string> {
   directory = await mkdtemp(join(tmpdir(), "review-action-"));
   const checkout = join(directory, "checkout");
   const workingDirectory = join(checkout, "docs");
@@ -76,6 +79,9 @@ async function review(hook: string, passTimeoutSeconds = 5): Promise<string> {
   git("add", "docs/note.txt");
   git("commit", "-qm", "Source commit");
   action.head.sha = git("rev-parse", "HEAD");
+  if (initiallyDirty) {
+    await writeFile(join(workingDirectory, "note.txt"), "uncommitted\n");
+  }
   await writeFile(join(bin, "prek"), `#!/bin/sh\nset -eu\n${hook}\n`, {
     mode: 0o755,
   });
@@ -105,6 +111,22 @@ describe.skipIf(process.platform !== "linux")("review Action checkout", () => {
     expect(action.outputs.get("changed")).toBe("false");
     expect(action.outputs.get("artifact-name")).toBe("");
     expect(action.outputs.get("artifact-path")).toBe("");
+    expect(await readdir(artifacts)).toEqual([]);
+  });
+
+  it("rejects a dirty checkout before running hooks or publishing an artifact", async () => {
+    const stdout = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const artifacts = await review("printf 'hook ran\\n'", {
+      initiallyDirty: true,
+    });
+
+    expect(action.setFailed).toHaveBeenCalledWith(
+      "initial checkout is not clean",
+    );
+    expect(
+      stdout.mock.calls.map(([chunk]) => String(chunk)).join(""),
+    ).not.toContain("hook ran");
+    expect(action.outputs.has("artifact-path")).toBe(false);
     expect(await readdir(artifacts)).toEqual([]);
   });
 
@@ -168,7 +190,9 @@ describe.skipIf(process.platform !== "linux")("review Action checkout", () => {
   });
 
   it("reports a timed-out pass without publishing its changes", async () => {
-    const artifacts = await review("printf 'tidy\\n' > note.txt\nsleep 3", 1);
+    const artifacts = await review("printf 'tidy\\n' > note.txt\nsleep 3", {
+      passTimeoutSeconds: 1,
+    });
 
     expect(action.setFailed).toHaveBeenCalledWith(
       "prek pass timed out after 1 seconds; terminated hook process tree",
