@@ -31,3 +31,4 @@ node_modules/
 coverage/
 *.log
 dist/**/*.map
+/.scratch/
